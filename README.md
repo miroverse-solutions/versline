@@ -1,5 +1,5 @@
-# Versline CLI
-**Advanced CLI Toolkit for Transcription, Translation, and Media Processing**
+# Versline
+**Advanced Toolkit for Transcription, Translation, and Media Processing**
 
 ## 🚀 Installation
 

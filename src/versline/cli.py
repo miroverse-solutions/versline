@@ -6,7 +6,7 @@ from versline.commands import transcribe, translate
 
 app = typer.Typer(
     name="versline",
-    help="[bold green]Versline CLI Toolkit[/bold green] for [yellow]media processing, transcription, and translation[/yellow].",
+    help="[bold green]Versline Toolkit[/bold green] for [yellow]media processing, transcription, and translation[/yellow].",
     add_completion=True,
     rich_markup_mode="rich",
 )
@@ -20,7 +20,7 @@ def main(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging"),
 ):
     """
-    [bold]Versline CLI[/bold] is a powerful toolkit for automated media processing.
+    [bold]Versline[/bold] is a powerful toolkit for automated media processing.
     
     [underline]Features:[/underline]
     
