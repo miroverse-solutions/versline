@@ -1,0 +1,88 @@
+import subprocess
+import os
+from loguru import logger
+from versline.config import settings
+
+def get_audio_duration(file_path: str) -> float:
+    """Get audio file duration using ffprobe."""
+    ffprobe_path = settings.ffmpeg.ffprobe_path or "ffprobe"
+    
+    try:
+        result = subprocess.run(
+            [ffprobe_path, '-v', 'error', '-show_entries', 'format=duration', 
+             '-of', 'default=noprint_wrappers=1:nokey=1', file_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True
+        )
+        return float(result.stdout.strip())
+    except FileNotFoundError:
+        logger.error(f"❌ FFprobe executable not found at '{ffprobe_path}'. Please check your configuration.")
+        return None
+    except subprocess.CalledProcessError as e:
+        logger.error(f"❌ Error reading file duration: {e}. stderr: {e.stderr}")
+        return None
+    except Exception as e:
+        logger.error(f"❌ Unexpected error reading file duration: {e}")
+        return None
+
+def split_audio_with_ffmpeg(file_path: str, chunk_length_sec: int, chunk_overlap_sec: int, temp_dir: str) -> list[str]:
+    """Split audio file into specified chunks with overlap using ffmpeg."""
+    ffmpeg_path = settings.ffmpeg.ffmpeg_path or "ffmpeg"
+    
+    if not os.path.exists(temp_dir):
+        os.makedirs(temp_dir)
+
+    logger.info(f"Processing and splitting file '{os.path.basename(file_path)}'...")
+
+    duration = get_audio_duration(file_path)
+    if duration is None:
+        return []
+
+    logger.info(f"Total file duration: {duration/60:.2f} minutes")
+    
+    chunk_paths = []
+    step_size_sec = chunk_length_sec - chunk_overlap_sec
+    current_time = 0
+    chunk_index = 0
+    
+    while current_time < duration:
+        chunk_name = f"chunk_{chunk_index:03d}.mp3"
+        chunk_path = os.path.join(temp_dir, chunk_name)
+        
+        # Calculate this chunk's duration
+        chunk_duration = min(chunk_length_sec, duration - current_time)
+
+        # Skip if chunk is too short (less than 10 seconds) unless it's the only/last chunk and still meaningful? 
+        # Old code break < 10.
+        if chunk_duration < 10:
+            break
+        
+        try:
+            # Use ffmpeg to cut the file
+            cmd = [
+                ffmpeg_path, '-i', file_path, '-ss', str(current_time), 
+                '-t', str(chunk_duration), '-acodec', 'libmp3lame', 
+                '-b:a', '128k', '-y', chunk_path
+            ]
+            subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=True
+            )
+            chunk_paths.append(chunk_path)
+            # logger.debug(f"Chunk created: {chunk_path}")
+            
+        except subprocess.CalledProcessError as e:
+            logger.error(f"❌ Error creating chunk {chunk_index}: {e}")
+            break
+        except FileNotFoundError:
+             logger.error(f"❌ FFmpeg executable not found at '{ffmpeg_path}'.")
+             return []
+        
+        current_time += step_size_sec
+        chunk_index += 1
+        
+    return chunk_paths

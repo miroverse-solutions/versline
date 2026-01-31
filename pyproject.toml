@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "versline"
+version = "0.1.0"
+description = "A CLI toolkit for transcription, translation, and media processing."
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [
+    {name = "Miroverse Solutions", email = "info@miroverse.ir"}
+]
+dependencies = [
+    "typer[all]>=0.9.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "loguru>=0.7.0",
+    "openai>=1.0.0",
+    "google-genai>=1.45.0",
+    "httpx>=0.27.0",
+    "python-dotenv>=1.0.0",
+    "ffmpeg-python>=0.2.0",
+    "qt-material>=2.14", # Might need to remove this if strictly CLI, but keeping for compatibility if logic depends on it (unlikely for CLI)
+    # Removing GUI specific deps like PySide6
+]
+
+[project.scripts]
+versline = "versline.cli:app"
+
+[tool.setuptools.package-data]
+versline = ["resources/prompts/*.md"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
