@@ -3,8 +3,52 @@
 
 ## 🚀 Installation
 
+### 📦 Local Installation (user)
+To install Versline functionally on your machine:
+
 ```bash
 pip install .
+```
+
+### 🛠️ Development Setup
+To set up the environment for development:
+
+1.  **Clone the repository:**
+    ```bash
+    git clone https://github.com/miroverse-solutions/versline.git
+    cd versline
+    ```
+
+2.  **Create a virtual environment:**
+    ```bash
+    python -m venv .venv
+    source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+    ```
+
+3.  **Install in editable mode:**
+    ```bash
+    pip install -e .
+    ```
+
+### 🏗️ Build
+To build the distribution packages (wheel and source):
+
+1.  **Install build tools:**
+    ```bash
+    pip install build
+    ```
+
+2.  **Generate artifacts:**
+    ```bash
+    python -m build
+    ```
+    The output files (`.whl` and `.tar.gz`) will be created in the `dist/` directory.
+
+### 📥 Install from Binary
+After building, you can install the package directly from the generated wheel:
+
+```bash
+pip install dist/versline-*.whl
 ```
 
 ## ⚙️ Configuration
