@@ -62,13 +62,6 @@ Translate large text files into any language (default: Persian) with context-awa
 versline translate file ./document.txt --lang "English"
 ```
 
-### ⬇️ 3. Download
-
-Download files manually if needed:
-```bash
-versline download url "https://example.com/file.mp3" --output ./downloads/
-```
-
 ## 🛠️ Features
 - **Smart Context**: Uses previous chunks to identify speakers consistently.
 - **Retry Mechanism**: Automatically retries failed API calls.
@@ -111,12 +104,6 @@ result = translator.process_file(
     "document.txt", 
     target_language="German"
 )
-```
-
-**3. Download Utility:**
-```python
-# Downloads and returns the path
-file_path = download_file("https://example.com/audio.wav", destination_dir=Path("./tmp"))
 ```
 
 

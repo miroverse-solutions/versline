@@ -2,7 +2,7 @@ import typer
 from loguru import logger
 import sys
 from versline.config import settings
-from versline.commands import transcribe, download, translate
+from versline.commands import transcribe, translate
 
 app = typer.Typer(
     name="versline",
@@ -13,7 +13,6 @@ app = typer.Typer(
 
 # Register subcommands
 app.add_typer(transcribe.app, name="transcribe", help="[cyan]Convert audio/video to text[/cyan] using advanced LLMs.")
-app.add_typer(download.app, name="download", help="[cyan]Download media files[/cyan] from URLs.")
 app.add_typer(translate.app, name="translate", help="[cyan]Translate text files[/cyan] to other languages.")
 
 @app.callback()
@@ -27,7 +26,7 @@ def main(
     
     * :microphone: [bold green]Transcribe[/bold green]: Accurate audio-to-text with speaker identification context.
     * :globe_with_meridians: [bold blue]Download[/bold blue]: Integrated file downloader (supports auto-download in transcribe).
-    * :gear: [bold yellow]Flexible Config[/bold yellow]: Uses [italic].env[/italic], CLI args, or environment variables.
+    * :gear: [bold yellow]Flexible ConfiTranslate[/bold blue]: Context-aware translation for documents
     
     [dim]Run 'versline COMMAND --help' for more info on specific commands.[/dim]
     """
