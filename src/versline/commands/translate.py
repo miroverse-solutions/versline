@@ -1,32 +1,48 @@
 import typer
+from typing import Optional
 from pathlib import Path
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 from loguru import logger
 from versline.services.translation import TextTranslator
 from versline.config import settings
+from versline.services.pricing import print_cost_report
 
 app = typer.Typer(help="Translate text files.")
 
-@app.command("file")
+@app.callback(invoke_without_command=True)
 def translate_file(
-    file_path: Path = typer.Argument(..., help="Path to the text file", exists=True),
-    output: Path = typer.Option(None, "--output", "-o", help="Output file path"),
+    ctx: typer.Context,
+    file_path: Optional[Path] = typer.Argument(None, help="Path to the text file", exists=True),
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output file path"),
     target_lang: str = typer.Option("Persian", "--lang", "-l", help="Target language (e.g. Persian, English, French)"),
-    model: str = typer.Option(None, help="LLM Model to use (overrides config)"),
-    provider: str = typer.Option(None, help="LLM Provider (Google, OpenAI, OpenRouter)"),
-    api_key: str = typer.Option(None, help="API Key for the provider"),
+    model: Optional[str] = typer.Option(None, help="LLM Model to use (overrides config)"),
+    provider: Optional[str] = typer.Option(None, help="LLM Provider (Google, OpenAI, OpenRouter, AvalAI, OpenAICompatible)"),
+    api_key: Optional[str] = typer.Option(None, help="API Key for the provider"),
+    api_endpoint: Optional[str] = typer.Option(None, help="Custom API Endpoint"),
+    proxy: Optional[str] = typer.Option(None, help="Proxy URL"),
 ):
     """
     [bold blue]Translate a text file[/bold blue] to a target language.
     
     Splits long texts into chunks and ensures fluent translation using LLMs.
     """
+    if ctx.invoked_subcommand is not None:
+        return
+
+    if not file_path:
+        typer.echo(ctx.get_help())
+        raise typer.Exit()
+
     if model:
         settings.llm.model = model
     if provider:
         settings.llm.provider = provider
     if api_key:
         settings.llm.api_key = api_key
+    if api_endpoint:
+        settings.llm.api_endpoint = api_endpoint
+    if proxy:
+        settings.llm.proxy = proxy
 
     logger.info(f"Starting translation for: {file_path}")
     
@@ -39,6 +55,8 @@ def translate_file(
             TextColumn("[progress.description]{task.description}"),
             BarColumn(),
             TaskProgressColumn(),
+            redirect_stdout=True,
+            redirect_stderr=True,
         ) as progress:
             task_id = progress.add_task("[blue]Translating...", total=100)
             
@@ -60,6 +78,8 @@ def translate_file(
             f.write(final_text)
             
         logger.success(f"Translation saved to: {output_path}")
+
+        print_cost_report(translator.tracker, api_key=settings.llm.api_key)
 
     except Exception as e:
         logger.error(f"Translation failed: {e}")

@@ -2,7 +2,7 @@ import typer
 import httpx
 from pathlib import Path
 from loguru import logger
-from versline.utils import sanitize_filename
+from versline.utils.common import sanitize_filename
 
 app = typer.Typer(help="Download files from URLs.")
 

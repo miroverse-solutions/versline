@@ -51,11 +51,19 @@ After building, you can install the package directly from the generated wheel:
 pip install dist/versline-*.whl
 ```
 
+### 🐚 Autocompletion
+Enable tab completion for your shell (Bash, Zsh, Fish, PowerShell):
+
+```bash
+versline --install-completion
+```
+*Note: Restart your shell after installation.*
+
 ## ⚙️ Configuration
 
 You can configure Versline using any of the following methods (in order of priority):
 
-1.  **CLI Arguments**: Pass directly to commands (e.g., `--api-key`).
+1.  **CLI Arguments**: Pass directly to commands (e.g., `--api-key`, `--proxy`).
 2.  **`.env` File**: Create a `.env` file in your working directory.
 3.  **Environment Variables**: Export variables in your shell.
 
@@ -63,54 +71,116 @@ You can configure Versline using any of the following methods (in order of prior
 Run `cp .env.example .env` to start, or create one manually:
 
 ```dotenv
-VERSLINE_LLM_PROVIDER=Google
+VERSLINE_LLM_PROVIDER=AvalAI # Google, OpenAI, OpenRouter, AvalAI, OpenAICompatible
 VERSLINE_LLM_API_KEY=your_api_key_here
 VERSLINE_LLM_MODEL=gemini-2.0-flash
-# VERSLINE_FFMPEG_FFMPEG_PATH=/usr/bin/ffmpeg
+VERSLINE_LLM_PROXY=http://127.0.0.1:2080 # Optional
+# VERSLINE_LLM_API_ENDPOINT=https://custom-api.example.com/v1 # Optional
 ```
 
-## 📖 Usage Guide
 
-Run `versline --help` to see the colorful interactive guide.
+## 📖 CLI Reference
 
-### 🎙️ 1. Transcribe (Speech to Text)
+Run `versline --help` or `versline [COMMAND] --help` for interactive help.
 
-Convert audio or video files to text with high accuracy using LLMs.
+### 🎙️ `transcribe`
+Convert audio or video files to text. Downloads URLs automatically if provided.
 
-**Basic Usage:**
+**Usage:**
 ```bash
-versline transcribe file interview.mp3
+versline transcribe [OPTIONS] FILE_PATH
 ```
 
-**Auto-Download & Transcribe:**
-Pass a URL directly, and Versline will download it first:
+**Arguments:**
+- `FILE_PATH`: Path to the local audio/video file OR a direct download URL. [Required]
+
+**Options:**
+| Option | Short | Description | Default |
+| :--- | :--- | :--- | :--- |
+| `--output` | `-o` | Output file path. Defaults to `[filename]_transcription.md`. | `None` |
+| `--model` | | LLM Model name (overrides config). | Config |
+| `--provider` | | Service provider (`Google`, `OpenAI`, `OpenRouter`, `AvalAI`, `OpenAICompatible`). | Config |
+| `--api-key` | | API Key for the selected provider. | Config |
+| `--api-endpoint` | | Custom API Endpoint URL (for `OpenAICompatible`). | Config |
+| `--proxy` | | HTTP/HTTPS Proxy URL (e.g., `http://127.0.0.1:10809`). | Config |
+| `--chunk-size` | | Length of audio chunks in seconds. | `900` (15 min) |
+| `--overlap` | | Overlap between chunks in seconds to preserve context. | `180` (3 min) |
+| `--prompt-file` | | Path to a custom system prompt file (markdown). | `None` |
+
+---
+
+### 📝 `translate`
+Translate text files into another language using LLMs.
+
+**Usage:**
 ```bash
-versline transcribe file "https://example.com/podcast.mp3"
+versline translate [OPTIONS] FILE_PATH
 ```
 
-**Advanced Options:**
+**Arguments:**
+- `FILE_PATH`: Path to the text, markdown, or subtitle file. [Required]
+
+**Options:**
+| Option | Short | Description | Default |
+| :--- | :--- | :--- | :--- |
+| `--lang` | `-l` | Target language name (e.g. "Persian", "French"). | `"Persian"` |
+| `--output` | `-o` | Output file path. | `[name]_[lang].[ext]` |
+| `--model` | | LLM Model name. | Config |
+| `--provider` | | Service provider. | Config |
+| `--api-key` | | API Key. | Config |
+| `--api-endpoint` | | Custom API Endpoint. | Config |
+| `--proxy` | | Proxy URL. | Config |
+
+---
+
+### 🧠 `qude`
+Generate Flashcards (Anki) or Multiple Choice Questions (MCQ) from documents.
+
+**Usage:**
 ```bash
-versline transcribe file interview.wav \
-  --provider Google \
-  --model gemini-1.5-pro \
-  --chunk-size 600 \
-  --overlap 60 \
-  --output ./final_text.md
+versline qude [OPTIONS] INPUT_PATH
 ```
 
-### 📝 2. Translate
+**Arguments:**
+- `INPUT_PATH`: Path to a file (PDF, PPTX, DOCX, MD) or directory. [Required]
 
-Translate large text files into any language (default: Persian) with context-aware splitting.
+**Options:**
+| Option | Short | Description | Default |
+| :--- | :--- | :--- | :--- |
+| `--type` | `-t` | Output type: `mcq` (JSON/CSV) or `open` (Descriptive/Flashcards). | `"mcq"` |
+| `--output` | `-o` | Output directory for results. | `"output"` |
+| `--count` | `-c` | Number of questions to generate per chunk/slide. | `5` |
+| `--lang` | `-l` | Language for the questions. | `"en"` |
+| `--provider` | `-p` | AI Provider (`openai`, `avalai`, `gemini`, `custom`, etc.). | Config |
+| `--model` | `-m` | AI Model name. | Config |
+| `--api-key` | `-k` | API Key. | Config |
+| `--base-url` | `-b` | Base URL for custom providers. | Config |
+| `--proxy` | | Proxy URL. | Config |
+| `--force` | `-f` | Force regeneration (ignore cache). | `False` |
+| `--no-cache` | | Disable caching entirely. | `False` |
+| `--regenerate` | `-r` | Regenerate output files from existing cache (no AI calls). | `False` |
+| `--debug` | | Enable debug logging. | `False` |
 
+---
+
+### ⬇️ `download`
+Download a file from a URL using HTTP/Stream.
+
+**Usage:**
 ```bash
-versline translate file ./document.txt --lang "English"
+versline download [OPTIONS] URL
 ```
+| Option | Short | Description |
+| :--- | :--- | :--- |
+| `--output` | `-o` | Output file path or directory. |
+
 
 ## 🛠️ Features
 - **Smart Context**: Uses previous chunks to identify speakers consistently.
 - **Retry Mechanism**: Automatically retries failed API calls.
 - **Rich UI**: Colorful progress bars and spinners.
-- **Flexible**: Agnostic to LLM provider (Google, OpenAI, OpenRouter).
+- **Flexible**: Agnostic to LLM provider (Google, OpenAI, OpenRouter, AvalAI, Custom).
+- **Proxy Support**: Full support for HTTP/HTTPS proxies.
 
 ## 📦 Python Library Usage
 
@@ -121,9 +191,9 @@ Versline is designed to be easily imported into your Python projects.
 from versline import AudioTranscriber, TextTranslator, download_file, settings
 
 # Configure globally (or load from .env automatically)
-settings.llm.provider = "Google"
+settings.llm.provider = "AvalAI"
 settings.llm.api_key = "YOUR_API_KEY"
-settings.llm.model = "gemini-2.0-flash"
+settings.llm.model = "gpt-4o-mini"
 ```
 
 ### Advanced Examples

@@ -1,3 +1,28 @@
+from .types import AIProvider
+
+# Default chunking settings
+DEFAULT_SLIDES_PER_BATCH = 5
+DEFAULT_PAGES_PER_BATCH = 5
+DEFAULT_WORDS_PER_BATCH = 2000
+
+# Model defaults per provider
+DEFAULT_MODELS = {
+    AIProvider.OPENAI: "gpt-4o",
+    AIProvider.GEMINI: "gemini-1.5-pro",
+    AIProvider.OPENROUTER: "openai/gpt-4o",
+    AIProvider.AVALAI: "gpt-4o-mini",
+    AIProvider.CUSTOM: "gpt-4o",
+}
+
+# Retry settings
+DEFAULT_MAX_RETRIES = 3
+DEFAULT_RETRY_DELAY = 2.0
+
+# Pricing constants (moved from qude/config.py)
+COST_PER_MILLION_TOKENS_USD_AVALAI = {"input": 2.50, "output": 10.00} # Fallback
+COST_PER_MILLION_TOKENS_IRT_AVALAI = {"input": 150000, "output": 600000} # Approx
+USD_TO_IRT = 60000 # Example exchange rate
+
 TRANSCRIPTION_PROMPT = """[بخش ۱: تعریف نقش و هدف اصلی] تو یک متخصص تراز اول در پیاده‌سازی صوت و ویراستاری حرفه‌ای متن هستی. تخصص اصلی تو، پردازش گفتار محاوره‌ای فارسی است که ممکن است شامل چندین گوینده و واژگان انگلیسی یا عربی باشد. هدف اصلی تو، تبدیل فایل صوتی پیوست شده به یک متن کاملاً دقیق، خوانا و حرفه‌ای از طریق انجام همزمانِ پیاده‌سازی و «ویراستاری صوری و زبانی» است. باید ضمن حفظ کامل معنا، لحن و سبک اصلی گویندگان، خطاها را اصلاح کرده و متن را برای خواننده بهینه کنی.
 [بخش ۲: اطلاعات و زمینه فایل ورودی]
 محتوای فایل:

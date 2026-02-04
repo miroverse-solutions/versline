@@ -1,4 +1,5 @@
 import typer
+from typing import Optional
 from pathlib import Path
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 from loguru import logger
@@ -7,30 +8,45 @@ import os
 from versline.services.transcription import AudioTranscriber
 from versline.config import settings
 from versline.services.network import download_file
+from versline.services.pricing import print_cost_report
 
 app = typer.Typer(help="Transcribe audio/video files.")
 
-@app.command("file")
+@app.callback(invoke_without_command=True)
 def transcribe_file(
-    file_path: str = typer.Argument(..., help="Path or URL to the audio/video file"),
-    output: Path = typer.Option(None, "--output", "-o", help="Output file path"),
+    ctx: typer.Context,
+    file_path: Optional[str] = typer.Argument(None, help="Path or URL to the audio/video file"),
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output file path"),
     chunk_size: int = typer.Option(900, help="Chunk size in seconds"),
     overlap: int = typer.Option(180, help="Overlap size in seconds"),
-    model: str = typer.Option(None, help="LLM Model to use (overrides config)"),
-    provider: str = typer.Option(None, help="LLM Provider (Google, OpenAI, OpenRouter)"),
-    api_key: str = typer.Option(None, help="API Key for the provider"),
+    model: Optional[str] = typer.Option(None, help="LLM Model to use (overrides config)"),
+    provider: Optional[str] = typer.Option(None, help="LLM Provider (Google, OpenAI, OpenRouter, AvalAI, OpenAICompatible)"),
+    api_key: Optional[str] = typer.Option(None, help="API Key for the provider"),
+    api_endpoint: Optional[str] = typer.Option(None, help="Custom API Endpoint"),
+    proxy: Optional[str] = typer.Option(None, help="Proxy URL"),
     # Advanced options
-    prompt_file: Path = typer.Option(None, help="Custom system prompt file"),
+    prompt_file: Optional[Path] = typer.Option(None, help="Custom system prompt file"),
 ):
     """
     Transcribe a single file (or URL).
     """
+    if ctx.invoked_subcommand is not None:
+        return
+
+    if not file_path:
+        typer.echo(ctx.get_help())
+        raise typer.Exit()
+        
     if model:
         settings.llm.model = model
     if provider:
         settings.llm.provider = provider
     if api_key:
         settings.llm.api_key = api_key
+    if api_endpoint:
+        settings.llm.api_endpoint = api_endpoint
+    if proxy:
+        settings.llm.proxy = proxy
         
     resolved_path = file_path
     temp_download = None
@@ -79,6 +95,8 @@ def transcribe_file(
             TextColumn("[progress.description]{task.description}"),
             BarColumn(),
             TaskProgressColumn(),
+            redirect_stdout=True,
+            redirect_stderr=True,
         ) as progress:
             main_task = progress.add_task("[green]Transcribing...", total=100)
             
@@ -104,6 +122,8 @@ def transcribe_file(
             f.write(full_text)
             
         logger.success(f"Transcription saved to: {output_path}")
+
+        print_cost_report(transcriber.tracker, api_key=settings.llm.api_key)
         
     except Exception as e:
         logger.error(f"Transcription failed: {e}")

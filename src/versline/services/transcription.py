@@ -10,10 +10,12 @@ from versline.config import settings
 from versline.services import ai
 from versline.services import media
 from versline.core.prompts import load_prompt
-from versline.utils import find_best_text_overlap_point
+from versline.utils.common import find_best_text_overlap_point
+from versline.services.pricing import TokenTracker
 
 class AudioTranscriber:
     def __init__(self):
+        self.tracker = TokenTracker()
         try:
             self.transcription_prompt = load_prompt("transcription_prompt.md")
         except FileNotFoundError:
@@ -124,20 +126,32 @@ class AudioTranscriber:
         for attempt in range(max_retries):
             try:
                 # Assuming provider selection logic based on settings
-                provider = settings.llm.provider
+                provider = settings.llm.provider.lower() if settings.llm.provider else "google" # Default to google if none?
+                # Actually settings has a default, but let's be safe.
+                # settings.llm.provider defaults to "Google" in config.py.
+                
                 logger.info(f"Processing chunk with {provider} (attempt {attempt+1}/{max_retries})")
                 
                 result = None
-                if provider == "Google":
+                if provider == "google":
                     client = ai.configure_gemini(settings.llm)
                     result = self.transcribe_audio_chunk_by_gemini(client, model_name, audio_path, prompt)
-                elif provider == "OpenAI": # OpenAI
+                elif provider == "openai": # OpenAI
                     client = ai.configure_openai(settings.llm)
-                    # Use opneai compatible for chat completions which handles extensive prompting better than whisper endpoint usually?
-                    # Old code distiguished OpenAI Transcription vs OpenAI Compatible
-                    # Let's assume user wants the chat completion multimodal approach for "transcription + edit"
                     result = self.transcribe_audio_chunk_by_openaicompatible(client, model_name, audio_path, prompt)
-                elif provider == "OpenRouter":
+                elif provider == "avalai":
+                    # Temporarily set endpoint for AvalAI
+                    original_endpoint = settings.llm.api_endpoint
+                    settings.llm.api_endpoint = "https://api.avalai.ir/v1"
+                    try:
+                        client = ai.configure_openai(settings.llm)
+                        result = self.transcribe_audio_chunk_by_openaicompatible(client, model_name, audio_path, prompt)
+                    finally:
+                        settings.llm.api_endpoint = original_endpoint
+                elif provider == "openaicompatible":
+                    client = ai.configure_openai(settings.llm)
+                    result = self.transcribe_audio_chunk_by_openaicompatible(client, model_name, audio_path, prompt)
+                elif provider == "openrouter":
                     client = ai.configure_openrouter(settings.llm)
                     result = self.transcribe_audio_chunk_by_openaicompatible(client, model_name, audio_path, prompt, mode="responses") # OpenRouter often supports standard chat
                 else:
@@ -181,6 +195,12 @@ class AudioTranscriber:
             # Cleanup
             client.files.delete(name=uploaded_file.name)
             
+            if response.usage_metadata:
+                self.tracker.add_usage(
+                    response.usage_metadata.prompt_token_count,
+                    response.usage_metadata.candidates_token_count
+                )
+            
             return response.text
         except Exception as e:
             logger.error(f"Gemini Error: {e}")
@@ -216,7 +236,23 @@ class AudioTranscriber:
                 }
             ]
             
-            completion = client.chat.completions.create(model=model_name, messages=messages)
+            is_avalai = "avalai.ir" in str(client.base_url)
+            
+            if is_avalai and hasattr(client.chat.completions, 'with_raw_response'):
+                response_raw = client.chat.completions.with_raw_response.create(model=model_name, messages=messages)
+                request_id = response_raw.headers.get("x-request-id")
+                if request_id:
+                    self.tracker.add_avalai_request(request_id)
+                completion = response_raw.parse()
+            else:
+                completion = client.chat.completions.create(model=model_name, messages=messages)
+            
+            if completion.usage:
+                self.tracker.add_usage(
+                    completion.usage.prompt_tokens,
+                    completion.usage.completion_tokens
+                )
+
             return completion.choices[0].message.content
         except Exception as e:
             logger.error(f"OpenAI Error: {e}")

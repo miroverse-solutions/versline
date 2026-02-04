@@ -4,7 +4,7 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class LLMSettings(BaseSettings):
-    provider: str = Field(default="Google", description="LLM Provider")
+    provider: str = Field(default="Google", description="LLM Provider (Google, OpenAI, OpenRouter, AvalAI, OpenAICompatible)")
     api_key: Optional[str] = Field(default=None, description="API Key for LLM")
     model: str = Field(default="gemini-2.0-flash", description="LLM Model")
     api_endpoint: Optional[str] = Field(default=None, description="Custom API Endpoint")
