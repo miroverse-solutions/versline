@@ -149,7 +149,13 @@ versline qude [OPTIONS] INPUT_PATH
 | :--- | :--- | :--- | :--- |
 | `--type` | `-t` | Output type: `mcq` (JSON/CSV) or `open` (Descriptive/Flashcards). | `"mcq"` |
 | `--output` | `-o` | Output directory for results. | `"output"` |
-| `--count` | `-c` | Number of questions to generate per chunk/slide. | `5` |
+| `--count` | `-c` | Number of questions to generate per chunk. Default: Max possible. | `None` |
+| `--formats` | | Output formats: `csv`, `anki`, `html`, or `all`. | `"all"` |
+| `--style` | | Path to custom CSS file for Anki/HTML styling. | `None` |
+| `--prompt` | | Path to a custom prompt file to override default system prompt. | `None` |
+| `--slides-per-batch` | | Number of slides per batch (PPTX). | `5` |
+| `--pages-per-batch` | | Number of pages per batch (PDF/DOCX). | `5` |
+| `--words-per-batch` | | Number of words per batch (Text/MD). | `2000` |
 | `--lang` | `-l` | Language for the questions. | `"en"` |
 | `--provider` | `-p` | AI Provider (`openai`, `avalai`, `gemini`, `custom`, etc.). | Config |
 | `--model` | `-m` | AI Model name. | Config |
