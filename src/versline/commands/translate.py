@@ -20,6 +20,7 @@ def translate_file(
     api_key: Optional[str] = typer.Option(None, help="API Key for the provider"),
     api_endpoint: Optional[str] = typer.Option(None, help="Custom API Endpoint"),
     proxy: Optional[str] = typer.Option(None, help="Proxy URL"),
+    force: bool = typer.Option(False, "--force", "-f", help="Force re-translation (ignore cache)"),
 ):
     """
     [bold blue]Translate a text file[/bold blue] to a target language.
@@ -66,7 +67,8 @@ def translate_file(
             final_text = translator.process_file(
                 str(file_path),
                 target_language=target_lang,
-                progress_callback=progress_handler
+                progress_callback=progress_handler,
+                force=force
             )
             
         if output:

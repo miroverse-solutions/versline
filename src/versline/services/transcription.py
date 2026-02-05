@@ -258,12 +258,19 @@ class AudioTranscriber:
             logger.error(f"OpenAI Error: {e}")
             raise
 
-    def process_file(self, file_path: str, chunk_length=900, overlap=180, progress_callback=None):
+    def process_file(self, file_path: str, chunk_length=900, overlap=180, progress_callback=None, force=False):
         file_path = str(Path(file_path).resolve())
         work_dir = Path("work_dir") / Path(file_path).stem
         work_dir.mkdir(parents=True, exist_ok=True)
         temp_dir = work_dir / "temp_chunks"
         progress_file = work_dir / "progress.json"
+        
+        if force and progress_file.exists():
+            logger.warning("Force mode enabled: Deleting previous progress.")
+            try:
+                progress_file.unlink()
+            except OSError as e:
+                logger.warning(f"Failed to delete progress file: {e}")
         
         last_index, transcriptions, _, speaker_samples = self.load_progress(str(progress_file))
         if speaker_samples is None:
@@ -319,7 +326,57 @@ class AudioTranscriber:
         # Merge results
         full_text = self.merge_transcriptions(final_text_blocks, overlap)
         return full_text
+
+    def _clean_json_block(self, text):
+        """Attempts to clean markdown code blocks from JSON string."""
+        text = text.strip()
+        if text.startswith("```json"):
+            text = text[7:]
+        elif text.startswith("```"):
+            text = text[3:]
+        if text.endswith("```"):
+            text = text[:-3]
+        return text.strip()
         
+    def _merge_json_blocks(self, blocks):
+        """Merges multiple JSON transcription blocks into one valid JSON object."""
+        full_text = ""
+        all_segments = []
+        base_meta = {}
+        
+        for i, block_str in enumerate(blocks):
+            try:
+                clean_str = self._clean_json_block(block_str)
+                data = json.loads(clean_str)
+                
+                if i == 0:
+                    base_meta = data.get("meta", {})
+                
+                # Append text
+                chunk_text = data.get("text", "")
+                if full_text and chunk_text:
+                    # heuristic: add space if missing
+                    if not full_text.endswith(" ") and not chunk_text.startswith(" "):
+                         full_text += " "
+                full_text += chunk_text
+                
+                # Append segments
+                # Note: This basic merge does NOT correct timestamps or IDs from chunks.
+                # It simply aggregates them to produce valid JSON syntax.
+                segs = data.get("segments", [])
+                all_segments.extend(segs)
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to parse JSON chunk {i}: {e}")
+                # Fallback: append raw text to full_text to avoid data loss
+                full_text += f"\n[JSON PARSE ERROR IN CHUNK {i}]\n"
+                
+        merged = {
+            "meta": base_meta,
+            "text": full_text,
+            "segments": all_segments
+        }
+        return json.dumps(merged, ensure_ascii=False, indent=2)
+
     def merge_transcriptions(self, blocks, overlap_sec):
         # Naive merge or smart overlap merge
         # For simplicity, using simple join for now as smart overlap requires text analysis
@@ -327,6 +384,18 @@ class AudioTranscriber:
         
         if not blocks:
             return ""
+        
+        # Check for JSON format in first block to determine strategy
+        try:
+            first_clean = self._clean_json_block(blocks[0])
+            first_json = json.loads(first_clean)
+            if isinstance(first_json, dict) and ("segments" in first_json or "text" in first_json):
+                logger.info("Detected JSON output, using JSON merge strategy.")
+                return self._merge_json_blocks(blocks)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            # Not JSON, proceed with text merge
+            pass
+
         if len(blocks) == 1:
             return blocks[0]
             

@@ -115,7 +115,7 @@ class TextTranslator:
         
         raise RuntimeError(f"Failed to translate chunk after {max_retries} attempts")
 
-    def process_file(self, file_path: str, target_language="Persian", progress_callback=None):
+    def process_file(self, file_path: str, target_language="Persian", progress_callback=None, force=False):
         text = Path(file_path).read_text(encoding="utf-8")
         chunks = self.split_text(text)
         

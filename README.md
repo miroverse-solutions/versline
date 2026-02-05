@@ -106,6 +106,8 @@ versline transcribe [OPTIONS] FILE_PATH
 | `--chunk-size` | | Length of audio chunks in seconds. | `900` (15 min) |
 | `--overlap` | | Overlap between chunks in seconds to preserve context. | `180` (3 min) |
 | `--prompt-file` | | Path to a custom system prompt file (markdown). | `None` |
+| `--json` | `-j` | Output in JSON format (schema-based editor/diarization). | `False` |
+| `--force` | `-f` | Force re-transcription (ignore cache/progress). | `False` |
 
 ---
 
@@ -130,6 +132,7 @@ versline translate [OPTIONS] FILE_PATH
 | `--api-key` | | API Key. | Config |
 | `--api-endpoint` | | Custom API Endpoint. | Config |
 | `--proxy` | | Proxy URL. | Config |
+| `--force` | `-f` | Force re-translation (ignore cache). | `False` |
 
 ---
 

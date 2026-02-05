@@ -9,6 +9,7 @@ from versline.services.transcription import AudioTranscriber
 from versline.config import settings
 from versline.services.network import download_file
 from versline.services.pricing import print_cost_report
+from versline.core.prompts import load_prompt
 
 app = typer.Typer(help="Transcribe audio/video files.")
 
@@ -26,6 +27,8 @@ def transcribe_file(
     proxy: Optional[str] = typer.Option(None, help="Proxy URL"),
     # Advanced options
     prompt_file: Optional[Path] = typer.Option(None, help="Custom system prompt file"),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output in JSON format (using predefined schema)"),
+    force: bool = typer.Option(False, "--force", "-f", help="Force re-transcription (ignore cache)"),
 ):
     """
     Transcribe a single file (or URL).
@@ -83,9 +86,16 @@ def transcribe_file(
     if prompt_file:
         if prompt_file.exists():
             transcriber.transcription_prompt = prompt_file.read_text(encoding="utf-8")
-            logger.info("Loaded custom prompt.")
+            logger.info("Loaded custom prompt from file.")
         else:
             logger.warning(f"Prompt file not found: {prompt_file}. Using default.")
+    elif json_output:
+        try:
+            transcriber.transcription_prompt = load_prompt("transcription_json_prompt.md")
+            logger.info("Loaded JSON transcription prompt.")
+        except Exception as e:
+            logger.error(f"Failed to load JSON prompt: {e}")
+            raise typer.Exit(code=1)
 
     try:
         # Progress bar context
@@ -107,14 +117,16 @@ def transcribe_file(
                 str(resolved_path),
                 chunk_length=chunk_size,
                 overlap=overlap,
-                progress_callback=progress_handler
+                progress_callback=progress_handler,
+                force=force,
             )
         
         if output:
             output_path = output
         else:
-            # If URL, resolved_path is temp file, make output in current dir based on temp filename
-            out_name = Path(resolved_path).with_suffix(".md").name
+            # If URL, resolved_path is temp file, make output in current dir based on original/temp filename
+            ext = ".json" if json_output else ".md"
+            out_name = Path(resolved_path).with_suffix(ext).name
             output_path = Path("output") / out_name
             output_path.parent.mkdir(parents=True, exist_ok=True)
             
