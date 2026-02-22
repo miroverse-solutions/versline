@@ -1,0 +1,8 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^python - <<'PY'\nimport csv\nfrom pathlib import Path\np=Path\\('/home/mirza/projects/versline/output/qual_detailed_check'\\)\ncsv_path=sorted\\(p\\.glob\\('\\*_detailed_\\*\\.csv'\\)\\)\\[-1\\]\nxlsx_path=csv_path\\.with_suffix\\('\\.xlsx'\\)\nwith csv_path\\.open\\('r',encoding='utf-8',newline=''\\) as f:\n    r=csv\\.DictReader\\(f\\)\n    rows=list\\(r\\)\nprint\\('csv=', csv_path\\)\nprint\\('xlsx_exists=', xlsx_path\\.exists\\(\\)\\)\nprint\\('columns=', r\\.fieldnames\\)\nprint\\('rows=', len\\(rows\\)\\)\nprint\\('first_row_keys=', list\\(rows\\[0\\]\\.keys\\(\\)\\) if rows else None\\)\nPY$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}
