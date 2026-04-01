@@ -18,9 +18,24 @@ class FFmpegSettings(BaseSettings):
     
     model_config = SettingsConfigDict(env_prefix='VERSLINE_FFMPEG_', env_file='.env', extra='ignore')
 
+
+class RAGSettings(BaseSettings):
+    vector_backend: str = Field(default="qdrant", description="Vector backend type")
+    collection_name: str = Field(default="versline_docs", description="Default vector collection")
+    qdrant_url: str = Field(default="http://localhost:6333", description="Qdrant URL")
+    qdrant_api_key: Optional[str] = Field(default=None, description="Qdrant API key")
+    qdrant_distance: str = Field(default="cosine", description="Vector distance metric")
+    embedding_model: str = Field(default="text-embedding-3-small", description="Embedding model")
+    chunk_size: int = Field(default=1200, description="Chunk size in characters")
+    chunk_overlap: int = Field(default=200, description="Chunk overlap in characters")
+    generation_prompt_file: str = Field(default="rag_generate_prompt.md", description="Prompt file used for RAG generation")
+
+    model_config = SettingsConfigDict(env_prefix='VERSLINE_RAG_', env_file='.env', extra='ignore')
+
 class Settings(BaseSettings):
     llm: LLMSettings = Field(default_factory=LLMSettings)
     ffmpeg: FFmpegSettings = Field(default_factory=FFmpegSettings)
+    rag: RAGSettings = Field(default_factory=RAGSettings)
     
     # Common settings
     output_directory: Path = Field(default=Path("output"), description="Default output directory")

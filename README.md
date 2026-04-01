@@ -76,6 +76,12 @@ VERSLINE_LLM_API_KEY=your_api_key_here
 VERSLINE_LLM_MODEL=gemini-2.0-flash
 VERSLINE_LLM_PROXY=http://127.0.0.1:2080 # Optional
 # VERSLINE_LLM_API_ENDPOINT=https://custom-api.example.com/v1 # Optional
+
+VERSLINE_RAG_VECTOR_BACKEND=qdrant
+VERSLINE_RAG_COLLECTION_NAME=versline_docs
+VERSLINE_RAG_QDRANT_URL=http://localhost:6333
+# VERSLINE_RAG_QDRANT_API_KEY=your_qdrant_api_key_here
+VERSLINE_RAG_EMBEDDING_MODEL=text-embedding-3-small
 ```
 
 
@@ -216,6 +222,29 @@ versline qualcode interview.md --codebook examples/qualcode/codebook.sample.json
 
 # Guided: codebook codes + new codes when needed
 versline qualcode interview.md --codebook examples/qualcode/codebook.sample.txt --code-mode guided
+```
+
+---
+
+### 🧩 `rag`
+Run modular RAG pipelines with preprocessing, ingestion, retrieval, and generation.
+
+**Usage:**
+```bash
+versline rag [COMMAND] [OPTIONS]
+```
+
+**Commands:**
+- `ingest`: ingest a file into vector store (currently Markdown/Text input)
+- `ask`: retrieve context and generate answer from indexed content
+
+**Examples:**
+```bash
+# Ingest markdown into Qdrant collection
+versline rag ingest notes.md --collection my_docs --provider OpenAI --api-key $OPENAI_API_KEY
+
+# Ask from collection
+versline rag ask "خلاصه نکات اصلی چیست؟" --collection my_docs --top-k 5 --provider OpenAI --api-key $OPENAI_API_KEY
 ```
 
 ---
