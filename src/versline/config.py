@@ -1,7 +1,13 @@
 from typing import Optional
 from pathlib import Path
+import os
+import warnings
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from dotenv import load_dotenv
+
+
+ENV_FILE_ENV_VAR = "VERSLINE_ENV_FILE"
 
 class LLMSettings(BaseSettings):
     provider: str = Field(default="Google", description="LLM Provider (Google, OpenAI, OpenRouter, AvalAI, OpenAICompatible)")
@@ -89,5 +95,45 @@ class Settings(BaseSettings):
     
     model_config = SettingsConfigDict(env_prefix='VERSLINE_', env_file='.env', extra='ignore')
 
+
+def _resolve_env_file_path(env_file: Optional[Path]) -> Optional[Path]:
+    if env_file is not None:
+        return Path(env_file).expanduser()
+
+    env_file_value = os.getenv(ENV_FILE_ENV_VAR)
+    if not env_file_value:
+        return None
+    return Path(env_file_value).expanduser()
+
+
+def _load_env_file(env_path: Path, *, override: bool, raise_if_missing: bool) -> None:
+    if not env_path.exists() or not env_path.is_file():
+        if raise_if_missing:
+            raise FileNotFoundError(f"Env file not found: {env_path}")
+        warnings.warn(f"Env file from {ENV_FILE_ENV_VAR} not found: {env_path}", stacklevel=2)
+        return
+    load_dotenv(dotenv_path=env_path, override=override)
+
+
+_bootstrap_env_path = _resolve_env_file_path(None)
+if _bootstrap_env_path is not None:
+    _load_env_file(_bootstrap_env_path, override=False, raise_if_missing=False)
+
+
 # Global settings instance
 settings = Settings()
+
+
+def reload_settings(env_file: Optional[Path] = None, *, override_env: bool = True) -> Settings:
+    env_path = _resolve_env_file_path(env_file)
+    if env_path is not None:
+        effective_override = override_env if env_file is not None else False
+        _load_env_file(env_path, override=effective_override, raise_if_missing=True)
+
+    refreshed_settings = Settings()
+    settings.llm = refreshed_settings.llm
+    settings.ffmpeg = refreshed_settings.ffmpeg
+    settings.rag = refreshed_settings.rag
+    settings.output_directory = refreshed_settings.output_directory
+    settings.temp_directory = refreshed_settings.temp_directory
+    return settings

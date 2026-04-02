@@ -1,7 +1,9 @@
 import typer
 from loguru import logger
 import sys
-from versline.config import settings
+from pathlib import Path
+from typing import Optional
+from versline.config import settings, reload_settings
 from versline.commands import transcribe, translate, qude, qualcode, rag
 
 app = typer.Typer(
@@ -21,6 +23,15 @@ app.add_typer(rag.app, name="rag", help="[cyan]Run RAG pipelines[/cyan] with ing
 @app.callback()
 def main(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging"),
+    env_file: Optional[Path] = typer.Option(
+        None,
+        "--env-file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        resolve_path=True,
+        help="Path to a custom .env file loaded before command execution",
+    ),
 ):
     """
     [bold]Versline[/bold] is a powerful toolkit for automated media processing.
@@ -33,6 +44,9 @@ def main(
     
     [dim]Run 'versline COMMAND --help' for more info on specific commands.[/dim]
     """
+    if env_file is not None:
+        reload_settings(env_file=env_file)
+
     configure_logging(verbose)
     # logger.debug(f"Loaded settings: {settings.model_dump()}")
 

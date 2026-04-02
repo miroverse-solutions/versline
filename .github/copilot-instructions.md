@@ -47,6 +47,21 @@ You are an expert developer working on **Versline**, a Python-based CLI toolkit 
   - Markdown code blocks (````json ... ````) are stripped from LLM responses before parsing.
   - Multi-chunk JSON responses are merged intelligently (concatenating lists, merging text), not just appended.
 
+### 6. Configuration Loading (`config.py`)
+- **Single Source of Truth**: Keep configuration loading centralized in `src/versline/config.py`.
+- **Do NOT load dotenv in commands/services**: Use `versline.config.settings` and `versline.config.reload_settings(...)` instead of ad-hoc `load_dotenv` usage.
+- **Supported Env Sources (current behavior):**
+  1. CLI command options (e.g. `--api-key`) override settings at runtime.
+  2. Global CLI `--env-file` (on root command) loads a custom env file before subcommands.
+  3. Process environment variables are respected.
+  4. Local `.env` is read by pydantic settings (`env_file='.env'`).
+  5. `VERSLINE_ENV_FILE` acts as fallback custom env path when `--env-file` is not provided.
+- **Override Semantics**:
+  - Explicit `reload_settings(env_file=...)` should override existing env keys.
+  - Fallback via `VERSLINE_ENV_FILE` should not overwrite already-defined process env values.
+- **Library Usage Contract**:
+  - In embedded/library scenarios, call `reload_settings('/path/to/.env')` when a non-default env file must be applied.
+
 ## 🛠️ Workflows & Commands
 
 ### Build & Install

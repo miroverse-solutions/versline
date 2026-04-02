@@ -4,7 +4,7 @@ from versline.services.transcription import AudioTranscriber
 from versline.services.translation import TextTranslator
 from versline.services.network import download_file
 from versline.services.qualitative_coding import QualitativeCoder
-from versline.config import settings
+from versline.config import settings, reload_settings
 
 __all__ = [
 	"AudioTranscriber",
@@ -12,4 +12,5 @@ __all__ = [
 	"download_file",
 	"QualitativeCoder",
 	"settings",
+	"reload_settings",
 ]

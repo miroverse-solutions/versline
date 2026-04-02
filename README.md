@@ -64,8 +64,38 @@ versline --install-completion
 You can configure Versline using any of the following methods (in order of priority):
 
 1.  **CLI Arguments**: Pass directly to commands (e.g., `--api-key`, `--proxy`).
-2.  **`.env` File**: Create a `.env` file in your working directory.
-3.  **Environment Variables**: Export variables in your shell.
+2.  **Environment Variables**: Export variables in your shell.
+3.  **`.env` File**: Create a `.env` file in your working directory.
+
+You can also load a custom env file for any CLI command:
+
+```bash
+versline --env-file /path/to/.env rag ask "main points" --collection my_docs
+```
+
+Or set a global fallback once (applies automatically when `--env-file` is not provided):
+
+```bash
+export VERSLINE_ENV_FILE=/path/to/.env
+```
+
+### Configuration Precedence Matrix
+
+| Source | When applied | Overrides existing process env? | Priority |
+| :--- | :--- | :--- | :--- |
+| CLI arguments (e.g. `--api-key`) | At command execution | Yes (runtime settings override) | Highest |
+| `--env-file /path/to/.env` | Global CLI option before subcommand runs | Yes | High |
+| Process environment variables (`VERSLINE_*`) | Always (OS/shell exported env) | N/A | Medium |
+| Local `.env` (pydantic `env_file='.env'`) | During settings construction | No (does not override existing env) | Low |
+| `VERSLINE_ENV_FILE=/path/to/.env` fallback | During bootstrap/reload when `--env-file` is not provided | No | Low (custom fallback) |
+
+For library mode, if you need a guaranteed override from a specific file, use:
+
+```python
+from versline import reload_settings
+
+reload_settings("/path/to/.env")
+```
 
 ### `.env` File Example
 Run `cp .env.example .env` to start, or create one manually:
@@ -344,7 +374,14 @@ Versline is designed to be easily imported into your Python projects.
 
 ### Basic Setup
 ```python
-from versline import AudioTranscriber, TextTranslator, download_file, settings
+from versline import AudioTranscriber, TextTranslator, download_file, settings, reload_settings
+
+# Optional: load a specific env file in library mode
+reload_settings("/path/to/.env")
+
+# Or rely on fallback from environment variable:
+# os.environ["VERSLINE_ENV_FILE"] = "/path/to/.env"
+# reload_settings()
 
 # Configure globally (or load from .env automatically)
 settings.llm.provider = "AvalAI"
