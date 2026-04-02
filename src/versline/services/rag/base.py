@@ -26,6 +26,15 @@ class RetrievedChunk:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass
+class WebSearchResult:
+    title: str
+    url: str
+    snippet: str
+    score: float = 0.0
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
 class BasePreprocessor(ABC):
     @abstractmethod
     def preprocess(self, file_path: str, **kwargs) -> List[Document]:
@@ -106,4 +115,10 @@ class BaseGenerator(ABC):
 class BaseReranker(ABC):
     @abstractmethod
     def rerank(self, query: str, items: List[RetrievedChunk], top_k: int) -> List[RetrievedChunk]:
+        raise NotImplementedError
+
+
+class BaseWebSearcher(ABC):
+    @abstractmethod
+    def search(self, query: str, top_k: int = 5, **kwargs) -> List[WebSearchResult]:
         raise NotImplementedError

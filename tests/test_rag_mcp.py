@@ -134,7 +134,8 @@ class TestRAGMCP(unittest.TestCase):
             result = pipeline.generate(query="test", top_k=1)
             self.assertEqual(result["answer"], "ok")
             self.assertTrue(result["external_context_used"])
-            self.assertEqual(generator.last_external_context, "external mcp context")
+            self.assertIn("[MCP External Context]", generator.last_external_context)
+            self.assertIn("external mcp context", generator.last_external_context)
             temp_dir.cleanup()
         finally:
             settings.rag.mcp_enabled = prev_mcp_enabled

@@ -10,7 +10,7 @@ from loguru import logger
 
 from versline.config import settings
 from versline.services.pricing import TokenTracker
-from versline.services.rag.base import BaseChunker, BaseEmbedder, BaseGenerator, BaseReranker, Chunk, RetrievedChunk
+from versline.services.rag.base import BaseChunker, BaseEmbedder, BaseGenerator, BaseReranker, BaseWebSearcher, Chunk, RetrievedChunk
 from versline.services.rag.chunkers import SlidingWindowChunker
 from versline.services.rag.embedders import FastEmbedSparseEmbedder, OpenAICompatibleEmbedder
 from versline.services.rag.generators import PromptRAGGenerator
@@ -20,6 +20,7 @@ from versline.services.rag.rerankers import CohereReranker, JinaReranker, OpenAI
 from versline.services.rag.registry import PreprocessorRegistry, VectorStoreRegistry
 from versline.services.rag.runtime import ProgressStateStore, RateLimiter, TokenRateLimiter
 from versline.services.rag.vectorstores import QdrantVectorStore
+from versline.services.rag.websearch import build_default_web_search_registry
 
 
 class RAGPipeline:
@@ -30,6 +31,7 @@ class RAGPipeline:
         sparse_embedder: Optional[Any] = None,
         reranker: Optional[BaseReranker] = None,
         mcp_client: Optional[Any] = None,
+        web_searcher: Optional[BaseWebSearcher] = None,
         generator: Optional[BaseGenerator] = None,
         preprocessor_registry: Optional[PreprocessorRegistry] = None,
         vector_store_registry: Optional[VectorStoreRegistry] = None,
@@ -109,6 +111,33 @@ class RAGPipeline:
                     proxy=settings.rag.mcp_proxy,
                 )
             )
+
+        self.web_searcher = web_searcher
+        if self.web_searcher is None and settings.rag.web_search_enabled:
+            provider = (settings.rag.web_search_provider or "duckduckgo").lower()
+            registry = build_default_web_search_registry()
+            try:
+                if provider == "tavily":
+                    api_key = settings.rag.web_search_api_key
+                    if not api_key:
+                        logger.warning("Web search provider 'tavily' selected without API key; web search disabled.")
+                    else:
+                        self.web_searcher = registry.create(
+                            provider,
+                            api_key=api_key,
+                            endpoint=settings.rag.web_search_endpoint,
+                            proxy=settings.rag.web_search_proxy,
+                            timeout_seconds=settings.rag.web_search_timeout_seconds,
+                        )
+                else:
+                    self.web_searcher = registry.create(
+                        provider,
+                        endpoint=settings.rag.web_search_endpoint,
+                        proxy=settings.rag.web_search_proxy,
+                        timeout_seconds=settings.rag.web_search_timeout_seconds,
+                    )
+            except Exception as error:
+                logger.warning(f"Web search initialization failed: {error}")
 
         self.preprocessors = preprocessor_registry or PreprocessorRegistry()
         self.preprocessors.register("markdown", MarkdownPreprocessor())
@@ -387,6 +416,8 @@ class RAGPipeline:
             collection_name=collection_name,
             filters=filters,
         )
+
+        external_context_sections: List[str] = []
         mcp_context = ""
         if settings.rag.mcp_enabled and self.mcp_client is not None:
             try:
@@ -397,18 +428,68 @@ class RAGPipeline:
                         "collection_name": collection_name or self.collection_name,
                     },
                 )
+                if mcp_context.strip():
+                    external_context_sections.append(
+                        "[MCP External Context]\n"
+                        f"{mcp_context.strip()}"
+                    )
             except Exception as error:
                 logger.warning(f"MCP context fetch failed: {error}")
+
+        web_context_used = False
+        web_results_payload: List[Dict[str, Any]] = []
+        if settings.rag.web_search_enabled and self.web_searcher is not None:
+            try:
+                web_results = self.web_searcher.search(
+                    query=query,
+                    top_k=settings.rag.web_search_top_k,
+                )
+                if web_results:
+                    web_context_used = True
+                    web_lines: List[str] = []
+                    for idx, item in enumerate(web_results, start=1):
+                        snippet = (item.snippet or "").strip()
+                        if snippet:
+                            web_lines.append(
+                                f"[{idx}] title={item.title or 'untitled'}\n"
+                                f"url={item.url}\n"
+                                f"snippet={snippet}"
+                            )
+                        web_results_payload.append(
+                            {
+                                "title": item.title,
+                                "url": item.url,
+                                "snippet": item.snippet,
+                                "score": item.score,
+                                "metadata": item.metadata,
+                            }
+                        )
+                    if web_lines:
+                        web_context = "\n\n".join(web_lines)
+                        max_chars = int(settings.rag.web_search_max_context_chars or 0)
+                        if max_chars > 0:
+                            web_context = web_context[:max_chars]
+                        external_context_sections.append(
+                            "[Web Search Context]\n"
+                            f"{web_context}"
+                        )
+            except Exception as error:
+                logger.warning(f"Web search context fetch failed: {error}")
+
+        merged_external_context = "\n\n".join(external_context_sections).strip()
 
         answer = self.generator.generate(
             query=query,
             context_chunks=context_chunks,
-            external_context=mcp_context,
+            external_context=merged_external_context,
         )
         return {
             "query": query,
             "answer": answer,
-            "external_context_used": bool(mcp_context),
+            "external_context_used": bool(merged_external_context),
+            "mcp_context_used": bool(mcp_context),
+            "web_context_used": web_context_used,
+            "web_sources": web_results_payload,
             "sources": [
                 {
                     "id": item.id,

@@ -62,6 +62,15 @@ def _apply_rag_overrides(
     mcp_timeout_seconds: Optional[int],
     mcp_max_context_chars: Optional[int],
     mcp_proxy: Optional[str],
+    web_search_enabled: Optional[bool],
+    web_search_provider: Optional[str],
+    web_search_api_key: Optional[str],
+    web_search_endpoint: Optional[str],
+    web_search_timeout_seconds: Optional[int],
+    web_search_top_k: Optional[int],
+    web_search_proxy: Optional[str],
+    web_search_max_context_chars: Optional[int],
+    web_search_rpm: Optional[int],
 ):
     if embedding_proxy is not None:
         settings.rag.embedding_proxy = embedding_proxy
@@ -125,6 +134,24 @@ def _apply_rag_overrides(
         settings.rag.mcp_max_context_chars = mcp_max_context_chars
     if mcp_proxy is not None:
         settings.rag.mcp_proxy = mcp_proxy
+    if web_search_enabled is not None:
+        settings.rag.web_search_enabled = web_search_enabled
+    if web_search_provider is not None:
+        settings.rag.web_search_provider = web_search_provider
+    if web_search_api_key is not None:
+        settings.rag.web_search_api_key = web_search_api_key
+    if web_search_endpoint is not None:
+        settings.rag.web_search_endpoint = web_search_endpoint
+    if web_search_timeout_seconds is not None:
+        settings.rag.web_search_timeout_seconds = web_search_timeout_seconds
+    if web_search_top_k is not None:
+        settings.rag.web_search_top_k = web_search_top_k
+    if web_search_proxy is not None:
+        settings.rag.web_search_proxy = web_search_proxy
+    if web_search_max_context_chars is not None:
+        settings.rag.web_search_max_context_chars = web_search_max_context_chars
+    if web_search_rpm is not None:
+        settings.rag.rate_limit_web_search_rpm = web_search_rpm
 
 
 @app.command("ingest")
@@ -177,6 +204,15 @@ def ingest(
     mcp_timeout_seconds: Optional[int] = typer.Option(None, "--mcp-timeout", help="MCP timeout seconds"),
     mcp_max_context_chars: Optional[int] = typer.Option(None, "--mcp-max-context-chars", help="Max chars from MCP context"),
     mcp_proxy: Optional[str] = typer.Option(None, "--mcp-proxy", help="Proxy only for MCP http transport"),
+    web_search: Optional[bool] = typer.Option(None, "--web-search/--no-web-search", help="Enable external web search context"),
+    web_search_provider: Optional[str] = typer.Option(None, "--web-search-provider", help="Web search provider (duckduckgo, tavily)"),
+    web_search_api_key: Optional[str] = typer.Option(None, "--web-search-api-key", help="Web search provider API key"),
+    web_search_endpoint: Optional[str] = typer.Option(None, "--web-search-endpoint", help="Custom web search endpoint"),
+    web_search_timeout_seconds: Optional[int] = typer.Option(None, "--web-search-timeout", help="Web search timeout seconds"),
+    web_search_top_k: Optional[int] = typer.Option(None, "--web-search-top-k", help="Web results included as external context"),
+    web_search_proxy: Optional[str] = typer.Option(None, "--web-search-proxy", help="Proxy used only for web search"),
+    web_search_max_context_chars: Optional[int] = typer.Option(None, "--web-search-max-context-chars", help="Max chars from web search context"),
+    web_search_rpm: Optional[int] = typer.Option(None, "--web-search-rpm", help="Rate limit for web search (req/min)"),
 ):
     from versline.services.rag import RAGPipeline
 
@@ -213,6 +249,15 @@ def ingest(
         mcp_timeout_seconds=mcp_timeout_seconds,
         mcp_max_context_chars=mcp_max_context_chars,
         mcp_proxy=mcp_proxy,
+        web_search_enabled=web_search,
+        web_search_provider=web_search_provider,
+        web_search_api_key=web_search_api_key,
+        web_search_endpoint=web_search_endpoint,
+        web_search_timeout_seconds=web_search_timeout_seconds,
+        web_search_top_k=web_search_top_k,
+        web_search_proxy=web_search_proxy,
+        web_search_max_context_chars=web_search_max_context_chars,
+        web_search_rpm=web_search_rpm,
     )
 
     pipeline = RAGPipeline(
@@ -297,6 +342,15 @@ def ask(
     mcp_timeout_seconds: Optional[int] = typer.Option(None, "--mcp-timeout", help="MCP timeout seconds"),
     mcp_max_context_chars: Optional[int] = typer.Option(None, "--mcp-max-context-chars", help="Max chars from MCP context"),
     mcp_proxy: Optional[str] = typer.Option(None, "--mcp-proxy", help="Proxy only for MCP http transport"),
+    web_search: Optional[bool] = typer.Option(None, "--web-search/--no-web-search", help="Enable external web search context"),
+    web_search_provider: Optional[str] = typer.Option(None, "--web-search-provider", help="Web search provider (duckduckgo, tavily)"),
+    web_search_api_key: Optional[str] = typer.Option(None, "--web-search-api-key", help="Web search provider API key"),
+    web_search_endpoint: Optional[str] = typer.Option(None, "--web-search-endpoint", help="Custom web search endpoint"),
+    web_search_timeout_seconds: Optional[int] = typer.Option(None, "--web-search-timeout", help="Web search timeout seconds"),
+    web_search_top_k: Optional[int] = typer.Option(None, "--web-search-top-k", help="Web results included as external context"),
+    web_search_proxy: Optional[str] = typer.Option(None, "--web-search-proxy", help="Proxy used only for web search"),
+    web_search_max_context_chars: Optional[int] = typer.Option(None, "--web-search-max-context-chars", help="Max chars from web search context"),
+    web_search_rpm: Optional[int] = typer.Option(None, "--web-search-rpm", help="Rate limit for web search (req/min)"),
 ):
     from versline.services.rag import RAGPipeline
 
@@ -333,6 +387,15 @@ def ask(
         mcp_timeout_seconds=mcp_timeout_seconds,
         mcp_max_context_chars=mcp_max_context_chars,
         mcp_proxy=mcp_proxy,
+        web_search_enabled=web_search,
+        web_search_provider=web_search_provider,
+        web_search_api_key=web_search_api_key,
+        web_search_endpoint=web_search_endpoint,
+        web_search_timeout_seconds=web_search_timeout_seconds,
+        web_search_top_k=web_search_top_k,
+        web_search_proxy=web_search_proxy,
+        web_search_max_context_chars=web_search_max_context_chars,
+        web_search_rpm=web_search_rpm,
     )
 
     pipeline = RAGPipeline(

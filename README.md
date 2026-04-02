@@ -138,6 +138,15 @@ VERSLINE_RAG_MCP_TRANSPORT=http
 VERSLINE_RAG_MCP_TOOL_NAME=retrieve_context
 VERSLINE_RAG_MCP_TIMEOUT_SECONDS=30
 VERSLINE_RAG_MCP_MAX_CONTEXT_CHARS=8000
+VERSLINE_RAG_WEB_SEARCH_ENABLED=false
+VERSLINE_RAG_WEB_SEARCH_PROVIDER=duckduckgo
+# VERSLINE_RAG_WEB_SEARCH_API_KEY=your_tavily_api_key_here
+# VERSLINE_RAG_WEB_SEARCH_ENDPOINT=https://api.tavily.com/search
+VERSLINE_RAG_WEB_SEARCH_TIMEOUT_SECONDS=15
+VERSLINE_RAG_WEB_SEARCH_TOP_K=3
+# VERSLINE_RAG_WEB_SEARCH_PROXY=http://127.0.0.1:2080
+VERSLINE_RAG_WEB_SEARCH_MAX_CONTEXT_CHARS=6000
+VERSLINE_RAG_RATE_LIMIT_WEB_SEARCH_RPM=0
 VERSLINE_RAG_RETRY_MAX_RETRIES=4
 ```
 
@@ -320,6 +329,12 @@ versline rag ask "main points" --collection my_docs --mcp --mcp-transport http -
 
 # Ask with MCP external context (stdio mode)
 versline rag ask "main points" --collection my_docs --mcp --mcp-transport stdio --mcp-server-command npx --mcp-server-args "@modelcontextprotocol/server-filesystem /home/mirza/projects/versline"
+
+# Ask with web search context (DuckDuckGo, no API key)
+versline rag ask "latest updates about qdrant hybrid search" --collection my_docs --web-search --web-search-provider duckduckgo --web-search-top-k 3
+
+# Ask with Tavily web search context + per-service rate limit/proxy
+versline rag ask "main points" --collection my_docs --web-search --web-search-provider tavily --web-search-api-key $TAVILY_API_KEY --web-search-rpm 60 --web-search-proxy http://127.0.0.1:2080
 
 # Ask with dedicated rerank model
 versline rag ask "main points" --collection my_docs --hybrid --rerank --rerank-provider cohere --rerank-model rerank-v3.5 --rerank-api-key $COHERE_API_KEY

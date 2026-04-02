@@ -69,7 +69,7 @@ class PromptRAGGenerator(BaseGenerator):
         if isinstance(external_context, str) and external_context.strip():
             context = (
                 f"{context}\n\n"
-                "[MCP External Context]\n"
+                "[External Context]\n"
                 f"{external_context.strip()}"
             )
 
