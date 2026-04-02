@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import hashlib
+import uuid
 from typing import List
 
 from versline.services.rag.base import BaseChunker, Chunk, Document
@@ -32,7 +32,7 @@ class SlidingWindowChunker(BaseChunker):
                 if chunk_text:
                     source = str(doc.metadata.get("source", "unknown"))
                     stable_key = f"{source}:{doc_index}:{part_index}:{chunk_text[:50]}"
-                    chunk_id = hashlib.sha1(stable_key.encode("utf-8")).hexdigest()
+                    chunk_id = str(uuid.uuid5(uuid.NAMESPACE_URL, stable_key))
                     chunk_meta = {
                         **doc.metadata,
                         "doc_index": doc_index,
