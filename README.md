@@ -325,6 +325,67 @@ versline rag ask "main points" --collection my_docs --mcp --mcp-transport stdio 
 versline rag ask "main points" --collection my_docs --hybrid --rerank --rerank-provider cohere --rerank-model rerank-v3.5 --rerank-api-key $COHERE_API_KEY
 ```
 
+### RAG Ecosystem Comparison (Web Research Snapshot — 2026-04-02)
+
+The table below compares publicly available options that are close to Versline's RAG direction, based on official repository/docs sources.
+
+#### 1) Library-First Comparison (Features, Quality, Ease of Use)
+
+This quick matrix focuses specifically on **library usage** (not CLI), based on practical developer experience patterns and public project direction.
+
+| Project | Features | RAG Output Quality | Library Ease of Use | Best Fit |
+| :--- | :---: | :---: | :---: | :--- |
+| **Versline (this repo)** | High (focused) | Very Good | Very Good (for current scope) | Ready-to-use ingestion/ask flow with built-in hybrid, rerank, rate limits, MCP |
+| **LlamaIndex** | High | Very Good | Very Good | Fastest path for Python-first RAG apps with low boilerplate |
+| **Haystack** | Very High | Excellent (production pipelines) | Medium–High | Complex, composable, production-grade pipelines and orchestration |
+| **LangChain** | Very High (ecosystem) | Good–Very Good (depends on composition) | Medium | Flexible framework when you need broad integrations and custom chains |
+| **txtai** | Medium–High | Good | High | Lightweight library/API-first setups with simple deployment paths |
+
+#### 2) Operational Capabilities Matrix
+
+This matrix checks three practical production needs: request/token rate limiting (and their combination), token usage tracking, and proxy-readiness.
+
+| Project | Rate Limiting (Request + Token + Combination) | Token Tracker | Proxy Config Ready |
+| :--- | :---: | :---: | :---: |
+| **Versline (this repo)** | ✅ Native (RPM + TPM + combined) | ✅ Native | ✅ Native (per service) |
+| **LlamaIndex** | ✅ Native (`requests_per_minute` + `tokens_per_minute`) | ✅ (`TokenCountingHandler`) | ⚠️ Provider/client dependent |
+| **Haystack** | ⚠️ Primarily retry/fallback; no clear global native RPM+TPM combo | ✅ (`meta.usage` token usage fields) | ✅ (`http_client_kwargs`) |
+| **LangChain** | ⚠️ Native request limiter, but no native token-based combo limiter | ✅ (`UsageMetadataCallbackHandler` / callbacks) | ✅ (`openai_proxy` and client config) |
+| **txtai** | ❌ No clear native unified RPM/TPM limiter in core | ⚠️ Not a unified built-in token tracker in core | ⚠️ Mostly backend/kwargs dependent |
+
+Legend: ✅ supported natively, ⚠️ partial or backend-dependent, ❌ not clearly available as a native unified capability.
+
+*Proxy footnote:* In Versline, the ability to keep `qdrant` outside proxy routing while applying proxies to other services required additional customization due to practical limitations in `qdrant-client`; this behavior is implemented.
+
+#### 3) Ecosystem Coverage (CLI, Library, Ingest/Query, Service Mode)
+
+| Project | RAG CLI | Python Library | Ingest + Query Flow | Service/API Mode | Notes vs Versline |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Versline (this repo)** | ✅ `versline rag ingest/ask` | ✅ (`versline.services.rag`) | ✅ built-in with resumable ingest, hybrid + rerank, rate limits, MCP | ⚠️ Not a standalone HTTP service yet (CLI-first) | Strong CLI UX + provider-agnostic settings + resumability out of the box |
+| **LlamaIndex** | ✅ `llamaindex-cli rag` ([source][cmp-llama-cli-readme], [source][cmp-llama-cli-cmd]) | ✅ core Python framework ([source][cmp-llama-readme]) | ✅ CLI and Python workflows both documented ([source][cmp-llama-rag-doc], [source][cmp-llama-workflow]) | ⚠️ Mostly via custom app code; CLI can scaffold create-llama path ([source][cmp-llama-rag-base]) | Closest "both CLI + library" alternative in this snapshot |
+| **txtai** | ⚠️ No single `txtai rag` command found in examined docs; uses API/server + config | ✅ (`Embeddings`, `RAG`) ([source][cmp-txtai-rag-quickstart]) | ✅ Python + YAML/API flows documented ([source][cmp-txtai-rag-md], [source][cmp-txtai-api]) | ✅ FastAPI endpoints include `/rag` and `/batchrag` ([source][cmp-txtai-rag-router]) | Strong API-first path; CLI interaction is mostly `uvicorn` + config |
+| **Haystack** | ⚠️ Core Haystack is Python-first; RAG CLI appears through **Hayhooks** deployment CLI ([source][cmp-hayhooks-cli]) | ✅ (`haystack-ai`) ([source][cmp-haystack-get-started]) | ✅ modular RAG pipelines in Python ([source][cmp-haystack-rag-pipeline]) | ✅ via Hayhooks serving/deploy endpoints ([source][cmp-hayhooks-overview]) | Very strong pipeline composition; less direct single-command local RAG than Versline CLI |
+| **LangChain** | ⚠️ No first-party end-user RAG CLI in examined LangChain core docs/repo excerpts | ✅ (`pip install langchain`) ([source][cmp-langchain-readme]) | ✅ retrieval/RAG patterns available in Python APIs/guides ([source][cmp-langchain-rag-guide]) | ⚠️ Not shown as built-in RAG service in examined core sources | Broad ecosystem/framework; usually requires composition with extra components |
+
+**Methodology note:** direct outbound HTTP from this environment was blocked, so this comparison uses official GitHub repository/documentation artifacts reachable via indexed repository queries.
+
+[cmp-llama-cli-readme]: https://github.com/run-llama/llama_index/tree/main/llama-index-cli/README.md
+[cmp-llama-cli-cmd]: https://github.com/run-llama/llama_index/tree/main/llama-index-cli/llama_index/cli/command_line.py
+[cmp-llama-readme]: https://github.com/run-llama/llama_index/tree/main/README.md
+[cmp-llama-rag-doc]: https://github.com/run-llama/llama_index/tree/main/docs/src/content/docs/framework/getting_started/starter_tools/rag_cli.md
+[cmp-llama-workflow]: https://github.com/run-llama/llama_index/tree/main/docs/examples/workflow/rag.ipynb
+[cmp-llama-rag-base]: https://github.com/run-llama/llama_index/tree/main/llama-index-cli/llama_index/cli/rag/base.py
+[cmp-txtai-rag-quickstart]: https://github.com/neuml/txtai/tree/main/examples/rag_quickstart.py
+[cmp-txtai-rag-md]: https://github.com/neuml/txtai/tree/main/docs/pipeline/llm/rag.md
+[cmp-txtai-api]: https://github.com/neuml/txtai/tree/main/docs/api/index.md
+[cmp-txtai-rag-router]: https://github.com/neuml/txtai/tree/main/src/python/txtai/api/routers/rag.py
+[cmp-haystack-get-started]: https://github.com/deepset-ai/haystack/tree/main/docs-website/docs/overview/get-started.mdx
+[cmp-haystack-rag-pipeline]: https://github.com/deepset-ai/haystack/tree/main/docs-website/docs/concepts/pipelines/creating-pipelines.mdx
+[cmp-hayhooks-overview]: https://github.com/deepset-ai/haystack/tree/main/docs-website/docs/development/hayhooks.mdx
+[cmp-hayhooks-cli]: https://github.com/deepset-ai/haystack/tree/main/docs-website/docs/development/hayhooks.mdx
+[cmp-langchain-readme]: https://github.com/langchain-ai/langchain/tree/main/README.md
+[cmp-langchain-rag-guide]: https://github.com/langchain-ai/langchain/tree/main/libs/langchain/langchain_classic/chains/question_answering/chain.py
+
 ---
 
 ### ⬇️ `download`
