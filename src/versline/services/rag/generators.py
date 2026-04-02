@@ -37,6 +37,7 @@ class PromptRAGGenerator(BaseGenerator):
         self.rate_limiter = rate_limiter or RateLimiter(settings.rag.rate_limit_generation_rpm)
         self.token_rate_limiter = token_rate_limiter or TokenRateLimiter(settings.rag.rate_limit_generation_tpm)
         self.tracker = tracker
+        self.timeout_seconds = float(settings.rag.generation_timeout_seconds)
 
     def _openai_compatible_client(self):
         resolved_endpoint = settings.llm.api_endpoint
@@ -45,7 +46,8 @@ class PromptRAGGenerator(BaseGenerator):
         elif self.provider == "avalai":
             resolved_endpoint = resolved_endpoint or "https://api.avalai.ir/v1"
 
-        http_client = httpx.Client(proxy=self.proxy) if self.proxy else None
+        http_timeout = httpx.Timeout(self.timeout_seconds)
+        http_client = httpx.Client(proxy=self.proxy, timeout=http_timeout) if self.proxy else httpx.Client(timeout=http_timeout)
         return OpenAI(
             api_key=settings.llm.api_key,
             base_url=resolved_endpoint,
@@ -104,6 +106,7 @@ class PromptRAGGenerator(BaseGenerator):
                     response_raw = client.chat.completions.with_raw_response.create(
                         model=self.model,
                         messages=[{"role": "user", "content": prompt}],
+                        timeout=self.timeout_seconds,
                     )
                     request_id = response_raw.headers.get("x-request-id")
                     if self.tracker and request_id:
@@ -113,6 +116,7 @@ class PromptRAGGenerator(BaseGenerator):
                     completion = client.chat.completions.create(
                         model=self.model,
                         messages=[{"role": "user", "content": prompt}],
+                        timeout=self.timeout_seconds,
                     )
             if self.tracker and completion.usage:
                 prompt_tokens = int(completion.usage.prompt_tokens or 0)

@@ -31,7 +31,37 @@ def _apply_llm_overrides(
 
 
 def _apply_rag_overrides(
+    chunk_size: Optional[int],
+    chunk_overlap: Optional[int],
+    ingestion_batch_size: Optional[int],
+    retrieve_fetch_k: Optional[int],
+    hybrid_dense_weight: Optional[float],
+    hybrid_lexical_weight: Optional[float],
+    embedding_provider: Optional[str],
+    embedding_api_key: Optional[str],
+    embedding_api_endpoint: Optional[str],
+    embedding_model_path: Optional[str],
+    embedding_cache_dir: Optional[str],
+    embedding_local_files_only: Optional[bool],
+    embedding_use_fp16: Optional[bool],
+    embedding_device: Optional[str],
+    embedding_batch_size: Optional[int],
+    embedding_timeout_seconds: Optional[float],
+    generation_timeout_seconds: Optional[float],
+    qdrant_timeout_seconds: Optional[float],
+    rerank_timeout_seconds: Optional[float],
+    log_every_batches: Optional[int],
+    preflight_enabled: Optional[bool],
+    preflight_network: Optional[bool],
     embedding_proxy: Optional[str],
+    sparse_embedding_proxy: Optional[str],
+    sparse_embedding_cache_dir: Optional[str],
+    sparse_embedding_local_files_only: Optional[bool],
+    sparse_embedding_provider: Optional[str],
+    sparse_embedding_model_path: Optional[str],
+    sparse_embedding_use_fp16: Optional[bool],
+    sparse_embedding_device: Optional[str],
+    sparse_embedding_batch_size: Optional[int],
     generation_proxy: Optional[str],
     qdrant_proxy: Optional[str],
     embedding_rpm: Optional[int],
@@ -72,8 +102,68 @@ def _apply_rag_overrides(
     web_search_max_context_chars: Optional[int],
     web_search_rpm: Optional[int],
 ):
+    if chunk_size is not None:
+        settings.rag.chunk_size = chunk_size
+    if chunk_overlap is not None:
+        settings.rag.chunk_overlap = chunk_overlap
+    if ingestion_batch_size is not None:
+        settings.rag.ingestion_batch_size = ingestion_batch_size
+    if retrieve_fetch_k is not None:
+        settings.rag.retrieve_fetch_k = retrieve_fetch_k
+    if hybrid_dense_weight is not None:
+        settings.rag.hybrid_dense_weight = hybrid_dense_weight
+    if hybrid_lexical_weight is not None:
+        settings.rag.hybrid_lexical_weight = hybrid_lexical_weight
+    if embedding_provider is not None:
+        settings.rag.embedding_provider = embedding_provider
+    if embedding_api_key is not None:
+        settings.rag.embedding_api_key = embedding_api_key
+    if embedding_api_endpoint is not None:
+        settings.rag.embedding_api_endpoint = embedding_api_endpoint
+    if embedding_model_path is not None:
+        settings.rag.embedding_model_path = embedding_model_path
+    if embedding_cache_dir is not None:
+        settings.rag.embedding_cache_dir = embedding_cache_dir
+    if embedding_local_files_only is not None:
+        settings.rag.embedding_local_files_only = embedding_local_files_only
+    if embedding_use_fp16 is not None:
+        settings.rag.embedding_use_fp16 = embedding_use_fp16
+    if embedding_device is not None:
+        settings.rag.embedding_device = embedding_device
+    if embedding_batch_size is not None:
+        settings.rag.embedding_batch_size = embedding_batch_size
+    if embedding_timeout_seconds is not None:
+        settings.rag.embedding_timeout_seconds = embedding_timeout_seconds
+    if generation_timeout_seconds is not None:
+        settings.rag.generation_timeout_seconds = generation_timeout_seconds
+    if qdrant_timeout_seconds is not None:
+        settings.rag.qdrant_timeout_seconds = qdrant_timeout_seconds
+    if rerank_timeout_seconds is not None:
+        settings.rag.rerank_timeout_seconds = rerank_timeout_seconds
+    if log_every_batches is not None:
+        settings.rag.log_every_batches = max(1, log_every_batches)
+    if preflight_enabled is not None:
+        settings.rag.preflight_enabled = preflight_enabled
+    if preflight_network is not None:
+        settings.rag.preflight_network = preflight_network
     if embedding_proxy is not None:
         settings.rag.embedding_proxy = embedding_proxy
+    if sparse_embedding_proxy is not None:
+        settings.rag.sparse_embedding_proxy = sparse_embedding_proxy
+    if sparse_embedding_cache_dir is not None:
+        settings.rag.sparse_embedding_cache_dir = sparse_embedding_cache_dir
+    if sparse_embedding_local_files_only is not None:
+        settings.rag.sparse_embedding_local_files_only = sparse_embedding_local_files_only
+    if sparse_embedding_provider is not None:
+        settings.rag.sparse_embedding_provider = sparse_embedding_provider
+    if sparse_embedding_model_path is not None:
+        settings.rag.sparse_embedding_model_path = sparse_embedding_model_path
+    if sparse_embedding_use_fp16 is not None:
+        settings.rag.sparse_embedding_use_fp16 = sparse_embedding_use_fp16
+    if sparse_embedding_device is not None:
+        settings.rag.sparse_embedding_device = sparse_embedding_device
+    if sparse_embedding_batch_size is not None:
+        settings.rag.sparse_embedding_batch_size = sparse_embedding_batch_size
     if generation_proxy is not None:
         settings.rag.generation_proxy = generation_proxy
     if qdrant_proxy is not None:
@@ -165,11 +255,39 @@ def ingest(
     provider: Optional[str] = typer.Option(None, "--provider", help="LLM Provider"),
     model: Optional[str] = typer.Option(None, "--model", help="Generation model override"),
     embedding_model: Optional[str] = typer.Option(None, "--embedding-model", help="Embedding model override"),
+    embedding_provider: Optional[str] = typer.Option(None, "--embedding-provider", help="Dense embedding provider (openai/openrouter/avalai/openaicompatible/fastembed/sentence-transformers/flagembedding)"),
+    embedding_api_key: Optional[str] = typer.Option(None, "--embedding-api-key", help="Embedding API key override"),
+    embedding_api_endpoint: Optional[str] = typer.Option(None, "--embedding-api-endpoint", help="Embedding API endpoint override"),
+    embedding_model_path: Optional[str] = typer.Option(None, "--embedding-model-path", help="Local path for dense embedding model artifacts"),
+    embedding_cache_dir: Optional[str] = typer.Option(None, "--embedding-cache-dir", help="Dense embedding cache directory (enables local-only mode)"),
+    embedding_local_files_only: Optional[bool] = typer.Option(None, "--embedding-local-files-only/--no-embedding-local-files-only", help="Use local files only for dense embedding model"),
+    embedding_use_fp16: Optional[bool] = typer.Option(None, "--embedding-use-fp16/--no-embedding-use-fp16", help="Use fp16 for dense local backends when supported"),
+    embedding_device: Optional[str] = typer.Option(None, "--embedding-device", help="Dense embedding device (cpu/cuda)"),
+    embedding_batch_size: Optional[int] = typer.Option(None, "--embedding-batch-size", help="Dense embedding batch size"),
+    embedding_timeout_seconds: Optional[float] = typer.Option(None, "--embedding-timeout", help="Embedding timeout seconds"),
+    generation_timeout_seconds: Optional[float] = typer.Option(None, "--generation-timeout", help="Generation timeout seconds"),
+    qdrant_timeout_seconds: Optional[float] = typer.Option(None, "--qdrant-timeout", help="Qdrant timeout seconds"),
+    rerank_timeout_seconds: Optional[float] = typer.Option(None, "--rerank-timeout", help="Rerank timeout seconds"),
     sparse_model: Optional[str] = typer.Option(None, "--sparse-model", help="Sparse embedding model for native hybrid retrieval"),
+    chunk_size: Optional[int] = typer.Option(None, "--chunk-size", help="Chunk size in characters"),
+    chunk_overlap: Optional[int] = typer.Option(None, "--chunk-overlap", help="Chunk overlap in characters"),
+    ingestion_batch_size: Optional[int] = typer.Option(None, "--ingestion-batch-size", help="Ingestion batch size"),
+    log_every_batches: Optional[int] = typer.Option(None, "--log-every-batches", help="Emit ingest logs every N batches"),
+    retrieve_fetch_k: Optional[int] = typer.Option(None, "--retrieve-fetch-k", help="Dense candidates fetched before rerank/hybrid"),
+    hybrid_dense_weight: Optional[float] = typer.Option(None, "--hybrid-dense-weight", help="Dense score weight in hybrid ranking"),
+    hybrid_lexical_weight: Optional[float] = typer.Option(None, "--hybrid-lexical-weight", help="Lexical score weight in hybrid ranking"),
     api_key: Optional[str] = typer.Option(None, "--api-key", help="Provider API key"),
     api_endpoint: Optional[str] = typer.Option(None, "--api-endpoint", help="Custom API endpoint"),
     proxy: Optional[str] = typer.Option(None, "--proxy", help="Proxy URL"),
     embedding_proxy: Optional[str] = typer.Option(None, "--embedding-proxy", help="Proxy used only for embeddings"),
+    sparse_proxy: Optional[str] = typer.Option(None, "--sparse-proxy", help="Proxy used for sparse embedding model download/init"),
+    sparse_cache_dir: Optional[str] = typer.Option(None, "--sparse-cache-dir", help="Sparse FastEmbed cache directory (forces local-files-only mode)"),
+    sparse_local_files_only: Optional[bool] = typer.Option(None, "--sparse-local-files-only/--no-sparse-local-files-only", help="Use local sparse model files only"),
+    sparse_provider: Optional[str] = typer.Option(None, "--sparse-provider", help="Sparse backend provider: fastembed or flagembedding"),
+    sparse_model_path: Optional[str] = typer.Option(None, "--sparse-model-path", help="Local path for sparse model artifacts"),
+    sparse_use_fp16: Optional[bool] = typer.Option(None, "--sparse-use-fp16/--no-sparse-use-fp16", help="Use fp16 for FlagEmbedding sparse backend"),
+    sparse_device: Optional[str] = typer.Option(None, "--sparse-device", help="Sparse backend device (cpu/cuda)"),
+    sparse_batch_size: Optional[int] = typer.Option(None, "--sparse-batch-size", help="Sparse backend batch size"),
     generation_proxy: Optional[str] = typer.Option(None, "--generation-proxy", help="Proxy used only for generation"),
     qdrant_proxy: Optional[str] = typer.Option(None, "--qdrant-proxy", help="Proxy used only for Qdrant"),
     qdrant_url: Optional[str] = typer.Option(None, "--qdrant-url", help="Qdrant URL"),
@@ -213,12 +331,44 @@ def ingest(
     web_search_proxy: Optional[str] = typer.Option(None, "--web-search-proxy", help="Proxy used only for web search"),
     web_search_max_context_chars: Optional[int] = typer.Option(None, "--web-search-max-context-chars", help="Max chars from web search context"),
     web_search_rpm: Optional[int] = typer.Option(None, "--web-search-rpm", help="Rate limit for web search (req/min)"),
+    preflight: bool = typer.Option(True, "--preflight/--no-preflight", help="Validate RAG settings before execution"),
+    preflight_network: bool = typer.Option(True, "--preflight-network/--no-preflight-network", help="Check Qdrant/WebSearch endpoints in preflight"),
 ):
     from versline.services.rag import RAGPipeline
 
     _apply_llm_overrides(provider, model, api_key, api_endpoint, proxy)
     _apply_rag_overrides(
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        ingestion_batch_size=ingestion_batch_size,
+        retrieve_fetch_k=retrieve_fetch_k,
+        hybrid_dense_weight=hybrid_dense_weight,
+        hybrid_lexical_weight=hybrid_lexical_weight,
+        embedding_provider=embedding_provider,
+        embedding_api_key=embedding_api_key,
+        embedding_api_endpoint=embedding_api_endpoint,
+        embedding_model_path=embedding_model_path,
+        embedding_cache_dir=embedding_cache_dir,
+        embedding_local_files_only=embedding_local_files_only,
+        embedding_use_fp16=embedding_use_fp16,
+        embedding_device=embedding_device,
+        embedding_batch_size=embedding_batch_size,
+        embedding_timeout_seconds=embedding_timeout_seconds,
+        generation_timeout_seconds=generation_timeout_seconds,
+        qdrant_timeout_seconds=qdrant_timeout_seconds,
+        rerank_timeout_seconds=rerank_timeout_seconds,
+        log_every_batches=log_every_batches,
+        preflight_enabled=preflight,
+        preflight_network=preflight_network,
         embedding_proxy=embedding_proxy,
+        sparse_embedding_proxy=sparse_proxy,
+        sparse_embedding_cache_dir=sparse_cache_dir,
+        sparse_embedding_local_files_only=sparse_local_files_only,
+        sparse_embedding_provider=sparse_provider,
+        sparse_embedding_model_path=sparse_model_path,
+        sparse_embedding_use_fp16=sparse_use_fp16,
+        sparse_embedding_device=sparse_device,
+        sparse_embedding_batch_size=sparse_batch_size,
         generation_proxy=generation_proxy,
         qdrant_proxy=qdrant_proxy,
         embedding_rpm=embedding_rpm,
@@ -267,7 +417,6 @@ def ingest(
         qdrant_url=qdrant_url,
         qdrant_api_key=qdrant_api_key,
     )
-
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -302,11 +451,39 @@ def ask(
     provider: Optional[str] = typer.Option(None, "--provider", help="LLM Provider"),
     model: Optional[str] = typer.Option(None, "--model", help="Generation model override"),
     embedding_model: Optional[str] = typer.Option(None, "--embedding-model", help="Embedding model override"),
+    embedding_provider: Optional[str] = typer.Option(None, "--embedding-provider", help="Dense embedding provider (openai/openrouter/avalai/openaicompatible/fastembed/sentence-transformers/flagembedding)"),
+    embedding_api_key: Optional[str] = typer.Option(None, "--embedding-api-key", help="Embedding API key override"),
+    embedding_api_endpoint: Optional[str] = typer.Option(None, "--embedding-api-endpoint", help="Embedding API endpoint override"),
+    embedding_model_path: Optional[str] = typer.Option(None, "--embedding-model-path", help="Local path for dense embedding model artifacts"),
+    embedding_cache_dir: Optional[str] = typer.Option(None, "--embedding-cache-dir", help="Dense embedding cache directory (enables local-only mode)"),
+    embedding_local_files_only: Optional[bool] = typer.Option(None, "--embedding-local-files-only/--no-embedding-local-files-only", help="Use local files only for dense embedding model"),
+    embedding_use_fp16: Optional[bool] = typer.Option(None, "--embedding-use-fp16/--no-embedding-use-fp16", help="Use fp16 for dense local backends when supported"),
+    embedding_device: Optional[str] = typer.Option(None, "--embedding-device", help="Dense embedding device (cpu/cuda)"),
+    embedding_batch_size: Optional[int] = typer.Option(None, "--embedding-batch-size", help="Dense embedding batch size"),
+    embedding_timeout_seconds: Optional[float] = typer.Option(None, "--embedding-timeout", help="Embedding timeout seconds"),
+    generation_timeout_seconds: Optional[float] = typer.Option(None, "--generation-timeout", help="Generation timeout seconds"),
+    qdrant_timeout_seconds: Optional[float] = typer.Option(None, "--qdrant-timeout", help="Qdrant timeout seconds"),
+    rerank_timeout_seconds: Optional[float] = typer.Option(None, "--rerank-timeout", help="Rerank timeout seconds"),
     sparse_model: Optional[str] = typer.Option(None, "--sparse-model", help="Sparse embedding model for native hybrid retrieval"),
+    chunk_size: Optional[int] = typer.Option(None, "--chunk-size", help="Chunk size in characters"),
+    chunk_overlap: Optional[int] = typer.Option(None, "--chunk-overlap", help="Chunk overlap in characters"),
+    ingestion_batch_size: Optional[int] = typer.Option(None, "--ingestion-batch-size", help="Ingestion batch size"),
+    log_every_batches: Optional[int] = typer.Option(None, "--log-every-batches", help="Emit ingest logs every N batches"),
+    retrieve_fetch_k: Optional[int] = typer.Option(None, "--retrieve-fetch-k", help="Dense candidates fetched before rerank/hybrid"),
+    hybrid_dense_weight: Optional[float] = typer.Option(None, "--hybrid-dense-weight", help="Dense score weight in hybrid ranking"),
+    hybrid_lexical_weight: Optional[float] = typer.Option(None, "--hybrid-lexical-weight", help="Lexical score weight in hybrid ranking"),
     api_key: Optional[str] = typer.Option(None, "--api-key", help="Provider API key"),
     api_endpoint: Optional[str] = typer.Option(None, "--api-endpoint", help="Custom API endpoint"),
     proxy: Optional[str] = typer.Option(None, "--proxy", help="Proxy URL"),
     embedding_proxy: Optional[str] = typer.Option(None, "--embedding-proxy", help="Proxy used only for embeddings"),
+    sparse_proxy: Optional[str] = typer.Option(None, "--sparse-proxy", help="Proxy used for sparse embedding model download/init"),
+    sparse_cache_dir: Optional[str] = typer.Option(None, "--sparse-cache-dir", help="Sparse FastEmbed cache directory (forces local-files-only mode)"),
+    sparse_local_files_only: Optional[bool] = typer.Option(None, "--sparse-local-files-only/--no-sparse-local-files-only", help="Use local sparse model files only"),
+    sparse_provider: Optional[str] = typer.Option(None, "--sparse-provider", help="Sparse backend provider: fastembed or flagembedding"),
+    sparse_model_path: Optional[str] = typer.Option(None, "--sparse-model-path", help="Local path for sparse model artifacts"),
+    sparse_use_fp16: Optional[bool] = typer.Option(None, "--sparse-use-fp16/--no-sparse-use-fp16", help="Use fp16 for FlagEmbedding sparse backend"),
+    sparse_device: Optional[str] = typer.Option(None, "--sparse-device", help="Sparse backend device (cpu/cuda)"),
+    sparse_batch_size: Optional[int] = typer.Option(None, "--sparse-batch-size", help="Sparse backend batch size"),
     generation_proxy: Optional[str] = typer.Option(None, "--generation-proxy", help="Proxy used only for generation"),
     qdrant_proxy: Optional[str] = typer.Option(None, "--qdrant-proxy", help="Proxy used only for Qdrant"),
     qdrant_url: Optional[str] = typer.Option(None, "--qdrant-url", help="Qdrant URL"),
@@ -351,12 +528,44 @@ def ask(
     web_search_proxy: Optional[str] = typer.Option(None, "--web-search-proxy", help="Proxy used only for web search"),
     web_search_max_context_chars: Optional[int] = typer.Option(None, "--web-search-max-context-chars", help="Max chars from web search context"),
     web_search_rpm: Optional[int] = typer.Option(None, "--web-search-rpm", help="Rate limit for web search (req/min)"),
+    preflight: bool = typer.Option(True, "--preflight/--no-preflight", help="Validate RAG settings before execution"),
+    preflight_network: bool = typer.Option(True, "--preflight-network/--no-preflight-network", help="Check Qdrant/WebSearch endpoints in preflight"),
 ):
     from versline.services.rag import RAGPipeline
 
     _apply_llm_overrides(provider, model, api_key, api_endpoint, proxy)
     _apply_rag_overrides(
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        ingestion_batch_size=ingestion_batch_size,
+        retrieve_fetch_k=retrieve_fetch_k,
+        hybrid_dense_weight=hybrid_dense_weight,
+        hybrid_lexical_weight=hybrid_lexical_weight,
+        embedding_provider=embedding_provider,
+        embedding_api_key=embedding_api_key,
+        embedding_api_endpoint=embedding_api_endpoint,
+        embedding_model_path=embedding_model_path,
+        embedding_cache_dir=embedding_cache_dir,
+        embedding_local_files_only=embedding_local_files_only,
+        embedding_use_fp16=embedding_use_fp16,
+        embedding_device=embedding_device,
+        embedding_batch_size=embedding_batch_size,
+        embedding_timeout_seconds=embedding_timeout_seconds,
+        generation_timeout_seconds=generation_timeout_seconds,
+        qdrant_timeout_seconds=qdrant_timeout_seconds,
+        rerank_timeout_seconds=rerank_timeout_seconds,
+        log_every_batches=log_every_batches,
+        preflight_enabled=preflight,
+        preflight_network=preflight_network,
         embedding_proxy=embedding_proxy,
+        sparse_embedding_proxy=sparse_proxy,
+        sparse_embedding_cache_dir=sparse_cache_dir,
+        sparse_embedding_local_files_only=sparse_local_files_only,
+        sparse_embedding_provider=sparse_provider,
+        sparse_embedding_model_path=sparse_model_path,
+        sparse_embedding_use_fp16=sparse_use_fp16,
+        sparse_embedding_device=sparse_device,
+        sparse_embedding_batch_size=sparse_batch_size,
         generation_proxy=generation_proxy,
         qdrant_proxy=qdrant_proxy,
         embedding_rpm=embedding_rpm,
@@ -405,7 +614,6 @@ def ask(
         qdrant_url=qdrant_url,
         qdrant_api_key=qdrant_api_key,
     )
-
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),

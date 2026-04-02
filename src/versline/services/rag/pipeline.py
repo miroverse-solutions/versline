@@ -6,13 +6,21 @@ import math
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import httpx
 from loguru import logger
 
 from versline.config import settings
 from versline.services.pricing import TokenTracker
 from versline.services.rag.base import BaseChunker, BaseEmbedder, BaseGenerator, BaseReranker, BaseWebSearcher, Chunk, RetrievedChunk
 from versline.services.rag.chunkers import SlidingWindowChunker
-from versline.services.rag.embedders import FastEmbedSparseEmbedder, OpenAICompatibleEmbedder
+from versline.services.rag.embedders import (
+    FastEmbedDenseEmbedder,
+    FastEmbedSparseEmbedder,
+    FlagEmbeddingDenseEmbedder,
+    FlagEmbeddingSparseEmbedder,
+    OpenAICompatibleEmbedder,
+    SentenceTransformersDenseEmbedder,
+)
 from versline.services.rag.generators import PromptRAGGenerator
 from versline.services.rag.mcp_client import MCPClientConfig, MCPContextClient
 from versline.services.rag.preprocessors import DEFAULT_EXTENSION_TO_INPUT_TYPE, MarkdownPreprocessor
@@ -42,7 +50,114 @@ class RAGPipeline:
         qdrant_distance: str = "cosine",
         embedding_model: Optional[str] = None,
         generation_model: Optional[str] = None,
+        embedding_provider: Optional[str] = None,
+        embedding_api_key: Optional[str] = None,
+        embedding_api_endpoint: Optional[str] = None,
+        embedding_model_path: Optional[str] = None,
+        embedding_cache_dir: Optional[str] = None,
+        embedding_local_files_only: Optional[bool] = None,
+        embedding_use_fp16: Optional[bool] = None,
+        embedding_device: Optional[str] = None,
+        embedding_batch_size: Optional[int] = None,
+        sparse_embedding_proxy: Optional[str] = None,
+        sparse_embedding_cache_dir: Optional[str] = None,
+        sparse_embedding_local_files_only: Optional[bool] = None,
+        sparse_embedding_provider: Optional[str] = None,
+        sparse_embedding_model_path: Optional[str] = None,
+        sparse_embedding_use_fp16: Optional[bool] = None,
+        sparse_embedding_device: Optional[str] = None,
+        sparse_embedding_batch_size: Optional[int] = None,
+        chunk_size: Optional[int] = None,
+        chunk_overlap: Optional[int] = None,
+        ingestion_batch_size: Optional[int] = None,
+        retrieve_fetch_k: Optional[int] = None,
+        hybrid_enabled: Optional[bool] = None,
+        hybrid_dense_weight: Optional[float] = None,
+        hybrid_lexical_weight: Optional[float] = None,
+        embedding_timeout_seconds: Optional[float] = None,
+        generation_timeout_seconds: Optional[float] = None,
+        qdrant_timeout_seconds: Optional[float] = None,
+        rerank_timeout_seconds: Optional[float] = None,
+        preflight: Optional[bool] = None,
+        preflight_network: Optional[bool] = None,
     ):
+        if embedding_provider is not None:
+            settings.rag.embedding_provider = embedding_provider
+        if embedding_api_key is not None:
+            settings.rag.embedding_api_key = embedding_api_key
+        if embedding_api_endpoint is not None:
+            settings.rag.embedding_api_endpoint = embedding_api_endpoint
+        if embedding_model_path is not None:
+            settings.rag.embedding_model_path = embedding_model_path
+        if embedding_cache_dir is not None:
+            settings.rag.embedding_cache_dir = embedding_cache_dir
+        if embedding_local_files_only is not None:
+            settings.rag.embedding_local_files_only = bool(embedding_local_files_only)
+        if embedding_use_fp16 is not None:
+            settings.rag.embedding_use_fp16 = bool(embedding_use_fp16)
+        if embedding_device is not None:
+            settings.rag.embedding_device = embedding_device
+        if embedding_batch_size is not None:
+            settings.rag.embedding_batch_size = int(embedding_batch_size)
+        if sparse_embedding_proxy is not None:
+            settings.rag.sparse_embedding_proxy = sparse_embedding_proxy
+        if sparse_embedding_cache_dir is not None:
+            settings.rag.sparse_embedding_cache_dir = sparse_embedding_cache_dir
+        if sparse_embedding_local_files_only is not None:
+            settings.rag.sparse_embedding_local_files_only = sparse_embedding_local_files_only
+        if sparse_embedding_provider is not None:
+            settings.rag.sparse_embedding_provider = sparse_embedding_provider
+        if sparse_embedding_model_path is not None:
+            settings.rag.sparse_embedding_model_path = sparse_embedding_model_path
+        if sparse_embedding_use_fp16 is not None:
+            settings.rag.sparse_embedding_use_fp16 = sparse_embedding_use_fp16
+        if sparse_embedding_device is not None:
+            settings.rag.sparse_embedding_device = sparse_embedding_device
+        if sparse_embedding_batch_size is not None:
+            settings.rag.sparse_embedding_batch_size = int(sparse_embedding_batch_size)
+        if chunk_size is not None:
+            settings.rag.chunk_size = int(chunk_size)
+        if chunk_overlap is not None:
+            settings.rag.chunk_overlap = int(chunk_overlap)
+        if ingestion_batch_size is not None:
+            settings.rag.ingestion_batch_size = int(ingestion_batch_size)
+        if retrieve_fetch_k is not None:
+            settings.rag.retrieve_fetch_k = int(retrieve_fetch_k)
+        if hybrid_enabled is not None:
+            settings.rag.hybrid_enabled = bool(hybrid_enabled)
+        if hybrid_dense_weight is not None:
+            settings.rag.hybrid_dense_weight = float(hybrid_dense_weight)
+        if hybrid_lexical_weight is not None:
+            settings.rag.hybrid_lexical_weight = float(hybrid_lexical_weight)
+        if embedding_timeout_seconds is not None:
+            settings.rag.embedding_timeout_seconds = float(embedding_timeout_seconds)
+        if generation_timeout_seconds is not None:
+            settings.rag.generation_timeout_seconds = float(generation_timeout_seconds)
+        if qdrant_timeout_seconds is not None:
+            settings.rag.qdrant_timeout_seconds = float(qdrant_timeout_seconds)
+        if rerank_timeout_seconds is not None:
+            settings.rag.rerank_timeout_seconds = float(rerank_timeout_seconds)
+
+        resolved_backend_for_preflight = (vector_backend or settings.rag.vector_backend).lower()
+        require_llm_api_keys = bool(embedder is None or generator is None or (settings.rag.rerank_enabled and reranker is None))
+        require_web_api_keys = bool(settings.rag.web_search_enabled and web_searcher is None)
+
+        should_preflight = settings.rag.preflight_enabled if preflight is None else bool(preflight)
+        should_preflight_network = settings.rag.preflight_network if preflight_network is None else bool(preflight_network)
+        if should_preflight:
+            preflight_result = self._validate_initial_configuration(
+                check_network=should_preflight_network,
+                vector_backend=resolved_backend_for_preflight,
+                require_llm_api_keys=require_llm_api_keys,
+                require_web_api_keys=require_web_api_keys,
+                timeout_seconds=min(
+                    float(settings.rag.qdrant_timeout_seconds or 20.0),
+                    float(settings.rag.web_search_timeout_seconds or 15.0),
+                ),
+            )
+            for warning in preflight_result.get("warnings", []):
+                logger.warning(warning)
+
         self.tracker = TokenTracker()
         self.embedding_rate_limiter = RateLimiter(settings.rag.rate_limit_embedding_rpm)
         self.embedding_token_rate_limiter = TokenRateLimiter(settings.rag.rate_limit_embedding_tpm)
@@ -56,15 +171,81 @@ class RAGPipeline:
             chunk_size=settings.rag.chunk_size,
             overlap=settings.rag.chunk_overlap,
         )
-        self.embedder = embedder or OpenAICompatibleEmbedder(
-            model=embedding_model or settings.rag.embedding_model,
-            rate_limiter=self.embedding_rate_limiter,
-            token_rate_limiter=self.embedding_token_rate_limiter,
-            tracker=self.tracker,
-        )
+        if embedder is not None:
+            self.embedder = embedder
+        else:
+            dense_provider = (settings.rag.embedding_provider or "openai").lower()
+            dense_model = embedding_model or settings.rag.embedding_model
+            if dense_provider in {"openai", "openrouter", "avalai", "openaicompatible"}:
+                self.embedder = OpenAICompatibleEmbedder(
+                    model=dense_model,
+                    provider=dense_provider,
+                    rate_limiter=self.embedding_rate_limiter,
+                    token_rate_limiter=self.embedding_token_rate_limiter,
+                    tracker=self.tracker,
+                )
+            elif dense_provider == "fastembed":
+                self.embedder = FastEmbedDenseEmbedder(
+                    model_name=dense_model,
+                    proxy=settings.rag.embedding_proxy,
+                    cache_dir=settings.rag.embedding_cache_dir,
+                    local_files_only=settings.rag.embedding_local_files_only,
+                )
+            elif dense_provider in {"sentence-transformers", "sentence_transformers", "sentencetransformers"}:
+                self.embedder = SentenceTransformersDenseEmbedder(
+                    model_name=dense_model,
+                    proxy=settings.rag.embedding_proxy,
+                    cache_dir=settings.rag.embedding_cache_dir,
+                    local_files_only=settings.rag.embedding_local_files_only,
+                    model_path=settings.rag.embedding_model_path,
+                    device=settings.rag.embedding_device,
+                    batch_size=settings.rag.embedding_batch_size,
+                )
+            elif dense_provider == "flagembedding":
+                self.embedder = FlagEmbeddingDenseEmbedder(
+                    model_name=dense_model,
+                    proxy=settings.rag.embedding_proxy,
+                    cache_dir=settings.rag.embedding_cache_dir,
+                    local_files_only=settings.rag.embedding_local_files_only,
+                    model_path=settings.rag.embedding_model_path,
+                    use_fp16=settings.rag.embedding_use_fp16,
+                    device=settings.rag.embedding_device,
+                    batch_size=settings.rag.embedding_batch_size,
+                )
+            else:
+                raise ValueError(
+                    "Unsupported dense embedding provider: "
+                    f"{dense_provider}. Supported providers: openai, openrouter, avalai, openaicompatible, fastembed, sentence-transformers, flagembedding"
+                )
         self.sparse_embedder = sparse_embedder
         if self.sparse_embedder is None and settings.rag.hybrid_enabled:
-            self.sparse_embedder = FastEmbedSparseEmbedder(settings.rag.sparse_embedding_model)
+            try:
+                sparse_provider = (settings.rag.sparse_embedding_provider or "fastembed").lower()
+                if sparse_provider == "flagembedding":
+                    self.sparse_embedder = FlagEmbeddingSparseEmbedder(
+                        settings.rag.sparse_embedding_model,
+                        proxy=settings.rag.sparse_embedding_proxy or settings.rag.embedding_proxy,
+                        cache_dir=settings.rag.sparse_embedding_cache_dir,
+                        local_files_only=settings.rag.sparse_embedding_local_files_only,
+                        model_path=settings.rag.sparse_embedding_model_path,
+                        use_fp16=settings.rag.sparse_embedding_use_fp16,
+                        device=settings.rag.sparse_embedding_device,
+                        batch_size=settings.rag.sparse_embedding_batch_size,
+                    )
+                else:
+                    self.sparse_embedder = FastEmbedSparseEmbedder(
+                        settings.rag.sparse_embedding_model,
+                        proxy=settings.rag.sparse_embedding_proxy or settings.rag.embedding_proxy,
+                        cache_dir=settings.rag.sparse_embedding_cache_dir,
+                        local_files_only=settings.rag.sparse_embedding_local_files_only,
+                    )
+            except Exception as error:
+                raise RuntimeError(
+                    "Failed to initialize sparse hybrid model. "
+                    "In offline environments either disable hybrid retrieval "
+                    "(VERSLINE_RAG_HYBRID_ENABLED=false) or pre-download sparse model artifacts. "
+                    f"Original error: {error}"
+                ) from error
         self.generator = generator or PromptRAGGenerator(
             model=generation_model or settings.llm.model,
             prompt_file=settings.rag.generation_prompt_file,
@@ -158,6 +339,86 @@ class RAGPipeline:
 
         self.collection_name = collection_name or settings.rag.collection_name
         self._active_store = self.vector_stores.get(self.vector_backend)
+
+    def _validate_initial_configuration(
+        self,
+        *,
+        check_network: bool,
+        vector_backend: str,
+        require_llm_api_keys: bool,
+        require_web_api_keys: bool,
+        timeout_seconds: float,
+    ) -> Dict[str, Any]:
+        errors: List[str] = []
+        warnings: List[str] = []
+
+        provider = (settings.llm.provider or "").lower()
+        embedding_provider = (settings.rag.embedding_provider or provider or "openai").lower()
+        if require_llm_api_keys:
+            if provider in {"openai", "openrouter", "avalai", "openaicompatible", "google", "gemini"}:
+                if not settings.llm.api_key:
+                    errors.append(f"Missing API key for provider '{settings.llm.provider}'.")
+            if embedding_provider in {"openai", "openrouter", "avalai", "openaicompatible"}:
+                if not (settings.rag.embedding_api_key or settings.llm.api_key):
+                    errors.append("Missing embedding API key (VERSLINE_RAG_EMBEDDING_API_KEY or VERSLINE_LLM_API_KEY).")
+
+        if vector_backend == "qdrant" and not settings.rag.qdrant_url:
+            errors.append("Missing VERSLINE_RAG_QDRANT_URL while vector backend is qdrant.")
+
+        if require_web_api_keys and settings.rag.web_search_enabled:
+            web_provider = (settings.rag.web_search_provider or "duckduckgo").lower()
+            if web_provider == "tavily" and not settings.rag.web_search_api_key:
+                errors.append("Web search provider tavily requires VERSLINE_RAG_WEB_SEARCH_API_KEY.")
+
+        if settings.rag.token_limit_mode not in {"estimate_only", "estimate_and_adjust"}:
+            errors.append("VERSLINE_RAG_TOKEN_LIMIT_MODE must be estimate_only or estimate_and_adjust.")
+
+        if check_network and vector_backend == "qdrant":
+            qdrant_ready_url = settings.rag.qdrant_url.rstrip("/") + "/readyz"
+            try:
+                with httpx.Client(proxy=settings.rag.qdrant_proxy, timeout=timeout_seconds) as client:
+                    response = client.get(qdrant_ready_url)
+                if response.status_code >= 400:
+                    errors.append(
+                        f"Qdrant preflight failed: {qdrant_ready_url} returned status {response.status_code}."
+                    )
+            except Exception as error:
+                errors.append(f"Qdrant preflight failed: cannot reach {qdrant_ready_url} ({error}).")
+
+        if check_network and settings.rag.web_search_enabled and require_web_api_keys:
+            web_provider = (settings.rag.web_search_provider or "duckduckgo").lower()
+            if web_provider == "duckduckgo":
+                endpoint = (settings.rag.web_search_endpoint or "https://api.duckduckgo.com/").strip()
+                try:
+                    with httpx.Client(proxy=settings.rag.web_search_proxy, timeout=timeout_seconds) as client:
+                        response = client.get(endpoint, params={"q": "test", "format": "json"})
+                    if response.status_code >= 400:
+                        warnings.append(
+                            f"DuckDuckGo preflight warning: endpoint returned status {response.status_code}."
+                        )
+                except Exception as error:
+                    warnings.append(f"DuckDuckGo preflight warning: endpoint is not reachable ({error}).")
+
+        if errors:
+            raise ValueError("RAG preflight failed:\n- " + "\n- ".join(errors))
+        return {"ok": True, "warnings": warnings}
+
+    def validate_configuration(
+        self,
+        *,
+        check_network: bool = False,
+        timeout_seconds: float = 3.0,
+    ) -> Dict[str, Any]:
+        backend = (self.vector_backend or settings.rag.vector_backend).lower()
+        require_llm_api_keys = isinstance(self.embedder, OpenAICompatibleEmbedder) or isinstance(self.generator, PromptRAGGenerator)
+        require_web_api_keys = bool(settings.rag.web_search_enabled and self.web_searcher is not None)
+        return self._validate_initial_configuration(
+            check_network=check_network,
+            vector_backend=backend,
+            require_llm_api_keys=require_llm_api_keys,
+            require_web_api_keys=require_web_api_keys,
+            timeout_seconds=timeout_seconds,
+        )
 
     def register_preprocessor(self, input_type: str, preprocessor) -> None:
         self.preprocessors.register(input_type=input_type, preprocessor=preprocessor)
@@ -254,6 +515,7 @@ class RAGPipeline:
     ) -> Dict[str, Any]:
         active_collection = collection_name or self.collection_name
         files = self._iter_input_files(input_path, input_type)
+        logger.info(f"RAG ingest started: files={len(files)}, collection={active_collection}")
 
         total_chunks = 0
         total_docs = 0
@@ -261,6 +523,7 @@ class RAGPipeline:
         collection_reset_done = False
 
         for file_index, file_path in enumerate(files, start=1):
+            logger.info(f"Preparing file {file_index}/{len(files)}: {file_path}")
             resolved_input_type = self._resolve_input_type(str(file_path), input_type)
             preprocessor = self.preprocessors.get(resolved_input_type)
 
@@ -296,6 +559,15 @@ class RAGPipeline:
             for start in range(start_index, len(chunks), batch_size):
                 end = min(start + batch_size, len(chunks))
                 batch_chunks = chunks[start:end]
+                batch_number = (start // batch_size) + 1
+                total_batches = (len(chunks) + batch_size - 1) // batch_size
+                log_every = max(1, int(settings.rag.log_every_batches or 1))
+                if batch_number == 1 or batch_number % log_every == 0 or end == len(chunks):
+                    logger.info(
+                        "Sending ingest batch "
+                        f"{batch_number}/{total_batches} for {file_path.name} "
+                        f"(chunks {start + 1}-{end} of {len(chunks)})"
+                    )
 
                 dense_vectors = self.embedder.embed_documents([item.text for item in batch_chunks])
                 if (
@@ -328,6 +600,12 @@ class RAGPipeline:
 
             total_chunks += len(chunks)
             indexed_files += 1
+            logger.info(f"Completed file {file_path.name}: chunks={len(chunks)}")
+
+        logger.info(
+            "RAG ingest completed: "
+            f"files={indexed_files}, documents={total_docs}, chunks={total_chunks}, collection={active_collection}"
+        )
 
         return {
             "collection": active_collection,
@@ -410,16 +688,19 @@ class RAGPipeline:
         collection_name: Optional[str] = None,
         filters: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
+        logger.info(f"RAG generate started: query_length={len(query)}, top_k={top_k}")
         context_chunks = self.retrieve(
             query=query,
             top_k=top_k,
             collection_name=collection_name,
             filters=filters,
         )
+        logger.info(f"Retrieved context chunks: count={len(context_chunks)}")
 
         external_context_sections: List[str] = []
         mcp_context = ""
         if settings.rag.mcp_enabled and self.mcp_client is not None:
+            logger.info("Fetching MCP external context...")
             try:
                 mcp_context = self.mcp_client.fetch_context(
                     query=query,
@@ -439,6 +720,7 @@ class RAGPipeline:
         web_context_used = False
         web_results_payload: List[Dict[str, Any]] = []
         if settings.rag.web_search_enabled and self.web_searcher is not None:
+            logger.info("Fetching web search external context...")
             try:
                 web_results = self.web_searcher.search(
                     query=query,
@@ -483,6 +765,7 @@ class RAGPipeline:
             context_chunks=context_chunks,
             external_context=merged_external_context,
         )
+        logger.info("Generation completed successfully")
         return {
             "query": query,
             "answer": answer,

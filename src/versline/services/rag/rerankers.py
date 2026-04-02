@@ -34,11 +34,13 @@ class CohereReranker(BaseReranker):
         self.proxy = proxy if proxy is not None else settings.rag.rerank_proxy
         self.rate_limiter = rate_limiter or RateLimiter(settings.rag.rate_limit_rerank_rpm)
         self.token_rate_limiter = token_rate_limiter or TokenRateLimiter(settings.rag.rate_limit_rerank_tpm)
+        self.timeout_seconds = float(settings.rag.rerank_timeout_seconds)
 
         resolved_api_key = api_key or settings.rag.rerank_api_key or settings.llm.api_key
         resolved_base_url = base_url or settings.rag.rerank_api_endpoint
 
-        http_client = httpx.Client(proxy=self.proxy) if self.proxy else None
+        http_timeout = httpx.Timeout(self.timeout_seconds)
+        http_client = httpx.Client(proxy=self.proxy, timeout=http_timeout) if self.proxy else httpx.Client(timeout=http_timeout)
         self.client = cohere.Client(
             api_key=resolved_api_key,
             base_url=resolved_base_url,
@@ -138,6 +140,7 @@ class OpenAICompatibleReranker(BaseReranker):
         self.rate_limiter = rate_limiter or RateLimiter(settings.rag.rate_limit_rerank_rpm)
         self.token_rate_limiter = token_rate_limiter or TokenRateLimiter(settings.rag.rate_limit_rerank_tpm)
         self.tracker = tracker
+        self.timeout_seconds = float(settings.rag.rerank_timeout_seconds)
 
         resolved_api_key = api_key or settings.rag.rerank_api_key or settings.llm.api_key
         resolved_base_url = base_url or settings.rag.rerank_api_endpoint
@@ -148,7 +151,8 @@ class OpenAICompatibleReranker(BaseReranker):
         elif provider == "avalai" and not resolved_base_url:
             resolved_base_url = "https://api.avalai.ir/v1"
 
-        http_client = httpx.Client(proxy=self.proxy) if self.proxy else None
+        http_timeout = httpx.Timeout(self.timeout_seconds)
+        http_client = httpx.Client(proxy=self.proxy, timeout=http_timeout) if self.proxy else httpx.Client(timeout=http_timeout)
         self.client = OpenAI(
             api_key=resolved_api_key,
             base_url=resolved_base_url,
@@ -195,6 +199,7 @@ class OpenAICompatibleReranker(BaseReranker):
                         messages=[{"role": "user", "content": prompt}],
                         response_format={"type": "json_object"},
                         temperature=0,
+                        timeout=self.timeout_seconds,
                     )
                     request_id = response_raw.headers.get("x-request-id")
                     if self.tracker and request_id:
@@ -206,6 +211,7 @@ class OpenAICompatibleReranker(BaseReranker):
                         messages=[{"role": "user", "content": prompt}],
                         response_format={"type": "json_object"},
                         temperature=0,
+                        timeout=self.timeout_seconds,
                     )
 
             if self.tracker and completion.usage:
@@ -264,11 +270,13 @@ class JinaReranker(BaseReranker):
         self.proxy = proxy if proxy is not None else settings.rag.rerank_proxy
         self.rate_limiter = rate_limiter or RateLimiter(settings.rag.rate_limit_rerank_rpm)
         self.token_rate_limiter = token_rate_limiter or TokenRateLimiter(settings.rag.rate_limit_rerank_tpm)
+        self.timeout_seconds = float(settings.rag.rerank_timeout_seconds)
 
         self.api_key = api_key or settings.rag.rerank_api_key or settings.llm.api_key
         self.base_url = base_url or settings.rag.rerank_api_endpoint or "https://api.jina.ai/v1/rerank"
 
-        self.http_client = httpx.Client(proxy=self.proxy) if self.proxy else httpx.Client()
+        http_timeout = httpx.Timeout(self.timeout_seconds)
+        self.http_client = httpx.Client(proxy=self.proxy, timeout=http_timeout) if self.proxy else httpx.Client(timeout=http_timeout)
 
     def rerank(self, query: str, items: List[RetrievedChunk], top_k: int) -> List[RetrievedChunk]:
         if not items:
@@ -296,7 +304,7 @@ class JinaReranker(BaseReranker):
 
         def operation():
             with scoped_proxy(self.proxy):
-                response = self.http_client.post(self.base_url, headers=headers, json=payload, timeout=60.0)
+                response = self.http_client.post(self.base_url, headers=headers, json=payload, timeout=self.timeout_seconds)
             response.raise_for_status()
             return response.json()
 

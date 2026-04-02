@@ -40,7 +40,7 @@ To build the distribution packages (wheel and source):
 
 2.  **Generate artifacts:**
     ```bash
-    python -m build
+    python -m build --no-isolation
     ```
     The output files (`.whl` and `.tar.gz`) will be created in the `dist/` directory.
 
@@ -101,53 +101,104 @@ reload_settings("/path/to/.env")
 Run `cp .env.example .env` to start, or create one manually:
 
 ```dotenv
-VERSLINE_LLM_PROVIDER=AvalAI # Google, OpenAI, OpenRouter, AvalAI, OpenAICompatible
+# Versline Configuration Template
+# Copy this file to .env and fill in your values
+
+# --- LLM configuration ---
+# Options: Google, OpenAI, OpenRouter, AvalAI, OpenAICompatible
+VERSLINE_LLM_PROVIDER=Google
 VERSLINE_LLM_API_KEY=your_api_key_here
 VERSLINE_LLM_MODEL=gemini-2.0-flash
-VERSLINE_LLM_PROXY=http://127.0.0.1:2080 # Optional
-# VERSLINE_LLM_API_ENDPOINT=https://custom-api.example.com/v1 # Optional
+# Optional: Proxy for API requests
+VERSLINE_LLM_PROXY=
+# Optional: Custom API Endpoint (Required for Custom/OpenAICompatible provider)
+VERSLINE_LLM_API_ENDPOINT=
 
+# --- RAG configuration ---
 VERSLINE_RAG_VECTOR_BACKEND=qdrant
 VERSLINE_RAG_COLLECTION_NAME=versline_docs
 VERSLINE_RAG_QDRANT_URL=http://localhost:6333
-# VERSLINE_RAG_QDRANT_API_KEY=your_qdrant_api_key_here
+VERSLINE_RAG_QDRANT_API_KEY=
 VERSLINE_RAG_EMBEDDING_MODEL=text-embedding-3-small
-# VERSLINE_RAG_EMBEDDING_PROXY=http://127.0.0.1:2080
-# VERSLINE_RAG_GENERATION_PROXY=http://127.0.0.1:2080
-# VERSLINE_RAG_QDRANT_PROXY=
-VERSLINE_RAG_HYBRID_ENABLED=true
+VERSLINE_RAG_EMBEDDING_PROVIDER=openai # openai, openrouter, avalai, openaicompatible, fastembed, sentence-transformers, flagembedding
+VERSLINE_RAG_EMBEDDING_API_KEY=
+VERSLINE_RAG_EMBEDDING_API_ENDPOINT=
+VERSLINE_RAG_EMBEDDING_TIMEOUT_SECONDS=60
+VERSLINE_RAG_EMBEDDING_MODEL_PATH=
+VERSLINE_RAG_EMBEDDING_CACHE_DIR=
+VERSLINE_RAG_EMBEDDING_LOCAL_FILES_ONLY=false
+VERSLINE_RAG_EMBEDDING_USE_FP16=true
+VERSLINE_RAG_EMBEDDING_DEVICE=
+VERSLINE_RAG_EMBEDDING_BATCH_SIZE=16
+VERSLINE_RAG_SPARSE_EMBEDDING_PROXY=
+VERSLINE_RAG_GENERATION_TIMEOUT_SECONDS=120
+VERSLINE_RAG_QDRANT_TIMEOUT_SECONDS=20
+VERSLINE_RAG_RERANK_TIMEOUT_SECONDS=60
+VERSLINE_RAG_CHUNK_SIZE=1200
+VERSLINE_RAG_CHUNK_OVERLAP=200
+VERSLINE_RAG_INGESTION_BATCH_SIZE=32
+VERSLINE_RAG_RETRIEVE_FETCH_K=24
+VERSLINE_RAG_LOG_EVERY_BATCHES=1
 VERSLINE_RAG_SPARSE_EMBEDDING_MODEL=prithivida/Splade_PP_en_v1
+VERSLINE_RAG_SPARSE_EMBEDDING_PROVIDER=fastembed # fastembed, flagembedding
+VERSLINE_RAG_SPARSE_EMBEDDING_MODEL_PATH=
+VERSLINE_RAG_SPARSE_EMBEDDING_CACHE_DIR=
+VERSLINE_RAG_SPARSE_EMBEDDING_LOCAL_FILES_ONLY=false
+VERSLINE_RAG_SPARSE_EMBEDDING_USE_FP16=true
+VERSLINE_RAG_SPARSE_EMBEDDING_DEVICE=
+VERSLINE_RAG_SPARSE_EMBEDDING_BATCH_SIZE=16
+VERSLINE_RAG_HYBRID_ENABLED=true
+VERSLINE_RAG_HYBRID_DENSE_WEIGHT=0.7
+VERSLINE_RAG_HYBRID_LEXICAL_WEIGHT=0.3
 VERSLINE_RAG_RERANK_ENABLED=false
-VERSLINE_RAG_RERANK_PROVIDER=cohere
+VERSLINE_RAG_RERANK_PROVIDER=cohere # cohere, jina, openai, openrouter, avalai, openaicompatible
 VERSLINE_RAG_RERANK_MODEL=rerank-v3.5
-# VERSLINE_RAG_RERANK_API_KEY=your_rerank_api_key_here
-# VERSLINE_RAG_RERANK_PROXY=http://127.0.0.1:2080
-VERSLINE_RAG_RATE_LIMIT_RERANK_RPM=0
+VERSLINE_RAG_RERANK_API_KEY=
+VERSLINE_RAG_RERANK_API_ENDPOINT=
+VERSLINE_RAG_EMBEDDING_PROXY=
+VERSLINE_RAG_GENERATION_PROXY=
+VERSLINE_RAG_QDRANT_PROXY=
+VERSLINE_RAG_RERANK_PROXY=
 VERSLINE_RAG_RATE_LIMIT_EMBEDDING_RPM=0
-VERSLINE_RAG_RATE_LIMIT_GENERATION_RPM=0
-VERSLINE_RAG_RATE_LIMIT_QDRANT_RPM=0
 VERSLINE_RAG_RATE_LIMIT_EMBEDDING_TPM=0
+VERSLINE_RAG_RATE_LIMIT_GENERATION_RPM=0
 VERSLINE_RAG_RATE_LIMIT_GENERATION_TPM=0
+VERSLINE_RAG_RATE_LIMIT_QDRANT_RPM=0
+VERSLINE_RAG_RATE_LIMIT_RERANK_RPM=0
 VERSLINE_RAG_RATE_LIMIT_RERANK_TPM=0
 VERSLINE_RAG_TOKEN_LIMIT_MODE=estimate_only
 VERSLINE_RAG_MCP_ENABLED=false
 VERSLINE_RAG_MCP_TRANSPORT=http
-# VERSLINE_RAG_MCP_SERVER_URL=http://localhost:8080/mcp/context
-# VERSLINE_RAG_MCP_SERVER_COMMAND=npx
-# VERSLINE_RAG_MCP_SERVER_ARGS=@modelcontextprotocol/server-filesystem /home/mirza/projects/versline
+VERSLINE_RAG_MCP_SERVER_URL=
+VERSLINE_RAG_MCP_SERVER_COMMAND=
+VERSLINE_RAG_MCP_SERVER_ARGS=
 VERSLINE_RAG_MCP_TOOL_NAME=retrieve_context
 VERSLINE_RAG_MCP_TIMEOUT_SECONDS=30
 VERSLINE_RAG_MCP_MAX_CONTEXT_CHARS=8000
+VERSLINE_RAG_MCP_PROXY=
 VERSLINE_RAG_WEB_SEARCH_ENABLED=false
-VERSLINE_RAG_WEB_SEARCH_PROVIDER=duckduckgo
-# VERSLINE_RAG_WEB_SEARCH_API_KEY=your_tavily_api_key_here
-# VERSLINE_RAG_WEB_SEARCH_ENDPOINT=https://api.tavily.com/search
+VERSLINE_RAG_WEB_SEARCH_PROVIDER=duckduckgo # duckduckgo, tavily
+VERSLINE_RAG_WEB_SEARCH_API_KEY=
+VERSLINE_RAG_WEB_SEARCH_ENDPOINT=
 VERSLINE_RAG_WEB_SEARCH_TIMEOUT_SECONDS=15
 VERSLINE_RAG_WEB_SEARCH_TOP_K=3
-# VERSLINE_RAG_WEB_SEARCH_PROXY=http://127.0.0.1:2080
+VERSLINE_RAG_WEB_SEARCH_PROXY=
 VERSLINE_RAG_WEB_SEARCH_MAX_CONTEXT_CHARS=6000
 VERSLINE_RAG_RATE_LIMIT_WEB_SEARCH_RPM=0
 VERSLINE_RAG_RETRY_MAX_RETRIES=4
+VERSLINE_RAG_RETRY_BASE_DELAY_SECONDS=1.0
+VERSLINE_RAG_RETRY_MAX_DELAY_SECONDS=12.0
+VERSLINE_RAG_PREFLIGHT_ENABLED=true
+VERSLINE_RAG_PREFLIGHT_NETWORK=true
+
+# --- Media configuration ---
+# Full path to ffmpeg/ffprobe binaries if not in system PATH
+VERSLINE_FFMPEG_FFMPEG_PATH=
+VERSLINE_FFMPEG_FFPROBE_PATH=
+
+# --- General System ---
+VERSLINE_OUTPUT_DIRECTORY=output
+VERSLINE_TEMP_DIRECTORY=temp
 ```
 
 
@@ -338,7 +389,47 @@ versline rag ask "main points" --collection my_docs --web-search --web-search-pr
 
 # Ask with dedicated rerank model
 versline rag ask "main points" --collection my_docs --hybrid --rerank --rerank-provider cohere --rerank-model rerank-v3.5 --rerank-api-key $COHERE_API_KEY
+
+# Ask with per-service timeouts + preflight tuned for restricted/offline network
+versline rag ask "main points" --collection my_docs --embedding-timeout 90 --generation-timeout 180 --qdrant-timeout 30 --rerank-timeout 90 --preflight --no-preflight-network
+
+# Ingest using FastEmbed sparse backend with local cache-only mode
+versline rag ingest ./docs --collection my_docs --hybrid --sparse-provider fastembed --sparse-model prithivida/Splade_PP_en_v1 --sparse-cache-dir /models/fastembed --sparse-local-files-only
+
+# Ask using FlagEmbedding sparse backend (e.g. BGE-M3 lexical) on CUDA
+versline rag ask "main points" --collection my_docs --hybrid --sparse-provider flagembedding --sparse-model BAAI/bge-m3 --sparse-device cuda --sparse-use-fp16 --sparse-batch-size 8
+
+# Ask with local/offline dense embeddings via FastEmbed
+versline rag ask "main points" --collection my_docs --embedding-provider fastembed --embedding-model BAAI/bge-base-en-v1.5 --embedding-cache-dir /models/dense --embedding-local-files-only
+
+# Ask with local dense embeddings via Sentence-Transformers
+versline rag ask "main points" --collection my_docs --embedding-provider sentence-transformers --embedding-model sentence-transformers/all-MiniLM-L6-v2 --embedding-device cpu --embedding-batch-size 32
+
+# Ask with FlagEmbedding dense backend (BGE-M3)
+versline rag ask "main points" --collection my_docs --embedding-provider flagembedding --embedding-model BAAI/bge-m3 --embedding-device cuda --embedding-use-fp16
 ```
+
+### RAG Operational Profiles
+
+- **Direct (no proxy):** do not set `VERSLINE_RAG_*_PROXY` values (or pass empty values via CLI).
+- **Per-service proxy:** set only the services you need, e.g. `VERSLINE_RAG_EMBEDDING_PROXY`, `VERSLINE_RAG_GENERATION_PROXY`, `VERSLINE_RAG_WEB_SEARCH_PROXY`, while keeping `VERSLINE_RAG_QDRANT_PROXY=` empty.
+- **Offline dense mode:** set `VERSLINE_RAG_EMBEDDING_PROVIDER` to `fastembed` / `sentence-transformers` / `flagembedding`, enable `VERSLINE_RAG_EMBEDDING_LOCAL_FILES_ONLY=true`, and set `VERSLINE_RAG_EMBEDDING_CACHE_DIR` or `VERSLINE_RAG_EMBEDDING_MODEL_PATH`.
+- **Offline sparse mode:** set `VERSLINE_RAG_SPARSE_EMBEDDING_LOCAL_FILES_ONLY=true` and point `VERSLINE_RAG_SPARSE_EMBEDDING_CACHE_DIR` or `VERSLINE_RAG_SPARSE_EMBEDDING_MODEL_PATH` to local artifacts.
+- **Preflight in locked environments:** keep `VERSLINE_RAG_PREFLIGHT_ENABLED=true` and set `VERSLINE_RAG_PREFLIGHT_NETWORK=false` to validate config without outbound endpoint checks.
+
+### RAG Key Options (CLI)
+
+| Group | Main flags |
+| :--- | :--- |
+| Chunking/Ingest | `--chunk-size`, `--chunk-overlap`, `--ingestion-batch-size`, `--log-every-batches`, `--resume`, `--force` |
+| Retrieval/Hybrid | `--top-k`, `--retrieve-fetch-k`, `--hybrid/--no-hybrid`, `--hybrid-dense-weight`, `--hybrid-lexical-weight` |
+| Dense backend | `--embedding-provider`, `--embedding-model`, `--embedding-model-path`, `--embedding-cache-dir`, `--embedding-local-files-only`, `--embedding-device`, `--embedding-use-fp16`, `--embedding-batch-size` |
+| Sparse backend | `--sparse-provider`, `--sparse-model`, `--sparse-model-path`, `--sparse-cache-dir`, `--sparse-local-files-only`, `--sparse-device`, `--sparse-use-fp16`, `--sparse-batch-size` |
+| Rerank | `--rerank/--no-rerank`, `--rerank-provider`, `--rerank-model`, `--rerank-api-key`, `--rerank-api-endpoint` |
+| Timeouts | `--embedding-timeout`, `--generation-timeout`, `--qdrant-timeout`, `--rerank-timeout`, `--web-search-timeout`, `--mcp-timeout` |
+| Rate limits | `--embedding-rpm`, `--embedding-tpm`, `--generation-rpm`, `--generation-tpm`, `--qdrant-rpm`, `--rerank-rpm`, `--rerank-tpm`, `--web-search-rpm` |
+| External context | `--mcp`, `--mcp-transport`, `--mcp-server-url`, `--mcp-server-command`, `--mcp-server-args`, `--web-search`, `--web-search-provider` |
+| Preflight | `--preflight/--no-preflight`, `--preflight-network/--no-preflight-network` |
 
 ### RAG Ecosystem Comparison (Web Research Snapshot — 2026-04-02)
 
@@ -509,6 +600,52 @@ coder = QualitativeCoder(
 outputs = coder.process_file("interview.md")
 print(outputs)  # generated files per format
 print(coder.last_parse_failures)
+```
+
+**4. RAG in Library Mode (Full Control):**
+```python
+from versline.services.rag import RAGPipeline
+from versline.config import settings
+
+settings.rag.web_search_enabled = True
+settings.rag.web_search_provider = "duckduckgo"
+
+pipeline = RAGPipeline(
+    collection_name="fiqh_docs",
+    embedding_model="text-embedding-3-small",
+    embedding_provider="openai",
+    embedding_api_key="YOUR_EMBEDDING_KEY",
+    qdrant_url="http://localhost:6333",
+    chunk_size=1200,
+    chunk_overlap=200,
+    ingestion_batch_size=32,
+    hybrid_enabled=True,
+    sparse_embedding_provider="flagembedding",  # fastembed | flagembedding
+    sparse_embedding_model="BAAI/bge-m3",
+    sparse_embedding_device="cpu",
+    sparse_embedding_use_fp16=False,
+    sparse_embedding_batch_size=8,
+    sparse_embedding_local_files_only=True,
+    sparse_embedding_model_path="/models/bge-m3",
+    embedding_timeout_seconds=90,
+    generation_timeout_seconds=180,
+    qdrant_timeout_seconds=30,
+    rerank_timeout_seconds=90,
+    preflight=True,
+    preflight_network=False,
+)
+
+# Ingest a directory
+pipeline.ingest_path("./data/docs", resume=True, force=False)
+
+# Ask with optional web context
+result = pipeline.generate(
+    query="خلاصه نکات اصلی چیست؟",
+    top_k=5,
+)
+
+print(result["answer"])
+print(result["metadata"].get("web_sources", []))
 ```
 
 

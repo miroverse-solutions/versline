@@ -33,13 +33,15 @@ class QdrantVectorStore(BaseVectorStore):
         distance: str = "cosine",
         proxy: Optional[str] = None,
         rate_limiter: Optional[RateLimiter] = None,
+        timeout_seconds: Optional[float] = None,
     ):
         self.proxy = proxy if proxy is not None else settings.rag.qdrant_proxy
         self.distance = self._parse_distance(distance)
         self.rate_limiter = rate_limiter or RateLimiter(settings.rag.rate_limit_qdrant_rpm)
+        self.timeout_seconds = float(timeout_seconds or settings.rag.qdrant_timeout_seconds)
 
         with scoped_proxy(self.proxy):
-            self.client = QdrantClient(url=url, api_key=api_key)
+            self.client = QdrantClient(url=url, api_key=api_key, timeout=self.timeout_seconds)
 
     def _parse_distance(self, distance: str) -> Distance:
         key = (distance or "cosine").lower()

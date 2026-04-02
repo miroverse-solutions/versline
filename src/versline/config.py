@@ -33,19 +33,59 @@ class RAGSettings(BaseSettings):
     qdrant_distance: str = Field(default="cosine", description="Vector distance metric")
     qdrant_proxy: Optional[str] = Field(default=None, description="Proxy only for Qdrant requests")
     embedding_model: str = Field(default="text-embedding-3-small", description="Embedding model")
-    embedding_provider: str = Field(default="openai", description="Embedding provider")
+    embedding_provider: str = Field(default="openai", description="Embedding provider (openai/openrouter/avalai/openaicompatible/fastembed/sentence-transformers/flagembedding)")
     embedding_api_key: Optional[str] = Field(default=None, description="Embedding API key override")
     embedding_api_endpoint: Optional[str] = Field(default=None, description="Embedding API endpoint override")
+    embedding_timeout_seconds: float = Field(default=60.0, description="Embedding request timeout seconds")
     embedding_proxy: Optional[str] = Field(default=None, description="Proxy only for embedding requests")
+    embedding_model_path: Optional[str] = Field(default=None, description="Optional local path for dense embedding model artifacts")
+    embedding_cache_dir: Optional[str] = Field(default=None, description="Cache directory for dense embedding model artifacts")
+    embedding_local_files_only: bool = Field(default=False, description="Load dense embedding model artifacts from local files only")
+    embedding_use_fp16: bool = Field(default=True, description="Use fp16 when supported by dense local embedding backend")
+    embedding_device: Optional[str] = Field(default=None, description="Device override for dense embedding model (e.g. cpu, cuda)")
+    embedding_batch_size: int = Field(default=16, description="Batch size for dense embedding encoding")
+    sparse_embedding_proxy: Optional[str] = Field(default=None, description="Proxy used for sparse embedding model download/init")
+    generation_timeout_seconds: float = Field(default=120.0, description="Generation request timeout seconds")
     generation_proxy: Optional[str] = Field(default=None, description="Proxy only for generation requests")
+    qdrant_timeout_seconds: float = Field(default=20.0, description="Qdrant request timeout seconds")
+    rerank_timeout_seconds: float = Field(default=60.0, description="Rerank request timeout seconds")
     chunk_size: int = Field(default=1200, description="Chunk size in characters")
     chunk_overlap: int = Field(default=200, description="Chunk overlap in characters")
+    log_every_batches: int = Field(default=1, description="Emit ingest logs every N batches")
     ingestion_batch_size: int = Field(default=32, description="Batch size for embedding/upsert during ingestion")
     retrieve_fetch_k: int = Field(default=24, description="Dense candidates fetched before hybrid rerank")
     hybrid_enabled: bool = Field(default=True, description="Enable hybrid retrieval reranking")
     sparse_embedding_model: str = Field(
         default="prithivida/Splade_PP_en_v1",
         description="Sparse embedding model for native Qdrant hybrid search",
+    )
+    sparse_embedding_provider: str = Field(
+        default="fastembed",
+        description="Sparse embedding backend provider: fastembed or flagembedding",
+    )
+    sparse_embedding_model_path: Optional[str] = Field(
+        default=None,
+        description="Optional local path for sparse embedding model artifacts",
+    )
+    sparse_embedding_cache_dir: Optional[str] = Field(
+        default=None,
+        description="Cache directory for sparse FastEmbed model artifacts",
+    )
+    sparse_embedding_local_files_only: bool = Field(
+        default=False,
+        description="Load sparse FastEmbed artifacts from local files only",
+    )
+    sparse_embedding_use_fp16: bool = Field(
+        default=True,
+        description="Use fp16 for FlagEmbedding sparse model when supported",
+    )
+    sparse_embedding_device: Optional[str] = Field(
+        default=None,
+        description="Device override for sparse embedding model (e.g. cpu, cuda)",
+    )
+    sparse_embedding_batch_size: int = Field(
+        default=16,
+        description="Batch size for sparse embedding encoding",
     )
     hybrid_fusion: str = Field(default="rrf", description="Hybrid fusion mode")
     hybrid_dense_weight: float = Field(default=0.7, description="Weight of dense score in hybrid ranking")
@@ -89,6 +129,8 @@ class RAGSettings(BaseSettings):
     web_search_proxy: Optional[str] = Field(default=None, description="Proxy used only for web search requests")
     web_search_max_context_chars: int = Field(default=6000, description="Maximum chars imported from web search")
     rate_limit_web_search_rpm: int = Field(default=0, description="Web search requests per minute (0 disables)")
+    preflight_enabled: bool = Field(default=True, description="Enable preflight validation before RAG operations")
+    preflight_network: bool = Field(default=False, description="Enable network endpoint checks in preflight")
     state_directory: Path = Field(default=Path("work_dir"), description="RAG state directory")
 
     model_config = SettingsConfigDict(env_prefix='VERSLINE_RAG_', env_file='.env', extra='ignore')
