@@ -61,6 +61,15 @@ class BaseVectorStore(ABC):
     def upsert(self, collection_name: str, chunks: List[Chunk], vectors: List[List[float]]) -> None:
         raise NotImplementedError
 
+    def upsert_hybrid(
+        self,
+        collection_name: str,
+        chunks: List[Chunk],
+        dense_vectors: List[List[float]],
+        sparse_vectors: List[Dict[str, List[float]]],
+    ) -> None:
+        self.upsert(collection_name=collection_name, chunks=chunks, vectors=dense_vectors)
+
     @abstractmethod
     def search(
         self,
@@ -71,8 +80,30 @@ class BaseVectorStore(ABC):
     ) -> List[RetrievedChunk]:
         raise NotImplementedError
 
+    def search_hybrid(
+        self,
+        collection_name: str,
+        dense_query_vector: List[float],
+        sparse_query_vector: Dict[str, List[float]],
+        top_k: int = 5,
+        filters: Optional[Dict[str, Any]] = None,
+        fetch_k: Optional[int] = None,
+    ) -> List[RetrievedChunk]:
+        return self.search(
+            collection_name=collection_name,
+            query_vector=dense_query_vector,
+            top_k=top_k,
+            filters=filters,
+        )
+
 
 class BaseGenerator(ABC):
     @abstractmethod
     def generate(self, query: str, context_chunks: List[RetrievedChunk], **kwargs) -> str:
+        raise NotImplementedError
+
+
+class BaseReranker(ABC):
+    @abstractmethod
+    def rerank(self, query: str, items: List[RetrievedChunk], top_k: int) -> List[RetrievedChunk]:
         raise NotImplementedError

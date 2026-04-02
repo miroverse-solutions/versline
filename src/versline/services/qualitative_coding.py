@@ -512,7 +512,7 @@ class QualitativeCoder:
 
             is_avalai = (
                 self.provider == "avalai"
-                or (hasattr(client, "base_url") and "avalai.ir" in str(client.base_url))
+                or (hasattr(client, "base_url") and ("avalai.ir" in str(client.base_url) or "avalapis.ir" in str(client.base_url)))
             )
 
             if is_avalai and hasattr(client.chat.completions, "with_raw_response"):

@@ -236,7 +236,10 @@ class AudioTranscriber:
                 }
             ]
             
-            is_avalai = "avalai.ir" in str(client.base_url)
+            is_avalai = (
+                self.provider == "avalai"
+                or (hasattr(client, "base_url") and ("avalai.ir" in str(client.base_url) or "avalapis.ir" in str(client.base_url)))
+            )
             
             if is_avalai and hasattr(client.chat.completions, 'with_raw_response'):
                 response_raw = client.chat.completions.with_raw_response.create(model=model_name, messages=messages)

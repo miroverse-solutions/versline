@@ -1,4 +1,4 @@
-from typing import Optional, List
+from typing import Optional
 from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -25,10 +25,56 @@ class RAGSettings(BaseSettings):
     qdrant_url: str = Field(default="http://localhost:6333", description="Qdrant URL")
     qdrant_api_key: Optional[str] = Field(default=None, description="Qdrant API key")
     qdrant_distance: str = Field(default="cosine", description="Vector distance metric")
+    qdrant_proxy: Optional[str] = Field(default=None, description="Proxy only for Qdrant requests")
     embedding_model: str = Field(default="text-embedding-3-small", description="Embedding model")
+    embedding_provider: str = Field(default="openai", description="Embedding provider")
+    embedding_api_key: Optional[str] = Field(default=None, description="Embedding API key override")
+    embedding_api_endpoint: Optional[str] = Field(default=None, description="Embedding API endpoint override")
+    embedding_proxy: Optional[str] = Field(default=None, description="Proxy only for embedding requests")
+    generation_proxy: Optional[str] = Field(default=None, description="Proxy only for generation requests")
     chunk_size: int = Field(default=1200, description="Chunk size in characters")
     chunk_overlap: int = Field(default=200, description="Chunk overlap in characters")
+    ingestion_batch_size: int = Field(default=32, description="Batch size for embedding/upsert during ingestion")
+    retrieve_fetch_k: int = Field(default=24, description="Dense candidates fetched before hybrid rerank")
+    hybrid_enabled: bool = Field(default=True, description="Enable hybrid retrieval reranking")
+    sparse_embedding_model: str = Field(
+        default="prithivida/Splade_PP_en_v1",
+        description="Sparse embedding model for native Qdrant hybrid search",
+    )
+    hybrid_fusion: str = Field(default="rrf", description="Hybrid fusion mode")
+    hybrid_dense_weight: float = Field(default=0.7, description="Weight of dense score in hybrid ranking")
+    hybrid_lexical_weight: float = Field(default=0.3, description="Weight of lexical score in hybrid ranking")
     generation_prompt_file: str = Field(default="rag_generate_prompt.md", description="Prompt file used for RAG generation")
+    retry_max_retries: int = Field(default=4, description="Maximum retries for external requests")
+    retry_base_delay_seconds: float = Field(default=1.0, description="Base retry delay in seconds")
+    retry_max_delay_seconds: float = Field(default=12.0, description="Maximum retry delay in seconds")
+    rate_limit_embedding_rpm: int = Field(default=0, description="Embedding requests per minute (0 disables)")
+    rate_limit_embedding_tpm: int = Field(default=0, description="Embedding tokens per minute (0 disables)")
+    rate_limit_generation_rpm: int = Field(default=0, description="Generation requests per minute (0 disables)")
+    rate_limit_generation_tpm: int = Field(default=0, description="Generation tokens per minute (0 disables)")
+    rate_limit_qdrant_rpm: int = Field(default=0, description="Qdrant requests per minute (0 disables)")
+    rerank_enabled: bool = Field(default=False, description="Enable dedicated rerank model after retrieval")
+    rerank_provider: str = Field(default="cohere", description="Rerank provider")
+    rerank_model: str = Field(default="rerank-v3.5", description="Rerank model")
+    rerank_api_key: Optional[str] = Field(default=None, description="Rerank API key override")
+    rerank_api_endpoint: Optional[str] = Field(default=None, description="Rerank API endpoint override")
+    rerank_proxy: Optional[str] = Field(default=None, description="Proxy only for rerank requests")
+    rate_limit_rerank_rpm: int = Field(default=0, description="Rerank requests per minute (0 disables)")
+    rate_limit_rerank_tpm: int = Field(default=0, description="Rerank tokens per minute (0 disables)")
+    token_limit_mode: str = Field(
+        default="estimate_only",
+        description="Token limiter mode: estimate_only or estimate_and_adjust",
+    )
+    mcp_enabled: bool = Field(default=False, description="Enable MCP context augmentation")
+    mcp_transport: str = Field(default="http", description="MCP transport: http or stdio")
+    mcp_server_url: Optional[str] = Field(default=None, description="MCP gateway/server URL for http transport")
+    mcp_server_command: Optional[str] = Field(default=None, description="MCP server command for stdio transport")
+    mcp_server_args: Optional[str] = Field(default=None, description="MCP stdio server args string")
+    mcp_tool_name: str = Field(default="retrieve_context", description="MCP tool name used for external context")
+    mcp_timeout_seconds: int = Field(default=30, description="MCP request timeout in seconds")
+    mcp_max_context_chars: int = Field(default=8000, description="Maximum external MCP context chars")
+    mcp_proxy: Optional[str] = Field(default=None, description="Proxy used only for MCP HTTP transport")
+    state_directory: Path = Field(default=Path("work_dir"), description="RAG state directory")
 
     model_config = SettingsConfigDict(env_prefix='VERSLINE_RAG_', env_file='.env', extra='ignore')
 

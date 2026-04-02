@@ -82,6 +82,33 @@ VERSLINE_RAG_COLLECTION_NAME=versline_docs
 VERSLINE_RAG_QDRANT_URL=http://localhost:6333
 # VERSLINE_RAG_QDRANT_API_KEY=your_qdrant_api_key_here
 VERSLINE_RAG_EMBEDDING_MODEL=text-embedding-3-small
+# VERSLINE_RAG_EMBEDDING_PROXY=http://127.0.0.1:2080
+# VERSLINE_RAG_GENERATION_PROXY=http://127.0.0.1:2080
+# VERSLINE_RAG_QDRANT_PROXY=
+VERSLINE_RAG_HYBRID_ENABLED=true
+VERSLINE_RAG_SPARSE_EMBEDDING_MODEL=prithivida/Splade_PP_en_v1
+VERSLINE_RAG_RERANK_ENABLED=false
+VERSLINE_RAG_RERANK_PROVIDER=cohere
+VERSLINE_RAG_RERANK_MODEL=rerank-v3.5
+# VERSLINE_RAG_RERANK_API_KEY=your_rerank_api_key_here
+# VERSLINE_RAG_RERANK_PROXY=http://127.0.0.1:2080
+VERSLINE_RAG_RATE_LIMIT_RERANK_RPM=0
+VERSLINE_RAG_RATE_LIMIT_EMBEDDING_RPM=0
+VERSLINE_RAG_RATE_LIMIT_GENERATION_RPM=0
+VERSLINE_RAG_RATE_LIMIT_QDRANT_RPM=0
+VERSLINE_RAG_RATE_LIMIT_EMBEDDING_TPM=0
+VERSLINE_RAG_RATE_LIMIT_GENERATION_TPM=0
+VERSLINE_RAG_RATE_LIMIT_RERANK_TPM=0
+VERSLINE_RAG_TOKEN_LIMIT_MODE=estimate_only
+VERSLINE_RAG_MCP_ENABLED=false
+VERSLINE_RAG_MCP_TRANSPORT=http
+# VERSLINE_RAG_MCP_SERVER_URL=http://localhost:8080/mcp/context
+# VERSLINE_RAG_MCP_SERVER_COMMAND=npx
+# VERSLINE_RAG_MCP_SERVER_ARGS=@modelcontextprotocol/server-filesystem /home/mirza/projects/versline
+VERSLINE_RAG_MCP_TOOL_NAME=retrieve_context
+VERSLINE_RAG_MCP_TIMEOUT_SECONDS=30
+VERSLINE_RAG_MCP_MAX_CONTEXT_CHARS=8000
+VERSLINE_RAG_RETRY_MAX_RETRIES=4
 ```
 
 
@@ -245,6 +272,27 @@ versline rag ingest notes.md --collection my_docs --provider OpenAI --api-key $O
 
 # Ask from collection
 versline rag ask "خلاصه نکات اصلی چیست؟" --collection my_docs --top-k 5 --provider OpenAI --api-key $OPENAI_API_KEY
+
+# Ingest a whole directory with resumable progress and per-service proxies
+versline rag ingest ./docs --collection my_docs --resume --embedding-proxy http://127.0.0.1:2080 --qdrant-proxy ""
+
+# Ask with hybrid retrieval + custom rate limits
+versline rag ask "main points" --collection my_docs --hybrid --embedding-rpm 120 --generation-rpm 30 --qdrant-rpm 300
+
+# Ask with mixed RPM + TPM limits
+versline rag ask "main points" --collection my_docs --embedding-rpm 120 --embedding-tpm 80000 --generation-rpm 30 --generation-tpm 20000 --rerank --rerank-tpm 30000
+
+# Ask with adaptive TPM correction (estimate + actual usage)
+versline rag ask "main points" --collection my_docs --embedding-tpm 80000 --generation-tpm 20000 --token-limit-mode estimate_and_adjust
+
+# Ask with MCP external context (HTTP mode)
+versline rag ask "main points" --collection my_docs --mcp --mcp-transport http --mcp-server-url http://localhost:8080/mcp/context
+
+# Ask with MCP external context (stdio mode)
+versline rag ask "main points" --collection my_docs --mcp --mcp-transport stdio --mcp-server-command npx --mcp-server-args "@modelcontextprotocol/server-filesystem /home/mirza/projects/versline"
+
+# Ask with dedicated rerank model
+versline rag ask "main points" --collection my_docs --hybrid --rerank --rerank-provider cohere --rerank-model rerank-v3.5 --rerank-api-key $COHERE_API_KEY
 ```
 
 ---
