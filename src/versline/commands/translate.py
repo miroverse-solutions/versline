@@ -1,4 +1,5 @@
 import typer
+import re
 from typing import Optional
 from pathlib import Path
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
@@ -7,13 +8,38 @@ from versline.services.translation import TextTranslator
 from versline.config import settings
 from versline.services.pricing import print_cost_report
 
-app = typer.Typer(help="Translate text files.")
+app = typer.Typer(help="Translate files.")
+
+
+def _markdown_to_text(markdown: str) -> str:
+    text = markdown.replace("\r\n", "\n")
+    text = re.sub(r"```[^\n]*\n(.*?)```", r"\1", text, flags=re.DOTALL)
+    text = re.sub(r"`([^`]+)`", r"\1", text)
+    text = re.sub(r"^\s{0,3}#{1,6}\s+", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^\s{0,3}>\s?", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^\s*[-*+]\s+", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^\s*\d+[.)]\s+", "", text, flags=re.MULTILINE)
+    text = re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", text)
+    text = re.sub(r"(\*\*|__)(.*?)\1", r"\2", text)
+    text = re.sub(r"(?<!\*)\*(?!\*)(.*?)\*(?!\*)", r"\1", text)
+    text = re.sub(r"(?<!_)_(?!_)(.*?)_(?!_)", r"\1", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def _resolve_output_paths(file_path: Path, output: Optional[Path]) -> tuple[Path, Path]:
+    if output:
+        base_path = output.with_suffix("") if output.suffix else output
+    else:
+        base_path = file_path.with_name(f"{file_path.stem}_translated")
+
+    return base_path.with_suffix(".md"), base_path.with_suffix(".txt")
 
 @app.callback(invoke_without_command=True)
 def translate_file(
     ctx: typer.Context,
-    file_path: Optional[Path] = typer.Argument(None, help="Path to the text file", exists=True),
-    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output file path"),
+    file_path: Optional[Path] = typer.Argument(None, help="Path to the input file", exists=True),
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Base output path (writes both .md and .txt)"),
     target_lang: str = typer.Option("Persian", "--lang", "-l", help="Target language (e.g. Persian, English, French)"),
     model: Optional[str] = typer.Option(None, help="LLM Model to use (overrides config)"),
     provider: Optional[str] = typer.Option(None, help="LLM Provider (Google, OpenAI, OpenRouter, AvalAI, OpenAICompatible)"),
@@ -23,7 +49,7 @@ def translate_file(
     force: bool = typer.Option(False, "--force", "-f", help="Force re-translation (ignore cache)"),
 ):
     """
-    [bold blue]Translate a text file[/bold blue] to a target language.
+    [bold blue]Translate a file[/bold blue] to a target language.
     
     Splits long texts into chunks and ensures fluent translation using LLMs.
     """
@@ -71,15 +97,17 @@ def translate_file(
                 force=force
             )
             
-        if output:
-            output_path = output
-        else:
-            output_path = file_path.with_stem(file_path.stem + "_translated")
-            
-        with open(output_path, "w", encoding="utf-8") as f:
-            f.write(final_text)
-            
-        logger.success(f"Translation saved to: {output_path}")
+        md_output_path, txt_output_path = _resolve_output_paths(file_path, output)
+
+        with open(md_output_path, "w", encoding="utf-8") as md_file:
+            md_file.write(final_text)
+
+        txt_content = _markdown_to_text(final_text)
+        with open(txt_output_path, "w", encoding="utf-8") as txt_file:
+            txt_file.write(txt_content)
+
+        logger.success(f"Markdown translation saved to: {md_output_path}")
+        logger.success(f"Text translation saved to: {txt_output_path}")
 
         print_cost_report(translator.tracker, api_key=settings.llm.api_key)
 

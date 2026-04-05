@@ -6,6 +6,7 @@ from versline.config import settings
 from versline.services import ai
 from versline.core.prompts import load_prompt
 from versline.services.pricing import TokenTracker
+from versline.services.document_processor import convert_to_markdown
 
 class TextTranslator:
     def __init__(self):
@@ -39,6 +40,42 @@ class TextTranslator:
             chunks.append("\n\n".join(current_chunk))
             
         return chunks
+
+    def _read_source_text(self, file_path: str) -> str:
+        path = Path(file_path)
+        text_extensions = {".txt", ".md", ".markdown", ".csv", ".json", ".xml", ".html", ".htm", ".yaml", ".yml"}
+        extension = path.suffix.lower()
+
+        if extension in text_extensions:
+            raw = path.read_bytes()
+            for encoding in ("utf-8", "utf-8-sig", "cp1256", "cp1252", "latin-1"):
+                try:
+                    return raw.decode(encoding)
+                except UnicodeDecodeError:
+                    continue
+            raise ValueError(
+                "Could not decode text file with supported encodings (utf-8, utf-8-sig, cp1256, cp1252, latin-1)."
+            )
+
+        try:
+            return path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            logger.warning(
+                f"UTF-8 decode failed for {path}; attempting document text extraction"
+            )
+
+            try:
+                extracted_text = convert_to_markdown(str(path))
+            except Exception as extraction_error:
+                raise ValueError(
+                    "Could not read file as UTF-8 text and automatic document extraction failed. "
+                    f"Please provide a readable text document. Details: {extraction_error}"
+                ) from extraction_error
+
+            if not extracted_text or not extracted_text.strip():
+                raise ValueError("No readable text could be extracted from the input file.")
+
+            return extracted_text
 
     def translate_chunk(self, text, target_language, model_name, max_retries=3):
         prompt = self.prompt_template.format(target_language=target_language, text=text)
@@ -116,7 +153,11 @@ class TextTranslator:
         raise RuntimeError(f"Failed to translate chunk after {max_retries} attempts")
 
     def process_file(self, file_path: str, target_language="Persian", progress_callback=None, force=False):
-        text = Path(file_path).read_text(encoding="utf-8")
+        text = self._read_source_text(file_path)
+
+        if not text.strip():
+            raise ValueError("Input file is empty after text extraction.")
+
         chunks = self.split_text(text)
         
         translated_chunks = []
