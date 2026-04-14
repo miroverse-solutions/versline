@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from contextlib import contextmanager
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import httpx
 from fastembed import SparseTextEmbedding, TextEmbedding
@@ -119,8 +119,20 @@ class OpenAICompatibleEmbedder(BaseEmbedder):
 
 
 @contextmanager
-def _scoped_model_environment(proxy: Optional[str], cache_dir: Optional[str], local_files_only: bool):
-    keys = ["HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "HUGGINGFACE_HUB_CACHE", "TRANSFORMERS_CACHE"]
+def _scoped_model_environment(
+    proxy: Optional[str],
+    cache_dir: Optional[str],
+    local_files_only: bool,
+    openvino_cache_dir: Optional[str] = None,
+):
+    keys = [
+        "HF_HUB_OFFLINE",
+        "TRANSFORMERS_OFFLINE",
+        "HUGGINGFACE_HUB_CACHE",
+        "TRANSFORMERS_CACHE",
+        "OPENVINO_CACHE_DIR",
+        "OV_CACHE_DIR",
+    ]
     previous = {key: os.environ.get(key) for key in keys}
     try:
         if local_files_only:
@@ -129,6 +141,9 @@ def _scoped_model_environment(proxy: Optional[str], cache_dir: Optional[str], lo
         if cache_dir:
             os.environ["HUGGINGFACE_HUB_CACHE"] = cache_dir
             os.environ["TRANSFORMERS_CACHE"] = cache_dir
+        if openvino_cache_dir:
+            os.environ["OPENVINO_CACHE_DIR"] = openvino_cache_dir
+            os.environ["OV_CACHE_DIR"] = openvino_cache_dir
         with scoped_proxy(proxy):
             yield
     finally:
@@ -146,24 +161,61 @@ class FastEmbedDenseEmbedder(BaseEmbedder):
         proxy: Optional[str] = None,
         cache_dir: Optional[str] = None,
         local_files_only: Optional[bool] = None,
+        providers: Optional[List[Any]] = None,
     ):
         self.model_name = model_name
         self.proxy = proxy if proxy is not None else settings.rag.embedding_proxy
         self.cache_dir = cache_dir if cache_dir is not None else settings.rag.embedding_cache_dir
         configured_local_only = settings.rag.embedding_local_files_only if local_files_only is None else bool(local_files_only)
         self.local_files_only = True if self.cache_dir else configured_local_only
+        self.providers: List[Any] = []
+        for provider in providers or []:
+            if isinstance(provider, str):
+                cleaned = provider.strip()
+                if cleaned:
+                    self.providers.append(cleaned)
+            elif provider:
+                self.providers.append(provider)
 
-        with _scoped_model_environment(self.proxy, self.cache_dir, self.local_files_only):
-            self._model = TextEmbedding(
-                model_name=model_name,
-                cache_dir=self.cache_dir,
-                local_files_only=self.local_files_only,
-            )
+        with _scoped_model_environment(
+            self.proxy,
+            self.cache_dir,
+            self.local_files_only,
+            settings.rag.openvino_cache_dir,
+        ):
+            try:
+                kwargs = {
+                    "model_name": model_name,
+                    "cache_dir": self.cache_dir,
+                    "local_files_only": self.local_files_only,
+                }
+                if self.providers:
+                    kwargs["providers"] = self.providers
+                self._model = TextEmbedding(**kwargs)
+            except TypeError as error:
+                if self.providers:
+                    raise RuntimeError(
+                        "Current fastembed version does not support custom ONNX providers. "
+                        "Please upgrade fastembed to use OpenVINOExecutionProvider."
+                    ) from error
+                raise
+            except ValueError as error:
+                raise RuntimeError(
+                    "FastEmbed does not support the selected dense model. "
+                    f"Model: {model_name}. "
+                    "Use a FastEmbed-supported model, or switch backend to sentence-transformers/flagembedding "
+                    "with --embedding-provider."
+                ) from error
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         if not texts:
             return []
-        with _scoped_model_environment(self.proxy, self.cache_dir, self.local_files_only):
+        with _scoped_model_environment(
+            self.proxy,
+            self.cache_dir,
+            self.local_files_only,
+            settings.rag.openvino_cache_dir,
+        ):
             vectors = list(self._model.embed(texts))
         return [vector.tolist() if hasattr(vector, "tolist") else [float(x) for x in vector] for vector in vectors]
 
@@ -182,6 +234,7 @@ class SentenceTransformersDenseEmbedder(BaseEmbedder):
         model_path: Optional[str] = None,
         device: Optional[str] = None,
         batch_size: Optional[int] = None,
+        inference_backend: Optional[str] = None,
     ):
         self.model_name = model_name
         self.proxy = proxy if proxy is not None else settings.rag.embedding_proxy
@@ -191,6 +244,7 @@ class SentenceTransformersDenseEmbedder(BaseEmbedder):
         self.local_files_only = True if self.cache_dir else configured_local_only
         self.device = device if device is not None else settings.rag.embedding_device
         self.batch_size = max(1, int(batch_size if batch_size is not None else settings.rag.embedding_batch_size))
+        self.inference_backend = (inference_backend if inference_backend is not None else settings.rag.embedding_inference_backend or "auto").lower()
 
         try:
             from sentence_transformers import SentenceTransformer
@@ -201,18 +255,31 @@ class SentenceTransformersDenseEmbedder(BaseEmbedder):
             ) from error
 
         model_source = self.model_path or self.model_name
-        with _scoped_model_environment(self.proxy, self.cache_dir, self.local_files_only):
-            self._model = SentenceTransformer(
-                model_name_or_path=model_source,
-                device=self.device,
-                cache_folder=self.cache_dir,
-                local_files_only=self.local_files_only,
-            )
+        with _scoped_model_environment(
+            self.proxy,
+            self.cache_dir,
+            self.local_files_only,
+            settings.rag.openvino_cache_dir,
+        ):
+            kwargs = {
+                "model_name_or_path": model_source,
+                "device": self.device,
+                "cache_folder": self.cache_dir,
+                "local_files_only": self.local_files_only,
+            }
+            if self.inference_backend == "openvino":
+                kwargs["backend"] = "openvino"
+            self._model = SentenceTransformer(**kwargs)
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         if not texts:
             return []
-        with _scoped_model_environment(self.proxy, self.cache_dir, self.local_files_only):
+        with _scoped_model_environment(
+            self.proxy,
+            self.cache_dir,
+            self.local_files_only,
+            settings.rag.openvino_cache_dir,
+        ):
             vectors = self._model.encode(
                 texts,
                 batch_size=self.batch_size,
@@ -255,12 +322,18 @@ class FlagEmbeddingDenseEmbedder(BaseEmbedder):
             from FlagEmbedding import BGEM3FlagModel
         except Exception as error:
             raise RuntimeError(
-                "FlagEmbedding backend selected for dense embeddings but package is not installed. "
-                "Install it with: pip install FlagEmbedding"
+                "FlagEmbedding backend failed to initialize. "
+                "Ensure compatible versions are installed, e.g. pip install -U FlagEmbedding transformers. "
+                f"Original error: {error}"
             ) from error
 
         model_source = self.model_path or self.model_name
-        with _scoped_model_environment(self.proxy, self.cache_dir, self.local_files_only):
+        with _scoped_model_environment(
+            self.proxy,
+            self.cache_dir,
+            self.local_files_only,
+            settings.rag.openvino_cache_dir,
+        ):
             self._model = BGEM3FlagModel(
                 model_source,
                 use_fp16=self.use_fp16,
@@ -270,7 +343,12 @@ class FlagEmbeddingDenseEmbedder(BaseEmbedder):
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         if not texts:
             return []
-        with _scoped_model_environment(self.proxy, self.cache_dir, self.local_files_only):
+        with _scoped_model_environment(
+            self.proxy,
+            self.cache_dir,
+            self.local_files_only,
+            settings.rag.openvino_cache_dir,
+        ):
             encoded = self._model.encode(
                 texts,
                 batch_size=self.batch_size,
@@ -295,23 +373,54 @@ class FastEmbedSparseEmbedder:
         proxy: Optional[str] = None,
         cache_dir: Optional[str] = None,
         local_files_only: Optional[bool] = None,
+        providers: Optional[List[Any]] = None,
     ):
         self.model_name = model_name
         self.proxy = proxy if proxy is not None else (settings.rag.sparse_embedding_proxy or settings.rag.embedding_proxy)
         self.cache_dir = cache_dir if cache_dir is not None else settings.rag.sparse_embedding_cache_dir
         configured_local_only = settings.rag.sparse_embedding_local_files_only if local_files_only is None else bool(local_files_only)
         self.local_files_only = True if self.cache_dir else configured_local_only
-        with _scoped_model_environment(self.proxy, self.cache_dir, self.local_files_only):
-            self._model = SparseTextEmbedding(
-                model_name=model_name,
-                cache_dir=self.cache_dir,
-                local_files_only=self.local_files_only,
-            )
+        self.providers: List[Any] = []
+        for provider in providers or []:
+            if isinstance(provider, str):
+                cleaned = provider.strip()
+                if cleaned:
+                    self.providers.append(cleaned)
+            elif provider:
+                self.providers.append(provider)
+        with _scoped_model_environment(
+            self.proxy,
+            self.cache_dir,
+            self.local_files_only,
+            settings.rag.openvino_cache_dir,
+        ):
+            try:
+                kwargs = {
+                    "model_name": model_name,
+                    "cache_dir": self.cache_dir,
+                    "local_files_only": self.local_files_only,
+                }
+                if self.providers:
+                    kwargs["providers"] = self.providers
+                self._model = SparseTextEmbedding(**kwargs)
+            except TypeError as error:
+                if self.providers:
+                    raise RuntimeError(
+                        "Current fastembed version does not support custom ONNX providers for sparse models. "
+                        "Please upgrade fastembed to use OpenVINOExecutionProvider."
+                    ) from error
+                raise
 
     def embed_documents(self, texts: List[str]) -> List[dict]:
         if not texts:
             return []
-        vectors = list(self._model.embed(texts))
+        with _scoped_model_environment(
+            self.proxy,
+            self.cache_dir,
+            self.local_files_only,
+            settings.rag.openvino_cache_dir,
+        ):
+            vectors = list(self._model.embed(texts))
         return [
             {
                 "indices": [int(idx) for idx in vector.indices],

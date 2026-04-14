@@ -31,6 +31,7 @@ def _apply_llm_overrides(
 
 
 def _apply_rag_overrides(
+    vector_size: Optional[int],
     chunk_size: Optional[int],
     chunk_overlap: Optional[int],
     ingestion_batch_size: Optional[int],
@@ -46,6 +47,8 @@ def _apply_rag_overrides(
     embedding_use_fp16: Optional[bool],
     embedding_device: Optional[str],
     embedding_batch_size: Optional[int],
+    embedding_inference_backend: Optional[str],
+    openvino_cache_dir: Optional[str],
     embedding_timeout_seconds: Optional[float],
     generation_timeout_seconds: Optional[float],
     qdrant_timeout_seconds: Optional[float],
@@ -80,6 +83,13 @@ def _apply_rag_overrides(
     rerank_api_key: Optional[str],
     rerank_api_endpoint: Optional[str],
     rerank_proxy: Optional[str],
+    rerank_model_path: Optional[str],
+    rerank_cache_dir: Optional[str],
+    rerank_local_files_only: Optional[bool],
+    rerank_device: Optional[str],
+    rerank_batch_size: Optional[int],
+    rerank_inference_backend: Optional[str],
+    rerank_onnx_providers: Optional[str],
     rerank_rpm: Optional[int],
     rerank_tpm: Optional[int],
     token_limit_mode: Optional[str],
@@ -102,6 +112,8 @@ def _apply_rag_overrides(
     web_search_max_context_chars: Optional[int],
     web_search_rpm: Optional[int],
 ):
+    if vector_size is not None:
+        settings.rag.vector_size = int(vector_size)
     if chunk_size is not None:
         settings.rag.chunk_size = chunk_size
     if chunk_overlap is not None:
@@ -132,6 +144,10 @@ def _apply_rag_overrides(
         settings.rag.embedding_device = embedding_device
     if embedding_batch_size is not None:
         settings.rag.embedding_batch_size = embedding_batch_size
+    if embedding_inference_backend is not None:
+        settings.rag.embedding_inference_backend = embedding_inference_backend
+    if openvino_cache_dir is not None:
+        settings.rag.openvino_cache_dir = openvino_cache_dir
     if embedding_timeout_seconds is not None:
         settings.rag.embedding_timeout_seconds = embedding_timeout_seconds
     if generation_timeout_seconds is not None:
@@ -200,6 +216,20 @@ def _apply_rag_overrides(
         settings.rag.rerank_api_endpoint = rerank_api_endpoint
     if rerank_proxy is not None:
         settings.rag.rerank_proxy = rerank_proxy
+    if rerank_model_path is not None:
+        settings.rag.rerank_model_path = rerank_model_path
+    if rerank_cache_dir is not None:
+        settings.rag.rerank_cache_dir = rerank_cache_dir
+    if rerank_local_files_only is not None:
+        settings.rag.rerank_local_files_only = rerank_local_files_only
+    if rerank_device is not None:
+        settings.rag.rerank_device = rerank_device
+    if rerank_batch_size is not None:
+        settings.rag.rerank_batch_size = rerank_batch_size
+    if rerank_inference_backend is not None:
+        settings.rag.rerank_inference_backend = rerank_inference_backend
+    if rerank_onnx_providers is not None:
+        settings.rag.rerank_onnx_providers = rerank_onnx_providers
     if rerank_rpm is not None:
         settings.rag.rate_limit_rerank_rpm = rerank_rpm
     if rerank_tpm is not None:
@@ -255,7 +285,7 @@ def ingest(
     provider: Optional[str] = typer.Option(None, "--provider", help="LLM Provider"),
     model: Optional[str] = typer.Option(None, "--model", help="Generation model override"),
     embedding_model: Optional[str] = typer.Option(None, "--embedding-model", help="Embedding model override"),
-    embedding_provider: Optional[str] = typer.Option(None, "--embedding-provider", help="Dense embedding provider (openai/openrouter/avalai/openaicompatible/fastembed/sentence-transformers/flagembedding)"),
+    embedding_provider: Optional[str] = typer.Option(None, "--embedding-provider", help="Dense embedding provider (openai/openrouter/avalai/openaicompatible/fastembed/sentence-transformers[sentence|sentence_transformers]/flagembedding/openvino)"),
     embedding_api_key: Optional[str] = typer.Option(None, "--embedding-api-key", help="Embedding API key override"),
     embedding_api_endpoint: Optional[str] = typer.Option(None, "--embedding-api-endpoint", help="Embedding API endpoint override"),
     embedding_model_path: Optional[str] = typer.Option(None, "--embedding-model-path", help="Local path for dense embedding model artifacts"),
@@ -264,11 +294,14 @@ def ingest(
     embedding_use_fp16: Optional[bool] = typer.Option(None, "--embedding-use-fp16/--no-embedding-use-fp16", help="Use fp16 for dense local backends when supported"),
     embedding_device: Optional[str] = typer.Option(None, "--embedding-device", help="Dense embedding device (cpu/cuda)"),
     embedding_batch_size: Optional[int] = typer.Option(None, "--embedding-batch-size", help="Dense embedding batch size"),
+    embedding_inference_backend: Optional[str] = typer.Option(None, "--embedding-backend", help="Dense embedding inference backend: auto or openvino"),
+    openvino_cache_dir: Optional[str] = typer.Option(None, "--openvino-cache-dir", help="Cache directory for OpenVINO compiled artifacts"),
     embedding_timeout_seconds: Optional[float] = typer.Option(None, "--embedding-timeout", help="Embedding timeout seconds"),
     generation_timeout_seconds: Optional[float] = typer.Option(None, "--generation-timeout", help="Generation timeout seconds"),
     qdrant_timeout_seconds: Optional[float] = typer.Option(None, "--qdrant-timeout", help="Qdrant timeout seconds"),
     rerank_timeout_seconds: Optional[float] = typer.Option(None, "--rerank-timeout", help="Rerank timeout seconds"),
     sparse_model: Optional[str] = typer.Option(None, "--sparse-model", help="Sparse embedding model for native hybrid retrieval"),
+    vector_size: Optional[int] = typer.Option(None, "--vector-size", min=1, help="Fixed vector size for collection creation (defaults to embedding dimension when omitted)"),
     chunk_size: Optional[int] = typer.Option(None, "--chunk-size", help="Chunk size in characters"),
     chunk_overlap: Optional[int] = typer.Option(None, "--chunk-overlap", help="Chunk overlap in characters"),
     ingestion_batch_size: Optional[int] = typer.Option(None, "--ingestion-batch-size", help="Ingestion batch size"),
@@ -301,11 +334,18 @@ def ingest(
     retry_base_delay_seconds: Optional[float] = typer.Option(None, "--retry-base-delay", help="Base retry delay (seconds)"),
     retry_max_delay_seconds: Optional[float] = typer.Option(None, "--retry-max-delay", help="Max retry delay (seconds)"),
     rerank: Optional[bool] = typer.Option(None, "--rerank/--no-rerank", help="Enable dedicated rerank model"),
-    rerank_provider: Optional[str] = typer.Option(None, "--rerank-provider", help="Rerank provider (e.g. cohere)"),
+    rerank_provider: Optional[str] = typer.Option(None, "--rerank-provider", help="Rerank provider (cohere/jina/openai/openrouter/avalai/openaicompatible/local/openvino)"),
     rerank_model: Optional[str] = typer.Option(None, "--rerank-model", help="Dedicated rerank model"),
     rerank_api_key: Optional[str] = typer.Option(None, "--rerank-api-key", help="Rerank API key"),
     rerank_api_endpoint: Optional[str] = typer.Option(None, "--rerank-api-endpoint", help="Rerank API endpoint"),
     rerank_proxy: Optional[str] = typer.Option(None, "--rerank-proxy", help="Proxy used only for rerank"),
+    rerank_model_path: Optional[str] = typer.Option(None, "--rerank-model-path", help="Local path for rerank model artifacts"),
+    rerank_cache_dir: Optional[str] = typer.Option(None, "--rerank-cache-dir", help="Rerank model cache directory (enables local-only mode)"),
+    rerank_local_files_only: Optional[bool] = typer.Option(None, "--rerank-local-files-only/--no-rerank-local-files-only", help="Use local files only for rerank model"),
+    rerank_device: Optional[str] = typer.Option(None, "--rerank-device", help="Local rerank device (cpu/cuda)"),
+    rerank_batch_size: Optional[int] = typer.Option(None, "--rerank-batch-size", help="Local rerank batch size"),
+    rerank_inference_backend: Optional[str] = typer.Option(None, "--rerank-backend", help="Rerank inference backend: auto or openvino"),
+    rerank_onnx_providers: Optional[str] = typer.Option(None, "--rerank-onnx-providers", help="Comma-separated ONNX provider order for fastembed rerank"),
     rerank_rpm: Optional[int] = typer.Option(None, "--rerank-rpm", help="Rate limit for rerank (req/min)"),
     rerank_tpm: Optional[int] = typer.Option(None, "--rerank-tpm", help="Token limit for rerank (tokens/min)"),
     token_limit_mode: Optional[str] = typer.Option(
@@ -338,6 +378,7 @@ def ingest(
 
     _apply_llm_overrides(provider, model, api_key, api_endpoint, proxy)
     _apply_rag_overrides(
+        vector_size=vector_size,
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
         ingestion_batch_size=ingestion_batch_size,
@@ -353,6 +394,8 @@ def ingest(
         embedding_use_fp16=embedding_use_fp16,
         embedding_device=embedding_device,
         embedding_batch_size=embedding_batch_size,
+        embedding_inference_backend=embedding_inference_backend,
+        openvino_cache_dir=openvino_cache_dir,
         embedding_timeout_seconds=embedding_timeout_seconds,
         generation_timeout_seconds=generation_timeout_seconds,
         qdrant_timeout_seconds=qdrant_timeout_seconds,
@@ -387,6 +430,13 @@ def ingest(
         rerank_api_key=rerank_api_key,
         rerank_api_endpoint=rerank_api_endpoint,
         rerank_proxy=rerank_proxy,
+        rerank_model_path=rerank_model_path,
+        rerank_cache_dir=rerank_cache_dir,
+        rerank_local_files_only=rerank_local_files_only,
+        rerank_device=rerank_device,
+        rerank_batch_size=rerank_batch_size,
+        rerank_inference_backend=rerank_inference_backend,
+        rerank_onnx_providers=rerank_onnx_providers,
         rerank_rpm=rerank_rpm,
         rerank_tpm=rerank_tpm,
         token_limit_mode=token_limit_mode,
@@ -451,7 +501,7 @@ def ask(
     provider: Optional[str] = typer.Option(None, "--provider", help="LLM Provider"),
     model: Optional[str] = typer.Option(None, "--model", help="Generation model override"),
     embedding_model: Optional[str] = typer.Option(None, "--embedding-model", help="Embedding model override"),
-    embedding_provider: Optional[str] = typer.Option(None, "--embedding-provider", help="Dense embedding provider (openai/openrouter/avalai/openaicompatible/fastembed/sentence-transformers/flagembedding)"),
+    embedding_provider: Optional[str] = typer.Option(None, "--embedding-provider", help="Dense embedding provider (openai/openrouter/avalai/openaicompatible/fastembed/sentence-transformers[sentence|sentence_transformers]/flagembedding/openvino)"),
     embedding_api_key: Optional[str] = typer.Option(None, "--embedding-api-key", help="Embedding API key override"),
     embedding_api_endpoint: Optional[str] = typer.Option(None, "--embedding-api-endpoint", help="Embedding API endpoint override"),
     embedding_model_path: Optional[str] = typer.Option(None, "--embedding-model-path", help="Local path for dense embedding model artifacts"),
@@ -460,11 +510,14 @@ def ask(
     embedding_use_fp16: Optional[bool] = typer.Option(None, "--embedding-use-fp16/--no-embedding-use-fp16", help="Use fp16 for dense local backends when supported"),
     embedding_device: Optional[str] = typer.Option(None, "--embedding-device", help="Dense embedding device (cpu/cuda)"),
     embedding_batch_size: Optional[int] = typer.Option(None, "--embedding-batch-size", help="Dense embedding batch size"),
+    embedding_inference_backend: Optional[str] = typer.Option(None, "--embedding-backend", help="Dense embedding inference backend: auto or openvino"),
+    openvino_cache_dir: Optional[str] = typer.Option(None, "--openvino-cache-dir", help="Cache directory for OpenVINO compiled artifacts"),
     embedding_timeout_seconds: Optional[float] = typer.Option(None, "--embedding-timeout", help="Embedding timeout seconds"),
     generation_timeout_seconds: Optional[float] = typer.Option(None, "--generation-timeout", help="Generation timeout seconds"),
     qdrant_timeout_seconds: Optional[float] = typer.Option(None, "--qdrant-timeout", help="Qdrant timeout seconds"),
     rerank_timeout_seconds: Optional[float] = typer.Option(None, "--rerank-timeout", help="Rerank timeout seconds"),
     sparse_model: Optional[str] = typer.Option(None, "--sparse-model", help="Sparse embedding model for native hybrid retrieval"),
+    vector_size: Optional[int] = typer.Option(None, "--vector-size", min=1, help="Fixed vector size for collection creation (defaults to embedding dimension when omitted)"),
     chunk_size: Optional[int] = typer.Option(None, "--chunk-size", help="Chunk size in characters"),
     chunk_overlap: Optional[int] = typer.Option(None, "--chunk-overlap", help="Chunk overlap in characters"),
     ingestion_batch_size: Optional[int] = typer.Option(None, "--ingestion-batch-size", help="Ingestion batch size"),
@@ -498,11 +551,18 @@ def ask(
     retry_base_delay_seconds: Optional[float] = typer.Option(None, "--retry-base-delay", help="Base retry delay (seconds)"),
     retry_max_delay_seconds: Optional[float] = typer.Option(None, "--retry-max-delay", help="Max retry delay (seconds)"),
     rerank: Optional[bool] = typer.Option(None, "--rerank/--no-rerank", help="Enable dedicated rerank model"),
-    rerank_provider: Optional[str] = typer.Option(None, "--rerank-provider", help="Rerank provider (e.g. cohere)"),
+    rerank_provider: Optional[str] = typer.Option(None, "--rerank-provider", help="Rerank provider (cohere/jina/openai/openrouter/avalai/openaicompatible/local/openvino)"),
     rerank_model: Optional[str] = typer.Option(None, "--rerank-model", help="Dedicated rerank model"),
     rerank_api_key: Optional[str] = typer.Option(None, "--rerank-api-key", help="Rerank API key"),
     rerank_api_endpoint: Optional[str] = typer.Option(None, "--rerank-api-endpoint", help="Rerank API endpoint"),
     rerank_proxy: Optional[str] = typer.Option(None, "--rerank-proxy", help="Proxy used only for rerank"),
+    rerank_model_path: Optional[str] = typer.Option(None, "--rerank-model-path", help="Local path for rerank model artifacts"),
+    rerank_cache_dir: Optional[str] = typer.Option(None, "--rerank-cache-dir", help="Rerank model cache directory (enables local-only mode)"),
+    rerank_local_files_only: Optional[bool] = typer.Option(None, "--rerank-local-files-only/--no-rerank-local-files-only", help="Use local files only for rerank model"),
+    rerank_device: Optional[str] = typer.Option(None, "--rerank-device", help="Local rerank device (cpu/cuda)"),
+    rerank_batch_size: Optional[int] = typer.Option(None, "--rerank-batch-size", help="Local rerank batch size"),
+    rerank_inference_backend: Optional[str] = typer.Option(None, "--rerank-backend", help="Rerank inference backend: auto or openvino"),
+    rerank_onnx_providers: Optional[str] = typer.Option(None, "--rerank-onnx-providers", help="Comma-separated ONNX provider order for fastembed rerank"),
     rerank_rpm: Optional[int] = typer.Option(None, "--rerank-rpm", help="Rate limit for rerank (req/min)"),
     rerank_tpm: Optional[int] = typer.Option(None, "--rerank-tpm", help="Token limit for rerank (tokens/min)"),
     token_limit_mode: Optional[str] = typer.Option(
@@ -535,6 +595,7 @@ def ask(
 
     _apply_llm_overrides(provider, model, api_key, api_endpoint, proxy)
     _apply_rag_overrides(
+        vector_size=vector_size,
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
         ingestion_batch_size=ingestion_batch_size,
@@ -550,6 +611,8 @@ def ask(
         embedding_use_fp16=embedding_use_fp16,
         embedding_device=embedding_device,
         embedding_batch_size=embedding_batch_size,
+        embedding_inference_backend=embedding_inference_backend,
+        openvino_cache_dir=openvino_cache_dir,
         embedding_timeout_seconds=embedding_timeout_seconds,
         generation_timeout_seconds=generation_timeout_seconds,
         qdrant_timeout_seconds=qdrant_timeout_seconds,
@@ -584,6 +647,13 @@ def ask(
         rerank_api_key=rerank_api_key,
         rerank_api_endpoint=rerank_api_endpoint,
         rerank_proxy=rerank_proxy,
+        rerank_model_path=rerank_model_path,
+        rerank_cache_dir=rerank_cache_dir,
+        rerank_local_files_only=rerank_local_files_only,
+        rerank_device=rerank_device,
+        rerank_batch_size=rerank_batch_size,
+        rerank_inference_backend=rerank_inference_backend,
+        rerank_onnx_providers=rerank_onnx_providers,
         rerank_rpm=rerank_rpm,
         rerank_tpm=rerank_tpm,
         token_limit_mode=token_limit_mode,

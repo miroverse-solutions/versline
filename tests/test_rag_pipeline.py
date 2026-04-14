@@ -2,6 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any, Dict, List
+from unittest.mock import patch
 
 from versline.config import settings
 from versline.services.rag.base import BaseChunker, BaseEmbedder, BaseGenerator, BasePreprocessor, Chunk, Document, RetrievedChunk
@@ -75,6 +76,7 @@ class FakeReranker:
 class FakeVectorStore:
     def __init__(self, fail_once_on_upsert_call: int = 0):
         self.collection = None
+        self.vector_size = None
         self.upsert_calls = 0
         self.upsert_hybrid_calls = 0
         self.search_results: List[RetrievedChunk] = []
@@ -85,6 +87,7 @@ class FakeVectorStore:
 
     def ensure_collection(self, collection_name: str, vector_size: int) -> None:
         self.collection = collection_name
+        self.vector_size = vector_size
 
     def reset_collection(self, collection_name: str) -> None:
         self.collection = collection_name
@@ -140,17 +143,20 @@ class TestRAGPipeline(unittest.TestCase):
         self.prev_batch = settings.rag.ingestion_batch_size
         self.prev_hybrid = settings.rag.hybrid_enabled
         self.prev_fetch = settings.rag.retrieve_fetch_k
+        self.prev_vector_size = settings.rag.vector_size
 
         settings.rag.state_directory = self.base_path / "state"
         settings.rag.ingestion_batch_size = 2
         settings.rag.hybrid_enabled = True
         settings.rag.retrieve_fetch_k = 10
+        settings.rag.vector_size = None
 
     def tearDown(self):
         settings.rag.state_directory = self.prev_state_dir
         settings.rag.ingestion_batch_size = self.prev_batch
         settings.rag.hybrid_enabled = self.prev_hybrid
         settings.rag.retrieve_fetch_k = self.prev_fetch
+        settings.rag.vector_size = self.prev_vector_size
         self.temp_dir.cleanup()
 
     def _make_pipeline(self, store: FakeVectorStore, reranker=None) -> RAGPipeline:
@@ -186,6 +192,30 @@ class TestRAGPipeline(unittest.TestCase):
         self.assertEqual(result["files"], 2)
         self.assertEqual(result["chunks"], 4)
         self.assertGreaterEqual(store.upsert_hybrid_calls, 2)
+
+    def test_ingest_respects_configured_vector_size(self):
+        source_file = self.base_path / "vector_size.md"
+        source_file.write_text("line1\nline2", encoding="utf-8")
+
+        store = FakeVectorStore()
+        pipeline = self._make_pipeline(store)
+        settings.rag.vector_size = 2
+
+        result = pipeline.ingest_file(str(source_file), input_type="markdown")
+
+        self.assertEqual(result["chunks"], 2)
+        self.assertEqual(store.vector_size, 2)
+
+    def test_ingest_raises_on_vector_size_mismatch(self):
+        source_file = self.base_path / "vector_size_mismatch.md"
+        source_file.write_text("line1", encoding="utf-8")
+
+        store = FakeVectorStore()
+        pipeline = self._make_pipeline(store)
+        settings.rag.vector_size = 1536
+
+        with self.assertRaises(ValueError):
+            pipeline.ingest_file(str(source_file), input_type="markdown")
 
     def test_resume_after_interruption(self):
         source_file = self.base_path / "resume.md"
@@ -237,6 +267,307 @@ class TestRAGPipeline(unittest.TestCase):
             self.assertEqual([item.id for item in result], ["3", "2"])
         finally:
             settings.rag.rerank_enabled = previous_rerank_enabled
+
+    def test_preflight_normalizes_empty_qdrant_proxy(self):
+        class DummyResponse:
+            status_code = 200
+
+        class DummyClient:
+            def __init__(self, *args, **kwargs):
+                self.kwargs = kwargs
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def get(self, *args, **kwargs):
+                return DummyResponse()
+
+        previous_proxy = settings.rag.qdrant_proxy
+        previous_url = settings.rag.qdrant_url
+        settings.rag.qdrant_proxy = ""
+        settings.rag.qdrant_url = "https://example.com"
+
+        try:
+            with patch("versline.services.rag.pipeline.httpx.Client", side_effect=DummyClient) as client_mock:
+                pipeline = self._make_pipeline(FakeVectorStore())
+                result = pipeline._validate_initial_configuration(
+                    check_network=True,
+                    vector_backend="qdrant",
+                    require_llm_api_keys=False,
+                    require_web_api_keys=False,
+                    timeout_seconds=1.0,
+                )
+
+                self.assertTrue(result["ok"])
+                _, kwargs = client_mock.call_args
+                self.assertIsNone(kwargs.get("proxy"))
+        finally:
+            settings.rag.qdrant_proxy = previous_proxy
+            settings.rag.qdrant_url = previous_url
+
+    def test_sentence_transformers_provider_aliases(self):
+        previous_provider = settings.rag.embedding_provider
+        previous_model = settings.rag.embedding_model
+
+        stores = VectorStoreRegistry()
+        stores.register("fake", FakeVectorStore())
+
+        class DummySTEmbedder:
+            def __init__(self, *args, **kwargs):
+                pass
+
+        try:
+            for provider_value in ["sentence-transformers", "sentence_transformers", "sentencetransformers", "sentence-transformer", "sentence"]:
+                settings.rag.embedding_provider = provider_value
+                settings.rag.embedding_model = "sentence-transformers/all-MiniLM-L6-v2"
+                with patch("versline.services.rag.pipeline.SentenceTransformersDenseEmbedder", DummySTEmbedder):
+                    pipeline = RAGPipeline(
+                        embedder=None,
+                        sparse_embedder=FakeSparseEmbedder(),
+                        generator=FakeGenerator(),
+                        vector_store_registry=stores,
+                        vector_backend="fake",
+                        preflight=False,
+                    )
+                    self.assertIsInstance(pipeline.embedder, DummySTEmbedder)
+        finally:
+            settings.rag.embedding_provider = previous_provider
+            settings.rag.embedding_model = previous_model
+
+    def test_local_rerank_with_model_path_uses_sentence_transformers_reranker(self):
+        previous_rerank_enabled = settings.rag.rerank_enabled
+        previous_rerank_provider = settings.rag.rerank_provider
+        previous_rerank_model_path = settings.rag.rerank_model_path
+
+        stores = VectorStoreRegistry()
+        stores.register("fake", FakeVectorStore())
+
+        class DummySTReranker:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def rerank(self, query, items, top_k):
+                return items[:top_k]
+
+        settings.rag.rerank_enabled = True
+        settings.rag.rerank_provider = "local"
+        settings.rag.rerank_model_path = "/models/bge-reranker-v2-m3"
+        try:
+            with patch("versline.services.rag.pipeline.SentenceTransformersReranker", DummySTReranker):
+                pipeline = RAGPipeline(
+                    embedder=FakeEmbedder(),
+                    sparse_embedder=FakeSparseEmbedder(),
+                    generator=FakeGenerator(),
+                    vector_store_registry=stores,
+                    vector_backend="fake",
+                    preflight=False,
+                )
+                self.assertIsInstance(pipeline.reranker, DummySTReranker)
+        finally:
+            settings.rag.rerank_enabled = previous_rerank_enabled
+            settings.rag.rerank_provider = previous_rerank_provider
+            settings.rag.rerank_model_path = previous_rerank_model_path
+
+    def test_openvino_embedding_backend_does_not_override_openai_provider(self):
+        previous_provider = settings.rag.embedding_provider
+        previous_backend = settings.rag.embedding_inference_backend
+
+        stores = VectorStoreRegistry()
+        stores.register("fake", FakeVectorStore())
+
+        class DummyOpenAIEmbedder:
+            def __init__(self, *args, **kwargs):
+                self.kwargs = kwargs
+
+            def embed_documents(self, texts):
+                return [[1.0] for _ in texts]
+
+            def embed_query(self, text):
+                return [1.0]
+
+        settings.rag.embedding_provider = "openai"
+        settings.rag.embedding_inference_backend = "openvino"
+        try:
+            with patch("versline.services.rag.pipeline.OpenAICompatibleEmbedder", DummyOpenAIEmbedder):
+                pipeline = RAGPipeline(
+                    sparse_embedder=FakeSparseEmbedder(),
+                    generator=FakeGenerator(),
+                    vector_store_registry=stores,
+                    vector_backend="fake",
+                    preflight=False,
+                )
+                self.assertIsInstance(pipeline.embedder, DummyOpenAIEmbedder)
+        finally:
+            settings.rag.embedding_provider = previous_provider
+            settings.rag.embedding_inference_backend = previous_backend
+
+    def test_fastembed_openvino_backend_passes_onnx_providers(self):
+        previous_provider = settings.rag.embedding_provider
+        previous_backend = settings.rag.embedding_inference_backend
+        previous_providers = settings.rag.embedding_onnx_providers
+        previous_device = settings.rag.embedding_device
+        previous_ov_cache = settings.rag.openvino_cache_dir
+
+        stores = VectorStoreRegistry()
+        stores.register("fake", FakeVectorStore())
+
+        class DummyFastEmbedder:
+            def __init__(self, *args, **kwargs):
+                self.kwargs = kwargs
+
+            def embed_documents(self, texts):
+                return [[1.0] for _ in texts]
+
+            def embed_query(self, text):
+                return [1.0]
+
+        settings.rag.embedding_provider = "fastembed"
+        settings.rag.embedding_inference_backend = "openvino"
+        settings.rag.embedding_onnx_providers = None
+        settings.rag.embedding_device = "cuda"
+        settings.rag.openvino_cache_dir = "/tmp/ov_cache"
+        try:
+            with patch("versline.services.rag.pipeline.FastEmbedDenseEmbedder", DummyFastEmbedder):
+                pipeline = RAGPipeline(
+                    sparse_embedder=FakeSparseEmbedder(),
+                    generator=FakeGenerator(),
+                    vector_store_registry=stores,
+                    vector_backend="fake",
+                    preflight=False,
+                )
+                self.assertIsInstance(pipeline.embedder, DummyFastEmbedder)
+                self.assertEqual(
+                    pipeline.embedder.kwargs.get("providers"),
+                    [("OpenVINOExecutionProvider", {"device_type": "GPU", "cache_dir": "/tmp/ov_cache"}), "CPUExecutionProvider"],
+                )
+        finally:
+            settings.rag.embedding_provider = previous_provider
+            settings.rag.embedding_inference_backend = previous_backend
+            settings.rag.embedding_onnx_providers = previous_providers
+            settings.rag.embedding_device = previous_device
+            settings.rag.openvino_cache_dir = previous_ov_cache
+
+    def test_openvino_rerank_backend_does_not_override_cohere_provider(self):
+        previous_rerank_enabled = settings.rag.rerank_enabled
+        previous_rerank_provider = settings.rag.rerank_provider
+        previous_rerank_backend = settings.rag.rerank_inference_backend
+
+        stores = VectorStoreRegistry()
+        stores.register("fake", FakeVectorStore())
+
+        class DummyCohereReranker:
+            def __init__(self, *args, **kwargs):
+                self.kwargs = kwargs
+
+            def rerank(self, query, items, top_k):
+                return items[:top_k]
+
+        settings.rag.rerank_enabled = True
+        settings.rag.rerank_provider = "cohere"
+        settings.rag.rerank_inference_backend = "openvino"
+        try:
+            with patch("versline.services.rag.pipeline.CohereReranker", DummyCohereReranker):
+                pipeline = RAGPipeline(
+                    embedder=FakeEmbedder(),
+                    sparse_embedder=FakeSparseEmbedder(),
+                    generator=FakeGenerator(),
+                    vector_store_registry=stores,
+                    vector_backend="fake",
+                    preflight=False,
+                )
+                self.assertIsInstance(pipeline.reranker, DummyCohereReranker)
+        finally:
+            settings.rag.rerank_enabled = previous_rerank_enabled
+            settings.rag.rerank_provider = previous_rerank_provider
+            settings.rag.rerank_inference_backend = previous_rerank_backend
+
+    def test_openvino_rerank_backend_applies_with_local_model_files(self):
+        previous_rerank_enabled = settings.rag.rerank_enabled
+        previous_rerank_provider = settings.rag.rerank_provider
+        previous_rerank_backend = settings.rag.rerank_inference_backend
+        previous_rerank_model_path = settings.rag.rerank_model_path
+
+        stores = VectorStoreRegistry()
+        stores.register("fake", FakeVectorStore())
+
+        class DummySTReranker:
+            def __init__(self, *args, **kwargs):
+                self.kwargs = kwargs
+
+            def rerank(self, query, items, top_k):
+                return items[:top_k]
+
+        settings.rag.rerank_enabled = True
+        settings.rag.rerank_provider = "local"
+        settings.rag.rerank_inference_backend = "openvino"
+        settings.rag.rerank_model_path = "/models/bge-reranker-v2-m3"
+        try:
+            with patch("versline.services.rag.pipeline.SentenceTransformersReranker", DummySTReranker):
+                pipeline = RAGPipeline(
+                    embedder=FakeEmbedder(),
+                    sparse_embedder=FakeSparseEmbedder(),
+                    generator=FakeGenerator(),
+                    vector_store_registry=stores,
+                    vector_backend="fake",
+                    preflight=False,
+                )
+                self.assertIsInstance(pipeline.reranker, DummySTReranker)
+                self.assertEqual(pipeline.reranker.kwargs.get("inference_backend"), "openvino")
+        finally:
+            settings.rag.rerank_enabled = previous_rerank_enabled
+            settings.rag.rerank_provider = previous_rerank_provider
+            settings.rag.rerank_inference_backend = previous_rerank_backend
+            settings.rag.rerank_model_path = previous_rerank_model_path
+
+    def test_fastembed_rerank_openvino_backend_passes_onnx_providers(self):
+        previous_rerank_enabled = settings.rag.rerank_enabled
+        previous_rerank_provider = settings.rag.rerank_provider
+        previous_rerank_backend = settings.rag.rerank_inference_backend
+        previous_rerank_onnx = settings.rag.rerank_onnx_providers
+        previous_rerank_device = settings.rag.rerank_device
+        previous_ov_cache = settings.rag.openvino_cache_dir
+
+        stores = VectorStoreRegistry()
+        stores.register("fake", FakeVectorStore())
+
+        class DummyFastEmbedReranker:
+            def __init__(self, *args, **kwargs):
+                self.kwargs = kwargs
+
+            def rerank(self, query, items, top_k):
+                return items[:top_k]
+
+        settings.rag.rerank_enabled = True
+        settings.rag.rerank_provider = "fastembed"
+        settings.rag.rerank_inference_backend = "openvino"
+        settings.rag.rerank_onnx_providers = None
+        settings.rag.rerank_device = "gpu"
+        settings.rag.openvino_cache_dir = "/tmp/ov_rerank_cache"
+        try:
+            with patch("versline.services.rag.pipeline.FastEmbedReranker", DummyFastEmbedReranker):
+                pipeline = RAGPipeline(
+                    embedder=FakeEmbedder(),
+                    sparse_embedder=FakeSparseEmbedder(),
+                    generator=FakeGenerator(),
+                    vector_store_registry=stores,
+                    vector_backend="fake",
+                    preflight=False,
+                )
+                self.assertIsInstance(pipeline.reranker, DummyFastEmbedReranker)
+                self.assertEqual(
+                    pipeline.reranker.kwargs.get("providers"),
+                    [("OpenVINOExecutionProvider", {"device_type": "GPU", "cache_dir": "/tmp/ov_rerank_cache"}), "CPUExecutionProvider"],
+                )
+        finally:
+            settings.rag.rerank_enabled = previous_rerank_enabled
+            settings.rag.rerank_provider = previous_rerank_provider
+            settings.rag.rerank_inference_backend = previous_rerank_backend
+            settings.rag.rerank_onnx_providers = previous_rerank_onnx
+            settings.rag.rerank_device = previous_rerank_device
+            settings.rag.openvino_cache_dir = previous_ov_cache
 
 
 if __name__ == "__main__":

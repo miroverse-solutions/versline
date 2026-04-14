@@ -28,12 +28,13 @@ class FFmpegSettings(BaseSettings):
 class RAGSettings(BaseSettings):
     vector_backend: str = Field(default="qdrant", description="Vector backend type")
     collection_name: str = Field(default="versline_docs", description="Default vector collection")
+    vector_size: Optional[int] = Field(default=None, description="Optional fixed vector size for collection creation")
     qdrant_url: str = Field(default="http://localhost:6333", description="Qdrant URL")
     qdrant_api_key: Optional[str] = Field(default=None, description="Qdrant API key")
     qdrant_distance: str = Field(default="cosine", description="Vector distance metric")
     qdrant_proxy: Optional[str] = Field(default=None, description="Proxy only for Qdrant requests")
     embedding_model: str = Field(default="text-embedding-3-small", description="Embedding model")
-    embedding_provider: str = Field(default="openai", description="Embedding provider (openai/openrouter/avalai/openaicompatible/fastembed/sentence-transformers/flagembedding)")
+    embedding_provider: str = Field(default="openai", description="Embedding provider (openai/openrouter/avalai/openaicompatible/fastembed/sentence-transformers[sentence|sentence_transformers]/flagembedding/openvino)")
     embedding_api_key: Optional[str] = Field(default=None, description="Embedding API key override")
     embedding_api_endpoint: Optional[str] = Field(default=None, description="Embedding API endpoint override")
     embedding_timeout_seconds: float = Field(default=60.0, description="Embedding request timeout seconds")
@@ -44,7 +45,10 @@ class RAGSettings(BaseSettings):
     embedding_use_fp16: bool = Field(default=True, description="Use fp16 when supported by dense local embedding backend")
     embedding_device: Optional[str] = Field(default=None, description="Device override for dense embedding model (e.g. cpu, cuda)")
     embedding_batch_size: int = Field(default=16, description="Batch size for dense embedding encoding")
+    embedding_inference_backend: str = Field(default="auto", description="Dense embedding inference backend: auto or openvino")
+    embedding_onnx_providers: Optional[str] = Field(default=None, description="Optional comma-separated ONNX provider list for dense fastembed")
     sparse_embedding_proxy: Optional[str] = Field(default=None, description="Proxy used for sparse embedding model download/init")
+    openvino_cache_dir: Optional[str] = Field(default=None, description="Cache directory for OpenVINO compiled artifacts")
     generation_timeout_seconds: float = Field(default=120.0, description="Generation request timeout seconds")
     generation_proxy: Optional[str] = Field(default=None, description="Proxy only for generation requests")
     qdrant_timeout_seconds: float = Field(default=20.0, description="Qdrant request timeout seconds")
@@ -87,6 +91,10 @@ class RAGSettings(BaseSettings):
         default=16,
         description="Batch size for sparse embedding encoding",
     )
+    sparse_embedding_onnx_providers: Optional[str] = Field(
+        default=None,
+        description="Optional comma-separated ONNX provider list for sparse fastembed",
+    )
     hybrid_fusion: str = Field(default="rrf", description="Hybrid fusion mode")
     hybrid_dense_weight: float = Field(default=0.7, description="Weight of dense score in hybrid ranking")
     hybrid_lexical_weight: float = Field(default=0.3, description="Weight of lexical score in hybrid ranking")
@@ -100,11 +108,21 @@ class RAGSettings(BaseSettings):
     rate_limit_generation_tpm: int = Field(default=0, description="Generation tokens per minute (0 disables)")
     rate_limit_qdrant_rpm: int = Field(default=0, description="Qdrant requests per minute (0 disables)")
     rerank_enabled: bool = Field(default=False, description="Enable dedicated rerank model after retrieval")
-    rerank_provider: str = Field(default="cohere", description="Rerank provider")
+    rerank_provider: str = Field(
+        default="cohere",
+        description="Rerank provider (cohere/jina/openai/openrouter/avalai/openaicompatible/local/openvino)",
+    )
     rerank_model: str = Field(default="rerank-v3.5", description="Rerank model")
     rerank_api_key: Optional[str] = Field(default=None, description="Rerank API key override")
     rerank_api_endpoint: Optional[str] = Field(default=None, description="Rerank API endpoint override")
     rerank_proxy: Optional[str] = Field(default=None, description="Proxy only for rerank requests")
+    rerank_model_path: Optional[str] = Field(default=None, description="Optional local path for rerank model artifacts")
+    rerank_cache_dir: Optional[str] = Field(default=None, description="Cache directory for rerank model artifacts")
+    rerank_local_files_only: bool = Field(default=False, description="Load rerank model artifacts from local files only")
+    rerank_device: Optional[str] = Field(default=None, description="Device override for local rerank model (e.g. cpu, cuda)")
+    rerank_batch_size: int = Field(default=16, description="Batch size for local rerank scoring")
+    rerank_inference_backend: str = Field(default="auto", description="Rerank inference backend: auto or openvino")
+    rerank_onnx_providers: Optional[str] = Field(default=None, description="Optional comma-separated ONNX provider list for fastembed rerank")
     rate_limit_rerank_rpm: int = Field(default=0, description="Rerank requests per minute (0 disables)")
     rate_limit_rerank_tpm: int = Field(default=0, description="Rerank tokens per minute (0 disables)")
     token_limit_mode: str = Field(

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
-from typing import Dict, List, Optional
+import os
+from contextlib import contextmanager
+from typing import Any, Dict, List, Optional
 
 import cohere
 import httpx
@@ -18,6 +20,42 @@ from versline.services.rag.runtime import (
     retry_call,
     scoped_proxy,
 )
+
+
+@contextmanager
+def _scoped_model_environment(
+    proxy: Optional[str],
+    cache_dir: Optional[str],
+    local_files_only: bool,
+    openvino_cache_dir: Optional[str] = None,
+):
+    keys = [
+        "HF_HUB_OFFLINE",
+        "TRANSFORMERS_OFFLINE",
+        "HUGGINGFACE_HUB_CACHE",
+        "TRANSFORMERS_CACHE",
+        "OPENVINO_CACHE_DIR",
+        "OV_CACHE_DIR",
+    ]
+    previous = {key: os.environ.get(key) for key in keys}
+    try:
+        if local_files_only:
+            os.environ["HF_HUB_OFFLINE"] = "1"
+            os.environ["TRANSFORMERS_OFFLINE"] = "1"
+        if cache_dir:
+            os.environ["HUGGINGFACE_HUB_CACHE"] = cache_dir
+            os.environ["TRANSFORMERS_CACHE"] = cache_dir
+        if openvino_cache_dir:
+            os.environ["OPENVINO_CACHE_DIR"] = openvino_cache_dir
+            os.environ["OV_CACHE_DIR"] = openvino_cache_dir
+        with scoped_proxy(proxy):
+            yield
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 class CohereReranker(BaseReranker):
@@ -142,14 +180,18 @@ class OpenAICompatibleReranker(BaseReranker):
         self.tracker = tracker
         self.timeout_seconds = float(settings.rag.rerank_timeout_seconds)
 
+        provider = (settings.rag.rerank_provider or "openai").lower()
         resolved_api_key = api_key or settings.rag.rerank_api_key or settings.llm.api_key
         resolved_base_url = base_url or settings.rag.rerank_api_endpoint
-
-        provider = (settings.rag.rerank_provider or "openai").lower()
         if provider == "openrouter" and not resolved_base_url:
             resolved_base_url = "https://openrouter.ai/api/v1"
         elif provider == "avalai" and not resolved_base_url:
             resolved_base_url = "https://api.avalai.ir/v1"
+        elif provider == "local":
+            if not resolved_base_url:
+                resolved_base_url = "http://localhost:11434/v1"
+            if not resolved_api_key:
+                resolved_api_key = "local"
 
         http_timeout = httpx.Timeout(self.timeout_seconds)
         http_client = httpx.Client(proxy=self.proxy, timeout=http_timeout) if self.proxy else httpx.Client(timeout=http_timeout)
@@ -372,6 +414,257 @@ class JinaReranker(BaseReranker):
                     metadata=original.metadata,
                 )
             )
+
+        if ranked_items:
+            return ranked_items[:top_k]
+        return items[:top_k]
+
+
+class SentenceTransformersReranker(BaseReranker):
+    def __init__(
+        self,
+        model: str,
+        proxy: Optional[str] = None,
+        cache_dir: Optional[str] = None,
+        local_files_only: Optional[bool] = None,
+        model_path: Optional[str] = None,
+        device: Optional[str] = None,
+        batch_size: Optional[int] = None,
+        inference_backend: Optional[str] = None,
+        rate_limiter: Optional[RateLimiter] = None,
+        token_rate_limiter: Optional[TokenRateLimiter] = None,
+    ):
+        self.model = model
+        self.proxy = proxy if proxy is not None else settings.rag.rerank_proxy
+        self.cache_dir = cache_dir if cache_dir is not None else settings.rag.rerank_cache_dir
+        configured_local_only = settings.rag.rerank_local_files_only if local_files_only is None else bool(local_files_only)
+        self.local_files_only = True if self.cache_dir else configured_local_only
+        self.model_path = model_path if model_path is not None else settings.rag.rerank_model_path
+        self.device = device if device is not None else settings.rag.rerank_device
+        self.batch_size = max(1, int(batch_size if batch_size is not None else settings.rag.rerank_batch_size))
+        self.inference_backend = (inference_backend if inference_backend is not None else settings.rag.rerank_inference_backend or "auto").lower()
+        self.rate_limiter = rate_limiter or RateLimiter(settings.rag.rate_limit_rerank_rpm)
+        self.token_rate_limiter = token_rate_limiter or TokenRateLimiter(settings.rag.rate_limit_rerank_tpm)
+
+        model_source = self.model_path or self.model
+        try:
+            from sentence_transformers import CrossEncoder
+        except Exception as error:
+            raise RuntimeError(
+                "sentence-transformers rerank backend selected but package is not installed. "
+                "Install it with: pip install sentence-transformers"
+            ) from error
+
+        with _scoped_model_environment(
+            self.proxy,
+            self.cache_dir,
+            self.local_files_only,
+            settings.rag.openvino_cache_dir,
+        ):
+            kwargs = {
+                "model_name": model_source,
+                "device": self.device,
+                "cache_folder": self.cache_dir,
+                "local_files_only": self.local_files_only,
+            }
+            if self.inference_backend == "openvino":
+                kwargs["backend"] = "openvino"
+            self._model = CrossEncoder(**kwargs)
+
+    def rerank(self, query: str, items: List[RetrievedChunk], top_k: int) -> List[RetrievedChunk]:
+        if not items:
+            return []
+
+        self.rate_limiter.wait()
+        docs = [item.text for item in items]
+        self.token_rate_limiter.reserve(
+            estimate_tokens_from_text(query) + estimate_tokens_from_texts(docs)
+        )
+
+        pairs = [[query, item.text] for item in items]
+        with _scoped_model_environment(
+            self.proxy,
+            self.cache_dir,
+            self.local_files_only,
+            settings.rag.openvino_cache_dir,
+        ):
+            raw_scores = self._model.predict(
+                pairs,
+                batch_size=self.batch_size,
+                show_progress_bar=False,
+            )
+
+        scores: List[float]
+        if hasattr(raw_scores, "tolist"):
+            scores = [float(value) for value in raw_scores.tolist()]
+        else:
+            scores = [float(value) for value in raw_scores]
+
+        ranked_indices = sorted(range(len(items)), key=lambda idx: scores[idx], reverse=True)
+        limit = min(max(1, top_k), len(items))
+        ranked_items: List[RetrievedChunk] = []
+        for idx in ranked_indices[:limit]:
+            original = items[idx]
+            ranked_items.append(
+                RetrievedChunk(
+                    id=original.id,
+                    text=original.text,
+                    score=scores[idx],
+                    metadata=original.metadata,
+                )
+            )
+        return ranked_items
+
+
+class FastEmbedReranker(BaseReranker):
+    def __init__(
+        self,
+        model: str,
+        proxy: Optional[str] = None,
+        cache_dir: Optional[str] = None,
+        local_files_only: Optional[bool] = None,
+        providers: Optional[List[Any]] = None,
+        rate_limiter: Optional[RateLimiter] = None,
+        token_rate_limiter: Optional[TokenRateLimiter] = None,
+    ):
+        self.model = model
+        self.proxy = proxy if proxy is not None else settings.rag.rerank_proxy
+        self.cache_dir = cache_dir if cache_dir is not None else settings.rag.rerank_cache_dir
+        configured_local_only = settings.rag.rerank_local_files_only if local_files_only is None else bool(local_files_only)
+        self.local_files_only = True if self.cache_dir else configured_local_only
+        self.providers: List[Any] = []
+        for provider in providers or []:
+            if isinstance(provider, str):
+                cleaned = provider.strip()
+                if cleaned:
+                    self.providers.append(cleaned)
+            elif provider:
+                self.providers.append(provider)
+        self.rate_limiter = rate_limiter or RateLimiter(settings.rag.rate_limit_rerank_rpm)
+        self.token_rate_limiter = token_rate_limiter or TokenRateLimiter(settings.rag.rate_limit_rerank_tpm)
+
+        try:
+            from fastembed import TextCrossEncoder as _FastEmbedCrossEncoder  # type: ignore
+        except Exception:
+            try:
+                from fastembed.rerank.cross_encoder import TextCrossEncoder as _FastEmbedCrossEncoder  # type: ignore
+            except Exception as error:
+                raise RuntimeError(
+                    "fastembed rerank backend selected but TextCrossEncoder is unavailable. "
+                    "Upgrade fastembed to a version that provides TextCrossEncoder."
+                ) from error
+
+        with _scoped_model_environment(
+            self.proxy,
+            self.cache_dir,
+            self.local_files_only,
+            settings.rag.openvino_cache_dir,
+        ):
+            try:
+                kwargs = {
+                    "model_name": self.model,
+                    "cache_dir": self.cache_dir,
+                    "local_files_only": self.local_files_only,
+                }
+                if self.providers:
+                    kwargs["providers"] = self.providers
+                self._model = _FastEmbedCrossEncoder(**kwargs)
+            except TypeError as error:
+                if self.providers:
+                    raise RuntimeError(
+                        "Current fastembed version does not support custom ONNX providers for rerank. "
+                        "Please upgrade fastembed to use OpenVINOExecutionProvider."
+                    ) from error
+                raise
+
+    @staticmethod
+    def _score_from_entry(entry: object) -> Optional[float]:
+        if isinstance(entry, dict):
+            for key in ("score", "relevance_score"):
+                value = entry.get(key)
+                if value is not None:
+                    return float(value)
+            return None
+        for key in ("score", "relevance_score"):
+            value = getattr(entry, key, None)
+            if value is not None:
+                return float(value)
+        return None
+
+    @staticmethod
+    def _index_from_entry(entry: object) -> Optional[int]:
+        if isinstance(entry, dict):
+            value = entry.get("index")
+            if value is not None:
+                return int(value)
+            return None
+        value = getattr(entry, "index", None)
+        if value is not None:
+            return int(value)
+        return None
+
+    def rerank(self, query: str, items: List[RetrievedChunk], top_k: int) -> List[RetrievedChunk]:
+        if not items:
+            return []
+
+        self.rate_limiter.wait()
+        docs = [item.text for item in items]
+        self.token_rate_limiter.reserve(
+            estimate_tokens_from_text(query) + estimate_tokens_from_texts(docs)
+        )
+        rerank_top_n = min(max(1, top_k), len(items))
+
+        try:
+            with _scoped_model_environment(
+                self.proxy,
+                self.cache_dir,
+                self.local_files_only,
+                settings.rag.openvino_cache_dir,
+            ):
+                if hasattr(self._model, "rerank"):
+                    raw = self._model.rerank(query=query, documents=docs, top_n=rerank_top_n)
+                elif hasattr(self._model, "predict"):
+                    pairs = [[query, item.text] for item in items]
+                    raw = self._model.predict(pairs)
+                else:
+                    return items[:top_k]
+        except Exception:
+            return items[:top_k]
+
+        ranked_items: List[RetrievedChunk] = []
+        if isinstance(raw, list):
+            if raw and self._index_from_entry(raw[0]) is not None:
+                for entry in raw:
+                    idx = self._index_from_entry(entry)
+                    if idx is None or idx < 0 or idx >= len(items):
+                        continue
+                    original = items[idx]
+                    score = self._score_from_entry(entry)
+                    ranked_items.append(
+                        RetrievedChunk(
+                            id=original.id,
+                            text=original.text,
+                            score=float(score) if score is not None else float(original.score),
+                            metadata=original.metadata,
+                        )
+                    )
+            else:
+                try:
+                    scores = [float(value) for value in raw]
+                except Exception:
+                    scores = []
+                if scores:
+                    ranked_indices = sorted(range(len(items)), key=lambda idx: scores[idx], reverse=True)
+                    for idx in ranked_indices[:rerank_top_n]:
+                        original = items[idx]
+                        ranked_items.append(
+                            RetrievedChunk(
+                                id=original.id,
+                                text=original.text,
+                                score=scores[idx],
+                                metadata=original.metadata,
+                            )
+                        )
 
         if ranked_items:
             return ranked_items[:top_k]

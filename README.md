@@ -117,6 +117,7 @@ VERSLINE_LLM_API_ENDPOINT=
 # --- RAG configuration ---
 VERSLINE_RAG_VECTOR_BACKEND=qdrant
 VERSLINE_RAG_COLLECTION_NAME=versline_docs
+VERSLINE_RAG_VECTOR_SIZE= # optional fixed dimension (e.g. 1024, 1536); leave empty to infer from embedding model
 VERSLINE_RAG_QDRANT_URL=http://localhost:6333
 VERSLINE_RAG_QDRANT_API_KEY=
 VERSLINE_RAG_EMBEDDING_MODEL=text-embedding-3-small
@@ -130,6 +131,9 @@ VERSLINE_RAG_EMBEDDING_LOCAL_FILES_ONLY=false
 VERSLINE_RAG_EMBEDDING_USE_FP16=true
 VERSLINE_RAG_EMBEDDING_DEVICE=
 VERSLINE_RAG_EMBEDDING_BATCH_SIZE=16
+VERSLINE_RAG_EMBEDDING_INFERENCE_BACKEND=auto # auto, openvino
+VERSLINE_RAG_OPENVINO_CACHE_DIR= # cache dir for compiled OpenVINO artifacts (CPU/GPU)
+VERSLINE_RAG_EMBEDDING_ONNX_PROVIDERS= # e.g. OpenVINOExecutionProvider,CPUExecutionProvider
 VERSLINE_RAG_SPARSE_EMBEDDING_PROXY=
 VERSLINE_RAG_GENERATION_TIMEOUT_SECONDS=120
 VERSLINE_RAG_QDRANT_TIMEOUT_SECONDS=20
@@ -147,14 +151,22 @@ VERSLINE_RAG_SPARSE_EMBEDDING_LOCAL_FILES_ONLY=false
 VERSLINE_RAG_SPARSE_EMBEDDING_USE_FP16=true
 VERSLINE_RAG_SPARSE_EMBEDDING_DEVICE=
 VERSLINE_RAG_SPARSE_EMBEDDING_BATCH_SIZE=16
+VERSLINE_RAG_SPARSE_EMBEDDING_ONNX_PROVIDERS= # e.g. OpenVINOExecutionProvider,CPUExecutionProvider
 VERSLINE_RAG_HYBRID_ENABLED=true
 VERSLINE_RAG_HYBRID_DENSE_WEIGHT=0.7
 VERSLINE_RAG_HYBRID_LEXICAL_WEIGHT=0.3
 VERSLINE_RAG_RERANK_ENABLED=false
-VERSLINE_RAG_RERANK_PROVIDER=cohere # cohere, jina, openai, openrouter, avalai, openaicompatible
+VERSLINE_RAG_RERANK_PROVIDER=cohere # cohere, jina, openai, openrouter, avalai, openaicompatible, local
 VERSLINE_RAG_RERANK_MODEL=rerank-v3.5
 VERSLINE_RAG_RERANK_API_KEY=
 VERSLINE_RAG_RERANK_API_ENDPOINT=
+VERSLINE_RAG_RERANK_MODEL_PATH=
+VERSLINE_RAG_RERANK_CACHE_DIR=
+VERSLINE_RAG_RERANK_LOCAL_FILES_ONLY=false
+VERSLINE_RAG_RERANK_DEVICE=
+VERSLINE_RAG_RERANK_BATCH_SIZE=16
+VERSLINE_RAG_RERANK_INFERENCE_BACKEND=auto # auto, openvino
+VERSLINE_RAG_RERANK_ONNX_PROVIDERS= # e.g. OpenVINOExecutionProvider,CPUExecutionProvider
 VERSLINE_RAG_EMBEDDING_PROXY=
 VERSLINE_RAG_GENERATION_PROXY=
 VERSLINE_RAG_QDRANT_PROXY=
@@ -190,6 +202,15 @@ VERSLINE_RAG_RETRY_BASE_DELAY_SECONDS=1.0
 VERSLINE_RAG_RETRY_MAX_DELAY_SECONDS=12.0
 VERSLINE_RAG_PREFLIGHT_ENABLED=true
 VERSLINE_RAG_PREFLIGHT_NETWORK=true
+
+# Preset: Sentence-Transformers (Dense, local/offline friendly)
+# Use this when a dense model is not available in FastEmbed (e.g. many Qwen embedding IDs).
+# VERSLINE_RAG_EMBEDDING_PROVIDER=sentence-transformers
+# VERSLINE_RAG_EMBEDDING_MODEL=Qwen/Qwen3-Embedding-0.6B
+# VERSLINE_RAG_EMBEDDING_MODEL_PATH=/absolute/path/to/Qwen3-Embedding-0.6B
+# VERSLINE_RAG_EMBEDDING_LOCAL_FILES_ONLY=true
+# VERSLINE_RAG_EMBEDDING_DEVICE=cpu
+# VERSLINE_RAG_EMBEDDING_BATCH_SIZE=16
 
 # --- Media configuration ---
 # Full path to ffmpeg/ffprobe binaries if not in system PATH
@@ -390,6 +411,15 @@ versline rag ask "main points" --collection my_docs --web-search --web-search-pr
 # Ask with dedicated rerank model
 versline rag ask "main points" --collection my_docs --hybrid --rerank --rerank-provider cohere --rerank-model rerank-v3.5 --rerank-api-key $COHERE_API_KEY
 
+# Ask with local rerank model (OpenAI-compatible endpoint, default: http://localhost:11434/v1)
+versline rag ask "main points" --collection my_docs --hybrid --rerank --rerank-provider local --rerank-model bge-reranker-v2-m3 --rerank-api-endpoint http://localhost:11434/v1
+
+# Ask with local-file rerank model (sentence-transformers CrossEncoder)
+versline rag ask "main points" --collection my_docs --hybrid --rerank --rerank-provider local --rerank-model BAAI/bge-reranker-v2-m3 --rerank-model-path /models/bge-reranker-v2-m3 --rerank-local-files-only --rerank-device cpu
+
+# Ask with OpenVINO backend for embedding + rerank
+versline rag ask "main points" --collection my_docs --hybrid --embedding-provider sentence-transformers --embedding-model sentence-transformers/all-MiniLM-L6-v2 --embedding-backend openvino --rerank --rerank-provider local --rerank-model BAAI/bge-reranker-v2-m3 --rerank-backend openvino
+
 # Ask with per-service timeouts + preflight tuned for restricted/offline network
 versline rag ask "main points" --collection my_docs --embedding-timeout 90 --generation-timeout 180 --qdrant-timeout 30 --rerank-timeout 90 --preflight --no-preflight-network
 
@@ -405,6 +435,9 @@ versline rag ask "main points" --collection my_docs --embedding-provider fastemb
 # Ask with local dense embeddings via Sentence-Transformers
 versline rag ask "main points" --collection my_docs --embedding-provider sentence-transformers --embedding-model sentence-transformers/all-MiniLM-L6-v2 --embedding-device cpu --embedding-batch-size 32
 
+# Ask with Sentence-Transformers using a local Qwen embedding model path
+versline rag ask "main points" --collection my_docs --embedding-provider sentence --embedding-model Qwen/Qwen3-Embedding-0.6B --embedding-model-path /models/Qwen3-Embedding-0.6B --embedding-local-files-only --embedding-device cpu
+
 # Ask with FlagEmbedding dense backend (BGE-M3)
 versline rag ask "main points" --collection my_docs --embedding-provider flagembedding --embedding-model BAAI/bge-m3 --embedding-device cuda --embedding-use-fp16
 ```
@@ -415,17 +448,37 @@ versline rag ask "main points" --collection my_docs --embedding-provider flagemb
 - **Per-service proxy:** set only the services you need, e.g. `VERSLINE_RAG_EMBEDDING_PROXY`, `VERSLINE_RAG_GENERATION_PROXY`, `VERSLINE_RAG_WEB_SEARCH_PROXY`, while keeping `VERSLINE_RAG_QDRANT_PROXY=` empty.
 - **Offline dense mode:** set `VERSLINE_RAG_EMBEDDING_PROVIDER` to `fastembed` / `sentence-transformers` / `flagembedding`, enable `VERSLINE_RAG_EMBEDDING_LOCAL_FILES_ONLY=true`, and set `VERSLINE_RAG_EMBEDDING_CACHE_DIR` or `VERSLINE_RAG_EMBEDDING_MODEL_PATH`.
 - **Offline sparse mode:** set `VERSLINE_RAG_SPARSE_EMBEDDING_LOCAL_FILES_ONLY=true` and point `VERSLINE_RAG_SPARSE_EMBEDDING_CACHE_DIR` or `VERSLINE_RAG_SPARSE_EMBEDDING_MODEL_PATH` to local artifacts.
+- **Local rerank mode:** set `VERSLINE_RAG_RERANK_PROVIDER=local`. If `VERSLINE_RAG_RERANK_MODEL_PATH` (or `VERSLINE_RAG_RERANK_LOCAL_FILES_ONLY`) is set, Versline loads a local sentence-transformers CrossEncoder model from files; otherwise it uses an OpenAI-compatible endpoint (default `http://localhost:11434/v1`, placeholder API key `local` when empty).
+- **OpenVINO acceleration:** set `VERSLINE_RAG_EMBEDDING_INFERENCE_BACKEND=openvino` and/or `VERSLINE_RAG_RERANK_INFERENCE_BACKEND=openvino` to enable OpenVINO where the selected provider supports it (for local sentence-transformers embedding/rerank paths). The selected provider is preserved and is not auto-switched.
 - **Preflight in locked environments:** keep `VERSLINE_RAG_PREFLIGHT_ENABLED=true` and set `VERSLINE_RAG_PREFLIGHT_NETWORK=false` to validate config without outbound endpoint checks.
+
+### OpenVINO Troubleshooting
+
+- Install minimum runtime dependencies in your environment:
+    ```bash
+    pip install -U openvino optimum[openvino] sentence-transformers
+    ```
+- Use a local sentence-transformers path for predictable OpenVINO runs:
+    - `VERSLINE_RAG_EMBEDDING_PROVIDER=sentence-transformers`
+    - `VERSLINE_RAG_EMBEDDING_INFERENCE_BACKEND=openvino`
+    - `VERSLINE_RAG_RERANK_PROVIDER=local` or `sentence-transformers`
+    - `VERSLINE_RAG_RERANK_INFERENCE_BACKEND=openvino`
+    - `VERSLINE_RAG_OPENVINO_CACHE_DIR=/absolute/path/to/openvino_cache`
+- If you see backend or export errors, clear model cache and re-download/export once:
+    - remove the model cache directory used by `VERSLINE_RAG_EMBEDDING_CACHE_DIR` / `VERSLINE_RAG_RERANK_CACHE_DIR`
+    - rerun with network access one time, then switch back to local/offline mode
+- OpenVINO is a local inference runtime. It applies to sentence-transformers/local rerank paths and can also be used with FastEmbed (embedding and rerank) when ONNX providers are set to `OpenVINOExecutionProvider,CPUExecutionProvider`.
+- API-managed providers (`openai`, `cohere`, `jina`, `openrouter`, `avalai`) keep their own provider runtime.
 
 ### RAG Key Options (CLI)
 
 | Group | Main flags |
 | :--- | :--- |
-| Chunking/Ingest | `--chunk-size`, `--chunk-overlap`, `--ingestion-batch-size`, `--log-every-batches`, `--resume`, `--force` |
+| Chunking/Ingest | `--vector-size`, `--chunk-size`, `--chunk-overlap`, `--ingestion-batch-size`, `--log-every-batches`, `--resume`, `--force` |
 | Retrieval/Hybrid | `--top-k`, `--retrieve-fetch-k`, `--hybrid/--no-hybrid`, `--hybrid-dense-weight`, `--hybrid-lexical-weight` |
-| Dense backend | `--embedding-provider`, `--embedding-model`, `--embedding-model-path`, `--embedding-cache-dir`, `--embedding-local-files-only`, `--embedding-device`, `--embedding-use-fp16`, `--embedding-batch-size` |
+| Dense backend | `--embedding-provider`, `--embedding-model`, `--embedding-model-path`, `--embedding-cache-dir`, `--embedding-local-files-only`, `--embedding-device`, `--embedding-use-fp16`, `--embedding-batch-size`, `--embedding-backend` |
 | Sparse backend | `--sparse-provider`, `--sparse-model`, `--sparse-model-path`, `--sparse-cache-dir`, `--sparse-local-files-only`, `--sparse-device`, `--sparse-use-fp16`, `--sparse-batch-size` |
-| Rerank | `--rerank/--no-rerank`, `--rerank-provider`, `--rerank-model`, `--rerank-api-key`, `--rerank-api-endpoint` |
+| Rerank | `--rerank/--no-rerank`, `--rerank-provider`, `--rerank-model`, `--rerank-api-key`, `--rerank-api-endpoint`, `--rerank-model-path`, `--rerank-cache-dir`, `--rerank-local-files-only`, `--rerank-device`, `--rerank-batch-size`, `--rerank-backend`, `--rerank-onnx-providers` |
 | Timeouts | `--embedding-timeout`, `--generation-timeout`, `--qdrant-timeout`, `--rerank-timeout`, `--web-search-timeout`, `--mcp-timeout` |
 | Rate limits | `--embedding-rpm`, `--embedding-tpm`, `--generation-rpm`, `--generation-tpm`, `--qdrant-rpm`, `--rerank-rpm`, `--rerank-tpm`, `--web-search-rpm` |
 | External context | `--mcp`, `--mcp-transport`, `--mcp-server-url`, `--mcp-server-command`, `--mcp-server-args`, `--web-search`, `--web-search-provider` |

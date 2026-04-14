@@ -120,6 +120,28 @@ class TestRAGRerankers(unittest.TestCase):
             settings.rag.retry_base_delay_seconds = previous_base
             settings.rag.retry_max_delay_seconds = previous_max
 
+    @patch("versline.services.rag.rerankers.OpenAI", autospec=True)
+    def test_local_reranker_uses_local_defaults_without_api_key(self, openai_ctor):
+        previous_provider = settings.rag.rerank_provider
+        previous_endpoint = settings.rag.rerank_api_endpoint
+        previous_rerank_key = settings.rag.rerank_api_key
+        previous_llm_key = settings.llm.api_key
+        settings.rag.rerank_provider = "local"
+        settings.rag.rerank_api_endpoint = None
+        settings.rag.rerank_api_key = None
+        settings.llm.api_key = None
+        try:
+            OpenAICompatibleReranker(model="bge-reranker-v2-m3")
+
+            _, kwargs = openai_ctor.call_args
+            self.assertEqual(kwargs.get("base_url"), "http://localhost:11434/v1")
+            self.assertEqual(kwargs.get("api_key"), "local")
+        finally:
+            settings.rag.rerank_provider = previous_provider
+            settings.rag.rerank_api_endpoint = previous_endpoint
+            settings.rag.rerank_api_key = previous_rerank_key
+            settings.llm.api_key = previous_llm_key
+
     @patch("versline.services.rag.rerankers.httpx.Client", autospec=True)
     def test_jina_reranker_orders_by_response(self, http_client_ctor):
         payload = {

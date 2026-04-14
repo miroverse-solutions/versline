@@ -24,7 +24,7 @@ from versline.services.rag.embedders import (
 from versline.services.rag.generators import PromptRAGGenerator
 from versline.services.rag.mcp_client import MCPClientConfig, MCPContextClient
 from versline.services.rag.preprocessors import DEFAULT_EXTENSION_TO_INPUT_TYPE, MarkdownPreprocessor
-from versline.services.rag.rerankers import CohereReranker, JinaReranker, OpenAICompatibleReranker
+from versline.services.rag.rerankers import CohereReranker, FastEmbedReranker, JinaReranker, OpenAICompatibleReranker, SentenceTransformersReranker
 from versline.services.rag.registry import PreprocessorRegistry, VectorStoreRegistry
 from versline.services.rag.runtime import ProgressStateStore, RateLimiter, TokenRateLimiter
 from versline.services.rag.vectorstores import QdrantVectorStore
@@ -32,6 +32,50 @@ from versline.services.rag.websearch import build_default_web_search_registry
 
 
 class RAGPipeline:
+    @staticmethod
+    def _normalized_proxy(proxy: Optional[str]) -> Optional[str]:
+        if proxy is None:
+            return None
+        cleaned = str(proxy).strip()
+        return cleaned or None
+
+    @staticmethod
+    def _parse_providers(raw: Optional[str]) -> List[str]:
+        if raw is None:
+            return []
+        return [part.strip() for part in str(raw).split(",") if part.strip()]
+
+    @staticmethod
+    def _with_openvino_provider_options(
+        providers: List[str],
+        *,
+        device: Optional[str],
+        cache_dir: Optional[str],
+    ) -> List[Any]:
+        normalized_device: Optional[str] = None
+        if device:
+            device_value = str(device).strip()
+            low = device_value.lower()
+            if low.startswith("cuda") or low.startswith("gpu"):
+                normalized_device = "GPU"
+            elif low.startswith("cpu"):
+                normalized_device = "CPU"
+            elif device_value:
+                normalized_device = device_value
+
+        resolved: List[Any] = []
+        for provider in providers:
+            if str(provider).strip().lower() != "openvinoexecutionprovider":
+                resolved.append(provider)
+                continue
+            options: Dict[str, Any] = {}
+            if normalized_device:
+                options["device_type"] = normalized_device
+            if cache_dir:
+                options["cache_dir"] = str(cache_dir)
+            resolved.append(("OpenVINOExecutionProvider", options) if options else "OpenVINOExecutionProvider")
+        return resolved
+
     def __init__(
         self,
         chunker: Optional[BaseChunker] = None,
@@ -59,6 +103,7 @@ class RAGPipeline:
         embedding_use_fp16: Optional[bool] = None,
         embedding_device: Optional[str] = None,
         embedding_batch_size: Optional[int] = None,
+        embedding_inference_backend: Optional[str] = None,
         sparse_embedding_proxy: Optional[str] = None,
         sparse_embedding_cache_dir: Optional[str] = None,
         sparse_embedding_local_files_only: Optional[bool] = None,
@@ -78,6 +123,13 @@ class RAGPipeline:
         generation_timeout_seconds: Optional[float] = None,
         qdrant_timeout_seconds: Optional[float] = None,
         rerank_timeout_seconds: Optional[float] = None,
+        rerank_model_path: Optional[str] = None,
+        rerank_cache_dir: Optional[str] = None,
+        rerank_local_files_only: Optional[bool] = None,
+        rerank_device: Optional[str] = None,
+        rerank_batch_size: Optional[int] = None,
+        rerank_inference_backend: Optional[str] = None,
+        openvino_cache_dir: Optional[str] = None,
         preflight: Optional[bool] = None,
         preflight_network: Optional[bool] = None,
     ):
@@ -99,6 +151,8 @@ class RAGPipeline:
             settings.rag.embedding_device = embedding_device
         if embedding_batch_size is not None:
             settings.rag.embedding_batch_size = int(embedding_batch_size)
+        if embedding_inference_backend is not None:
+            settings.rag.embedding_inference_backend = embedding_inference_backend
         if sparse_embedding_proxy is not None:
             settings.rag.sparse_embedding_proxy = sparse_embedding_proxy
         if sparse_embedding_cache_dir is not None:
@@ -137,6 +191,20 @@ class RAGPipeline:
             settings.rag.qdrant_timeout_seconds = float(qdrant_timeout_seconds)
         if rerank_timeout_seconds is not None:
             settings.rag.rerank_timeout_seconds = float(rerank_timeout_seconds)
+        if rerank_model_path is not None:
+            settings.rag.rerank_model_path = rerank_model_path
+        if rerank_cache_dir is not None:
+            settings.rag.rerank_cache_dir = rerank_cache_dir
+        if rerank_local_files_only is not None:
+            settings.rag.rerank_local_files_only = bool(rerank_local_files_only)
+        if rerank_device is not None:
+            settings.rag.rerank_device = rerank_device
+        if rerank_batch_size is not None:
+            settings.rag.rerank_batch_size = int(rerank_batch_size)
+        if rerank_inference_backend is not None:
+            settings.rag.rerank_inference_backend = rerank_inference_backend
+        if openvino_cache_dir is not None:
+            settings.rag.openvino_cache_dir = openvino_cache_dir
 
         resolved_backend_for_preflight = (vector_backend or settings.rag.vector_backend).lower()
         require_llm_api_keys = bool(embedder is None or generator is None or (settings.rag.rerank_enabled and reranker is None))
@@ -175,7 +243,29 @@ class RAGPipeline:
             self.embedder = embedder
         else:
             dense_provider = (settings.rag.embedding_provider or "openai").lower()
+            dense_inference_backend = (settings.rag.embedding_inference_backend or "auto").lower()
             dense_model = embedding_model or settings.rag.embedding_model
+            sentence_embedding_aliases = {
+                "sentence-transformers",
+                "sentence_transformers",
+                "sentencetransformers",
+                "sentence-transformer",
+                "sentence",
+            }
+            if dense_provider == "openvino":
+                logger.warning(
+                    "embedding_provider=openvino is treated as sentence-transformers with OpenVINO backend. "
+                    "Prefer embedding_provider=sentence-transformers plus embedding_inference_backend=openvino."
+                )
+                dense_provider = "sentence-transformers"
+                dense_inference_backend = "openvino"
+
+            if dense_inference_backend == "openvino" and dense_provider not in sentence_embedding_aliases:
+                logger.warning(
+                    f"Embedding backend openvino is not supported for provider '{dense_provider}' and will be ignored. "
+                    "Use sentence-transformers provider to enable OpenVINO."
+                )
+
             if dense_provider in {"openai", "openrouter", "avalai", "openaicompatible"}:
                 self.embedder = OpenAICompatibleEmbedder(
                     model=dense_model,
@@ -185,13 +275,23 @@ class RAGPipeline:
                     tracker=self.tracker,
                 )
             elif dense_provider == "fastembed":
+                dense_fastembed_providers = self._parse_providers(settings.rag.embedding_onnx_providers)
+                if dense_inference_backend == "openvino" and not dense_fastembed_providers:
+                    dense_fastembed_providers = ["OpenVINOExecutionProvider", "CPUExecutionProvider"]
+                if dense_inference_backend == "openvino":
+                    dense_fastembed_providers = self._with_openvino_provider_options(
+                        dense_fastembed_providers,
+                        device=settings.rag.embedding_device,
+                        cache_dir=settings.rag.openvino_cache_dir,
+                    )
                 self.embedder = FastEmbedDenseEmbedder(
                     model_name=dense_model,
                     proxy=settings.rag.embedding_proxy,
                     cache_dir=settings.rag.embedding_cache_dir,
                     local_files_only=settings.rag.embedding_local_files_only,
+                    providers=dense_fastembed_providers,
                 )
-            elif dense_provider in {"sentence-transformers", "sentence_transformers", "sentencetransformers"}:
+            elif dense_provider in sentence_embedding_aliases:
                 self.embedder = SentenceTransformersDenseEmbedder(
                     model_name=dense_model,
                     proxy=settings.rag.embedding_proxy,
@@ -200,6 +300,7 @@ class RAGPipeline:
                     model_path=settings.rag.embedding_model_path,
                     device=settings.rag.embedding_device,
                     batch_size=settings.rag.embedding_batch_size,
+                    inference_backend=dense_inference_backend,
                 )
             elif dense_provider == "flagembedding":
                 self.embedder = FlagEmbeddingDenseEmbedder(
@@ -215,7 +316,7 @@ class RAGPipeline:
             else:
                 raise ValueError(
                     "Unsupported dense embedding provider: "
-                    f"{dense_provider}. Supported providers: openai, openrouter, avalai, openaicompatible, fastembed, sentence-transformers, flagembedding"
+                    f"{dense_provider}. Supported providers: openai, openrouter, avalai, openaicompatible, fastembed, sentence-transformers (aliases: sentence, sentence_transformers), flagembedding, openvino"
                 )
         self.sparse_embedder = sparse_embedder
         if self.sparse_embedder is None and settings.rag.hybrid_enabled:
@@ -233,11 +334,21 @@ class RAGPipeline:
                         batch_size=settings.rag.sparse_embedding_batch_size,
                     )
                 else:
+                    sparse_fastembed_providers = self._parse_providers(settings.rag.sparse_embedding_onnx_providers)
+                    if dense_inference_backend == "openvino" and not sparse_fastembed_providers:
+                        sparse_fastembed_providers = ["OpenVINOExecutionProvider", "CPUExecutionProvider"]
+                    if dense_inference_backend == "openvino":
+                        sparse_fastembed_providers = self._with_openvino_provider_options(
+                            sparse_fastembed_providers,
+                            device=settings.rag.sparse_embedding_device,
+                            cache_dir=settings.rag.openvino_cache_dir,
+                        )
                     self.sparse_embedder = FastEmbedSparseEmbedder(
                         settings.rag.sparse_embedding_model,
                         proxy=settings.rag.sparse_embedding_proxy or settings.rag.embedding_proxy,
                         cache_dir=settings.rag.sparse_embedding_cache_dir,
                         local_files_only=settings.rag.sparse_embedding_local_files_only,
+                        providers=sparse_fastembed_providers,
                     )
             except Exception as error:
                 raise RuntimeError(
@@ -256,6 +367,28 @@ class RAGPipeline:
         self.reranker = reranker
         if self.reranker is None and settings.rag.rerank_enabled:
             provider = (settings.rag.rerank_provider or "cohere").lower()
+            rerank_inference_backend = (settings.rag.rerank_inference_backend or "auto").lower()
+            sentence_rerank_aliases = {
+                "sentence-transformers",
+                "sentence_transformers",
+                "sentencetransformers",
+                "sentence-transformer",
+                "sentence",
+            }
+            if provider == "openvino":
+                logger.warning(
+                    "rerank_provider=openvino is treated as sentence-transformers with OpenVINO backend. "
+                    "Prefer rerank_provider=sentence-transformers plus rerank_inference_backend=openvino."
+                )
+                provider = "sentence-transformers"
+                rerank_inference_backend = "openvino"
+
+            if rerank_inference_backend == "openvino" and provider not in sentence_rerank_aliases and provider not in {"local", "fastembed"}:
+                logger.warning(
+                    f"Rerank backend openvino is not supported for provider '{provider}' and will be ignored. "
+                    "Use local or sentence-transformers rerank provider to enable OpenVINO."
+                )
+
             if provider == "cohere":
                 self.reranker = CohereReranker(
                     model=settings.rag.rerank_model,
@@ -268,12 +401,66 @@ class RAGPipeline:
                     rate_limiter=self.rerank_rate_limiter,
                     token_rate_limiter=self.rerank_token_rate_limiter,
                 )
-            elif provider in {"openai", "openrouter", "avalai", "openaicompatible"}:
-                self.reranker = OpenAICompatibleReranker(
+            elif provider in {"openai", "openrouter", "avalai", "openaicompatible", "local"}:
+                use_local_model_files = bool(
+                    provider == "local"
+                    and (
+                        settings.rag.rerank_model_path
+                        or settings.rag.rerank_cache_dir
+                        or settings.rag.rerank_local_files_only
+                    )
+                )
+                if use_local_model_files:
+                    self.reranker = SentenceTransformersReranker(
+                        model=settings.rag.rerank_model,
+                        proxy=settings.rag.rerank_proxy,
+                        cache_dir=settings.rag.rerank_cache_dir,
+                        local_files_only=settings.rag.rerank_local_files_only,
+                        model_path=settings.rag.rerank_model_path,
+                        device=settings.rag.rerank_device,
+                        batch_size=settings.rag.rerank_batch_size,
+                        inference_backend=rerank_inference_backend,
+                        rate_limiter=self.rerank_rate_limiter,
+                        token_rate_limiter=self.rerank_token_rate_limiter,
+                    )
+                else:
+                    self.reranker = OpenAICompatibleReranker(
+                        model=settings.rag.rerank_model,
+                        rate_limiter=self.rerank_rate_limiter,
+                        token_rate_limiter=self.rerank_token_rate_limiter,
+                        tracker=self.tracker,
+                    )
+            elif provider == "fastembed":
+                rerank_fastembed_providers = self._parse_providers(settings.rag.rerank_onnx_providers)
+                if rerank_inference_backend == "openvino" and not rerank_fastembed_providers:
+                    rerank_fastembed_providers = ["OpenVINOExecutionProvider", "CPUExecutionProvider"]
+                if rerank_inference_backend == "openvino":
+                    rerank_fastembed_providers = self._with_openvino_provider_options(
+                        rerank_fastembed_providers,
+                        device=settings.rag.rerank_device,
+                        cache_dir=settings.rag.openvino_cache_dir,
+                    )
+                self.reranker = FastEmbedReranker(
                     model=settings.rag.rerank_model,
+                    proxy=settings.rag.rerank_proxy,
+                    cache_dir=settings.rag.rerank_cache_dir,
+                    local_files_only=settings.rag.rerank_local_files_only,
+                    providers=rerank_fastembed_providers,
                     rate_limiter=self.rerank_rate_limiter,
                     token_rate_limiter=self.rerank_token_rate_limiter,
-                    tracker=self.tracker,
+                )
+            elif provider in sentence_rerank_aliases:
+                self.reranker = SentenceTransformersReranker(
+                    model=settings.rag.rerank_model,
+                    proxy=settings.rag.rerank_proxy,
+                    cache_dir=settings.rag.rerank_cache_dir,
+                    local_files_only=settings.rag.rerank_local_files_only,
+                    model_path=settings.rag.rerank_model_path,
+                    device=settings.rag.rerank_device,
+                    batch_size=settings.rag.rerank_batch_size,
+                    inference_backend=rerank_inference_backend,
+                    rate_limiter=self.rerank_rate_limiter,
+                    token_rate_limiter=self.rerank_token_rate_limiter,
                 )
             else:
                 logger.warning(f"Unsupported rerank provider: {provider}. Reranking disabled.")
@@ -376,7 +563,7 @@ class RAGPipeline:
         if check_network and vector_backend == "qdrant":
             qdrant_ready_url = settings.rag.qdrant_url.rstrip("/") + "/readyz"
             try:
-                with httpx.Client(proxy=settings.rag.qdrant_proxy, timeout=timeout_seconds) as client:
+                with httpx.Client(proxy=self._normalized_proxy(settings.rag.qdrant_proxy), timeout=timeout_seconds) as client:
                     response = client.get(qdrant_ready_url)
                 if response.status_code >= 400:
                     errors.append(
@@ -390,7 +577,7 @@ class RAGPipeline:
             if web_provider == "duckduckgo":
                 endpoint = (settings.rag.web_search_endpoint or "https://api.duckduckgo.com/").strip()
                 try:
-                    with httpx.Client(proxy=settings.rag.web_search_proxy, timeout=timeout_seconds) as client:
+                    with httpx.Client(proxy=self._normalized_proxy(settings.rag.web_search_proxy), timeout=timeout_seconds) as client:
                         response = client.get(endpoint, params={"q": "test", "format": "json"})
                     if response.status_code >= 400:
                         warnings.append(
@@ -524,12 +711,21 @@ class RAGPipeline:
 
         for file_index, file_path in enumerate(files, start=1):
             logger.info(f"Preparing file {file_index}/{len(files)}: {file_path}")
+            if progress_callback:
+                progress_callback(file_index - 1, len(files), f"Preparing {file_path.name}...")
             resolved_input_type = self._resolve_input_type(str(file_path), input_type)
             preprocessor = self.preprocessors.get(resolved_input_type)
 
             documents = preprocessor.preprocess(str(file_path))
             chunks = self.chunker.chunk(documents)
             total_docs += len(documents)
+
+            if progress_callback and chunks:
+                progress_callback(
+                    file_index - 1,
+                    len(files),
+                    f"Prepared {file_path.name}: {len(chunks)} chunks",
+                )
 
             if not chunks:
                 if progress_callback:
@@ -539,7 +735,18 @@ class RAGPipeline:
             vectors_probe = self.embedder.embed_documents([chunks[0].text])
             if not vectors_probe:
                 raise RuntimeError("Embedding model returned empty vectors")
-            vector_size = len(vectors_probe[0])
+            inferred_vector_size = len(vectors_probe[0])
+            configured_vector_size = settings.rag.vector_size
+            if configured_vector_size is not None:
+                vector_size = int(configured_vector_size)
+                if vector_size != inferred_vector_size:
+                    raise ValueError(
+                        "Configured vector_size does not match embedding output dimension: "
+                        f"configured={vector_size}, inferred={inferred_vector_size}. "
+                        "Update VERSLINE_RAG_VECTOR_SIZE / --vector-size or switch embedding model."
+                    )
+            else:
+                vector_size = inferred_vector_size
 
             if reset_collection and not collection_reset_done:
                 self._active_store.reset_collection(active_collection)
@@ -556,12 +763,28 @@ class RAGPipeline:
             batch_size = max(1, settings.rag.ingestion_batch_size)
             start_index = completed if resume else 0
 
+            if progress_callback and start_index > 0:
+                progress_callback(
+                    file_index - 1 + (start_index / max(1, len(chunks))),
+                    len(files),
+                    f"Resuming {file_path.name}: {start_index}/{len(chunks)} chunks",
+                )
+
             for start in range(start_index, len(chunks), batch_size):
                 end = min(start + batch_size, len(chunks))
                 batch_chunks = chunks[start:end]
                 batch_number = (start // batch_size) + 1
                 total_batches = (len(chunks) + batch_size - 1) // batch_size
                 log_every = max(1, int(settings.rag.log_every_batches or 1))
+                if progress_callback:
+                    progress_callback(
+                        file_index - 1 + (start / max(1, len(chunks))),
+                        len(files),
+                        (
+                            f"Embedding {file_path.name}: batch {batch_number}/{total_batches} "
+                            f"(chunks {start + 1}-{end})"
+                        ),
+                    )
                 if batch_number == 1 or batch_number % log_every == 0 or end == len(chunks):
                     logger.info(
                         "Sending ingest batch "
