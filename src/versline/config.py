@@ -160,11 +160,21 @@ class RAGSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix='VERSLINE_RAG_', env_file='.env', extra='ignore')
 
+
+class ResourceSettings(BaseSettings):
+    max_ram_mb: int = Field(default=0, description="Maximum RAM usage in MB (0 = unlimited)")
+    max_cpu_cores: int = Field(default=0, description="Maximum CPU cores/threads to use (0 = unlimited)")
+    max_gpu_vram_fraction: float = Field(default=0.0, description="Maximum GPU VRAM fraction per device (0.0 = unlimited, e.g. 0.8 = 80%)")
+
+    model_config = SettingsConfigDict(env_prefix='VERSLINE_RESOURCE_', env_file='.env', extra='ignore')
+
+
 class Settings(BaseSettings):
     llm: LLMSettings = Field(default_factory=LLMSettings)
     ffmpeg: FFmpegSettings = Field(default_factory=FFmpegSettings)
     rag: RAGSettings = Field(default_factory=RAGSettings)
-    
+    resource: ResourceSettings = Field(default_factory=ResourceSettings)
+
     # Common settings
     output_directory: Path = Field(default=Path("output"), description="Default output directory")
     temp_directory: Path = Field(default=Path("temp"), description="Temporary directory")

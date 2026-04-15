@@ -235,6 +235,61 @@ VERSLINE_FFMPEG_FFPROBE_PATH=
 # --- General System ---
 VERSLINE_OUTPUT_DIRECTORY=output
 VERSLINE_TEMP_DIRECTORY=temp
+
+# --- Resource Limits ---
+# Maximum RAM (virtual address space) in MB. 0 = unlimited.
+VERSLINE_RESOURCE_MAX_RAM_MB=0
+# Maximum CPU cores. 0 = use all available cores.
+VERSLINE_RESOURCE_MAX_CPU_CORES=0
+# Maximum GPU VRAM fraction per device (0.0 = unlimited, e.g. 0.8 = 80%).
+# Requires PyTorch with CUDA support.
+VERSLINE_RESOURCE_MAX_GPU_VRAM_FRACTION=0.0
+```
+
+
+## ⚡ Resource Limits
+
+Versline can apply OS-level resource limits at startup to prevent the process from consuming too much RAM, CPU, or GPU VRAM. This is useful when running large embedding or transcription workloads on shared machines.
+
+### Configuration
+
+Set any combination of the three env vars in your `.env` file:
+
+```dotenv
+# Limit process to ~4 GB of addressable memory
+VERSLINE_RESOURCE_MAX_RAM_MB=4096
+
+# Use at most 4 CPU cores
+VERSLINE_RESOURCE_MAX_CPU_CORES=4
+
+# Use at most 70% of each GPU's VRAM (requires PyTorch + CUDA)
+VERSLINE_RESOURCE_MAX_GPU_VRAM_FRACTION=0.7
+```
+
+All three default to `0` / `0.0` which means **unlimited** — no limit is applied unless explicitly set.
+
+### How each limit works
+
+| Limit | Mechanism | Platform |
+| :--- | :--- | :--- |
+| `MAX_RAM_MB` | `resource.setrlimit(RLIMIT_AS, ...)` — caps virtual address space | Linux only |
+| `MAX_CPU_CORES` | `os.sched_setaffinity(0, {0..N-1})` — pins process to first N cores | Linux / most POSIX |
+| `MAX_GPU_VRAM_FRACTION` | `torch.cuda.set_per_process_memory_fraction(f, device)` | PyTorch + CUDA only |
+
+> **RAM note:** `RLIMIT_AS` limits the entire virtual address space, not just RSS. Set this value with headroom (e.g. at least 2× peak RSS) to avoid spurious `MemoryError` during memory-mapped operations.
+
+> **GPU note:** This limit only affects local model inference (sentence-transformers, FastEmbed with CUDA, etc.). API-managed providers (OpenAI, Cohere, etc.) are unaffected.
+
+### Library usage
+
+```python
+from versline.core.resources import apply_resource_limits
+
+apply_resource_limits(
+    max_ram_mb=4096,       # 4 GB RAM cap
+    max_cpu_cores=4,       # pin to 4 cores
+    max_gpu_vram_fraction=0.7,  # 70% VRAM per GPU
+)
 ```
 
 
@@ -629,6 +684,7 @@ versline download [OPTIONS] URL
 - **Rich UI**: Colorful progress bars and spinners.
 - **Flexible**: Agnostic to LLM provider (Google, OpenAI, OpenRouter, AvalAI, Custom).
 - **Proxy Support**: Full support for HTTP/HTTPS proxies.
+- **Resource Limits**: Cap RAM, CPU cores, and GPU VRAM via env vars to prevent OOM crashes on shared machines.
 
 ## 📦 Python Library Usage
 

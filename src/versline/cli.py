@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Optional
 from versline.config import settings, reload_settings
 from versline.commands import transcribe, translate, qude, qualcode, rag
+from versline.core.resources import apply_resource_limits
 
 app = typer.Typer(
     name="versline",
@@ -48,6 +49,11 @@ def main(
         reload_settings(env_file=env_file)
 
     configure_logging(verbose)
+    apply_resource_limits(
+        max_ram_mb=settings.resource.max_ram_mb,
+        max_cpu_cores=settings.resource.max_cpu_cores,
+        max_gpu_vram_fraction=settings.resource.max_gpu_vram_fraction,
+    )
     # logger.debug(f"Loaded settings: {settings.model_dump()}")
 
 def configure_logging(verbose: bool):
