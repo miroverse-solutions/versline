@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 
 import cohere
 import httpx
+from loguru import logger
 from openai import OpenAI
 
 from versline.config import settings
@@ -669,3 +670,152 @@ class FastEmbedReranker(BaseReranker):
         if ranked_items:
             return ranked_items[:top_k]
         return items[:top_k]
+
+
+class OptimumIntelReranker(BaseReranker):
+    """Cross-encoder reranker backed by optimum.intel OVModelForSequenceClassification.
+
+    Supports both pre-exported OpenVINO IR directories and on-the-fly export
+    from a standard HuggingFace sequence-classification model.
+
+    Each (query, document) pair is scored using the first logit of the
+    classification head, converted to a relevance probability via sigmoid.
+    This matches the convention used by BGE-reranker and similar cross-encoder
+    models that emit a single regression/classification logit.
+
+    Args:
+        model: HuggingFace model ID (used as fallback when model_path is not set).
+        proxy: Optional HTTP/HTTPS/SOCKS proxy.
+        cache_dir: HuggingFace hub cache directory.
+        local_files_only: Prevent network access when loading the model.
+        model_path: Absolute path to the model directory.  When the directory
+            already contains ``openvino_model.xml`` the model is loaded without
+            re-exporting (``export=False``).  Otherwise ``export=True`` is used
+            to convert from PyTorch/ONNX on first load.
+        device: OpenVINO device string, e.g. ``"CPU"`` or ``"GPU"``.
+        batch_size: Number of pairs to score per forward pass.
+        rate_limiter: Optional rate limiter instance.
+        token_rate_limiter: Optional token-based rate limiter instance.
+    """
+
+    def __init__(
+        self,
+        model: str,
+        proxy: Optional[str] = None,
+        cache_dir: Optional[str] = None,
+        local_files_only: Optional[bool] = None,
+        model_path: Optional[str] = None,
+        device: Optional[str] = None,
+        batch_size: Optional[int] = None,
+        rate_limiter: Optional[RateLimiter] = None,
+        token_rate_limiter: Optional[TokenRateLimiter] = None,
+    ):
+        self.model = model
+        self.proxy = proxy if proxy is not None else settings.rag.rerank_proxy
+        self.cache_dir = cache_dir if cache_dir is not None else settings.rag.rerank_cache_dir
+        self.model_path = model_path if model_path is not None else settings.rag.rerank_model_path
+        configured_local_only = settings.rag.rerank_local_files_only if local_files_only is None else bool(local_files_only)
+        self.local_files_only = True if self.cache_dir else configured_local_only
+        self.device = (device if device is not None else settings.rag.rerank_device) or "CPU"
+        self.batch_size = max(1, int(batch_size if batch_size is not None else settings.rag.rerank_batch_size))
+        self.rate_limiter = rate_limiter or RateLimiter(settings.rag.rate_limit_rerank_rpm)
+        self.token_rate_limiter = token_rate_limiter or TokenRateLimiter(settings.rag.rate_limit_rerank_tpm)
+
+        try:
+            import numpy as _np
+            from optimum.intel import OVModelForSequenceClassification as _OVModel
+            from transformers import AutoTokenizer as _AutoTokenizer
+        except Exception as error:
+            raise RuntimeError(
+                "optimum-intel rerank backend selected but required packages are not available. "
+                "Install with: pip install 'optimum[openvino]' numpy"
+            ) from error
+
+        self._np = _np
+        model_source = self.model_path or self.model
+
+        # If the directory already contains an OpenVINO IR file, skip export.
+        export = True
+        if self.model_path:
+            import pathlib
+            model_dir = pathlib.Path(self.model_path)
+            if (model_dir / "openvino_model.xml").exists():
+                export = False
+
+        with _scoped_model_environment(
+            self.proxy,
+            self.cache_dir,
+            self.local_files_only,
+            settings.rag.openvino_cache_dir,
+        ):
+            self._tokenizer = _AutoTokenizer.from_pretrained(
+                model_source,
+                cache_dir=self.cache_dir,
+                local_files_only=self.local_files_only,
+            )
+            self._ov_model = _OVModel.from_pretrained(
+                model_source,
+                export=export,
+                device=self.device.upper(),
+                cache_dir=self.cache_dir,
+            )
+
+        logger.info(
+            f"OptimumIntelReranker: model={model_source}, device={self.device.upper()}, export={export}"
+        )
+
+    def _sigmoid(self, x):
+        return 1.0 / (1.0 + self._np.exp(-x))
+
+    def _score_pairs(self, query: str, docs: List[str]) -> List[float]:
+        """Score a list of (query, doc) pairs and return relevance floats."""
+        all_scores: List[float] = []
+        for start in range(0, len(docs), self.batch_size):
+            batch_docs = docs[start : start + self.batch_size]
+            pairs = [[query, doc] for doc in batch_docs]
+            inputs = self._tokenizer(
+                pairs,
+                padding=True,
+                truncation=True,
+                return_tensors="pt",
+            )
+            with _scoped_model_environment(
+                self.proxy,
+                self.cache_dir,
+                self.local_files_only,
+                settings.rag.openvino_cache_dir,
+            ):
+                outputs = self._ov_model(**inputs)
+
+            # logits shape: [batch, num_labels]; take first label column and apply sigmoid
+            logits = outputs.logits.detach().numpy()
+            scores = self._sigmoid(logits[:, 0])
+            all_scores.extend(scores.tolist())
+        return all_scores
+
+    def rerank(self, query: str, items: List[RetrievedChunk], top_k: int) -> List[RetrievedChunk]:
+        if not items:
+            return []
+
+        self.rate_limiter.wait()
+        docs = [item.text for item in items]
+        self.token_rate_limiter.reserve(
+            estimate_tokens_from_text(query) + estimate_tokens_from_texts(docs)
+        )
+
+        scores = self._score_pairs(query, docs)
+        limit = min(max(1, top_k), len(items))
+        ranked_indices = sorted(range(len(items)), key=lambda idx: scores[idx], reverse=True)
+
+        ranked_items: List[RetrievedChunk] = []
+        for idx in ranked_indices[:limit]:
+            original = items[idx]
+            ranked_items.append(
+                RetrievedChunk(
+                    id=original.id,
+                    text=original.text,
+                    score=scores[idx],
+                    metadata=original.metadata,
+                )
+            )
+        return ranked_items

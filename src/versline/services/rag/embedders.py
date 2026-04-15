@@ -513,3 +513,232 @@ class FlagEmbeddingSparseEmbedder:
     def embed_query(self, text: str) -> dict:
         vectors = self.embed_documents([text])
         return vectors[0] if vectors else {"indices": [], "values": []}
+
+
+class SentenceTransformersSparseEmbedder:
+    def __init__(
+        self,
+        model_name: str,
+        proxy: Optional[str] = None,
+        cache_dir: Optional[str] = None,
+        local_files_only: Optional[bool] = None,
+        model_path: Optional[str] = None,
+        device: Optional[str] = None,
+        batch_size: Optional[int] = None,
+    ):
+        self.model_name = model_name
+        self.proxy = proxy if proxy is not None else (settings.rag.sparse_embedding_proxy or settings.rag.embedding_proxy)
+        self.cache_dir = cache_dir if cache_dir is not None else settings.rag.sparse_embedding_cache_dir
+        self.model_path = model_path if model_path is not None else settings.rag.sparse_embedding_model_path
+        configured_local_only = settings.rag.sparse_embedding_local_files_only if local_files_only is None else bool(local_files_only)
+        self.local_files_only = True if self.cache_dir else configured_local_only
+        self.device = device if device is not None else settings.rag.sparse_embedding_device
+        self.batch_size = max(1, int(batch_size if batch_size is not None else settings.rag.sparse_embedding_batch_size))
+
+        try:
+            import torch
+            from transformers import AutoModelForMaskedLM, AutoTokenizer
+        except Exception as error:
+            raise RuntimeError(
+                "sentence-transformers sparse backend requires transformers and torch. "
+                "Install with: pip install -U transformers torch"
+            ) from error
+
+        self._torch = torch
+        model_source = self.model_path or self.model_name
+        with _scoped_model_environment(
+            self.proxy,
+            self.cache_dir,
+            self.local_files_only,
+            settings.rag.openvino_cache_dir,
+        ):
+            self._tokenizer = AutoTokenizer.from_pretrained(
+                model_source,
+                cache_dir=self.cache_dir,
+                local_files_only=self.local_files_only,
+            )
+            try:
+                self._model = AutoModelForMaskedLM.from_pretrained(
+                    model_source,
+                    cache_dir=self.cache_dir,
+                    local_files_only=self.local_files_only,
+                )
+            except Exception as error:
+                raise RuntimeError(
+                    "Sparse sentence-transformers backend expects a masked-language-model compatible checkpoint "
+                    "(for example SPLADE family), but model loading failed. "
+                    f"Model source: {model_source}. Original error: {error}"
+                ) from error
+
+        target_device = self.device or ("cuda" if self._torch.cuda.is_available() else "cpu")
+        self._device = self._torch.device(target_device)
+        self._model.to(self._device)
+        self._model.eval()
+
+    def _encode_batch(self, texts: List[str]) -> List[dict]:
+        with _scoped_model_environment(
+            self.proxy,
+            self.cache_dir,
+            self.local_files_only,
+            settings.rag.openvino_cache_dir,
+        ):
+            tokenized = self._tokenizer(
+                texts,
+                padding=True,
+                truncation=True,
+                return_tensors="pt",
+            )
+
+        tokenized = {key: value.to(self._device) for key, value in tokenized.items()}
+
+        with self._torch.no_grad():
+            logits = self._model(**tokenized).logits
+            # SPLADE-style sparse activation: log(1 + relu(logits)), max-pooled over sequence.
+            relu_logits = self._torch.relu(logits)
+            weighted = self._torch.log1p(relu_logits)
+            attention = tokenized["attention_mask"].unsqueeze(-1)
+            weighted = weighted * attention
+            sparse_vectors = weighted.max(dim=1).values
+
+        vectors: List[dict] = []
+        for row in sparse_vectors:
+            nonzero = self._torch.nonzero(row > 0, as_tuple=False).squeeze(-1)
+            if nonzero.numel() == 0:
+                vectors.append({"indices": [], "values": []})
+                continue
+            values = row[nonzero]
+            vectors.append(
+                {
+                    "indices": [int(item) for item in nonzero.detach().cpu().tolist()],
+                    "values": [float(item) for item in values.detach().cpu().tolist()],
+                }
+            )
+        return vectors
+
+    def embed_documents(self, texts: List[str]) -> List[dict]:
+        if not texts:
+            return []
+        vectors: List[dict] = []
+        for index in range(0, len(texts), self.batch_size):
+            vectors.extend(self._encode_batch(texts[index : index + self.batch_size]))
+        return vectors
+
+    def embed_query(self, text: str) -> dict:
+        vectors = self.embed_documents([text])
+        return vectors[0] if vectors else {"indices": [], "values": []}
+
+
+class OptimumIntelEmbedder(BaseEmbedder):
+    """Dense embedder backed by optimum.intel OVModelForFeatureExtraction.
+
+    Supports both pre-exported OpenVINO IR directories and on-the-fly export
+    from a standard HuggingFace feature-extraction model.  Mean-pooling is
+    applied over the last hidden state (identical to the approach in qt.py).
+
+    Args:
+        model_name: HuggingFace model ID (used as fallback when model_path is
+            not set and for logging).
+        proxy: Optional HTTP/HTTPS/SOCKS proxy.
+        cache_dir: HuggingFace hub cache directory.
+        local_files_only: Prevent network access when loading the model.
+        model_path: Absolute path to the model directory.  When the directory
+            already contains ``openvino_model.xml`` the model is loaded without
+            re-exporting (``export=False``).  Otherwise ``export=True`` is used
+            to convert from PyTorch/ONNX on first load.
+        device: OpenVINO device string, e.g. ``"CPU"`` or ``"GPU"``.
+        batch_size: Number of texts to encode per forward pass.
+    """
+
+    def __init__(
+        self,
+        model_name: str,
+        proxy: Optional[str] = None,
+        cache_dir: Optional[str] = None,
+        local_files_only: Optional[bool] = None,
+        model_path: Optional[str] = None,
+        device: Optional[str] = None,
+        batch_size: Optional[int] = None,
+    ):
+        self.model_name = model_name
+        self.proxy = proxy if proxy is not None else settings.rag.embedding_proxy
+        self.cache_dir = cache_dir if cache_dir is not None else settings.rag.embedding_cache_dir
+        self.model_path = model_path if model_path is not None else settings.rag.embedding_model_path
+        configured_local_only = settings.rag.embedding_local_files_only if local_files_only is None else bool(local_files_only)
+        self.local_files_only = True if self.cache_dir else configured_local_only
+        self.device = (device if device is not None else settings.rag.embedding_device) or "CPU"
+        self.batch_size = max(1, int(batch_size if batch_size is not None else settings.rag.embedding_batch_size))
+
+        try:
+            import numpy as _np
+            from optimum.intel import OVModelForFeatureExtraction as _OVModel
+            from transformers import AutoTokenizer as _AutoTokenizer
+        except Exception as error:
+            raise RuntimeError(
+                "optimum-intel backend selected but required packages are not available. "
+                "Install with: pip install 'optimum[openvino]' numpy"
+            ) from error
+
+        self._np = _np
+        model_source = self.model_path or self.model_name
+
+        # If the directory already contains an OpenVINO IR file, skip export.
+        export = True
+        if self.model_path:
+            import pathlib
+            model_dir = pathlib.Path(self.model_path)
+            if (model_dir / "openvino_model.xml").exists():
+                export = False
+
+        with _scoped_model_environment(
+            self.proxy,
+            self.cache_dir,
+            self.local_files_only,
+            settings.rag.openvino_cache_dir,
+        ):
+            self._tokenizer = _AutoTokenizer.from_pretrained(
+                model_source,
+                cache_dir=self.cache_dir,
+                local_files_only=self.local_files_only,
+            )
+            self._model = _OVModel.from_pretrained(
+                model_source,
+                export=export,
+                device=self.device.upper(),
+                cache_dir=self.cache_dir,
+            )
+
+        logger.info(
+            f"OptimumIntelEmbedder: model={model_source}, device={self.device.upper()}, export={export}"
+        )
+
+    def _mean_pool(self, last_hidden_state, attention_mask):
+        mask_expanded = self._np.expand_dims(attention_mask, axis=-1)
+        sum_embeddings = self._np.sum(last_hidden_state * mask_expanded, axis=1)
+        sum_mask = self._np.clip(self._np.sum(mask_expanded, axis=1), a_min=1e-9, a_max=None)
+        return sum_embeddings / sum_mask
+
+    def _encode_batch(self, texts: List[str]) -> List[List[float]]:
+        inputs = self._tokenizer(texts, padding=True, truncation=True, return_tensors="pt")
+        with _scoped_model_environment(
+            self.proxy,
+            self.cache_dir,
+            self.local_files_only,
+            settings.rag.openvino_cache_dir,
+        ):
+            outputs = self._model(**inputs)
+        token_embeddings = outputs.last_hidden_state.detach().numpy()
+        attention_mask = inputs["attention_mask"].numpy()
+        pooled = self._mean_pool(token_embeddings, attention_mask)
+        return pooled.tolist()
+
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        if not texts:
+            return []
+        vectors: List[List[float]] = []
+        for index in range(0, len(texts), self.batch_size):
+            vectors.extend(self._encode_batch(texts[index : index + self.batch_size]))
+        return vectors
+
+    def embed_query(self, text: str) -> List[float]:
+        vectors = self.embed_documents([text])
+        return vectors[0] if vectors else []

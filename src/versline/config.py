@@ -34,7 +34,7 @@ class RAGSettings(BaseSettings):
     qdrant_distance: str = Field(default="cosine", description="Vector distance metric")
     qdrant_proxy: Optional[str] = Field(default=None, description="Proxy only for Qdrant requests")
     embedding_model: str = Field(default="text-embedding-3-small", description="Embedding model")
-    embedding_provider: str = Field(default="openai", description="Embedding provider (openai/openrouter/avalai/openaicompatible/fastembed/sentence-transformers[sentence|sentence_transformers]/flagembedding/openvino)")
+    embedding_provider: str = Field(default="openai", description="Embedding provider (openai/openrouter/avalai/openaicompatible/fastembed/sentence-transformers[sentence|sentence_transformers]/flagembedding/optimum-intel/openvino)")
     embedding_api_key: Optional[str] = Field(default=None, description="Embedding API key override")
     embedding_api_endpoint: Optional[str] = Field(default=None, description="Embedding API endpoint override")
     embedding_timeout_seconds: float = Field(default=60.0, description="Embedding request timeout seconds")
@@ -55,6 +55,13 @@ class RAGSettings(BaseSettings):
     rerank_timeout_seconds: float = Field(default=60.0, description="Rerank request timeout seconds")
     chunk_size: int = Field(default=1200, description="Chunk size in characters")
     chunk_overlap: int = Field(default=200, description="Chunk overlap in characters")
+    parent_child_enabled: bool = Field(default=False, description="Enable hierarchical parent-child chunking and retrieval")
+    parent_chunk_size: int = Field(default=2400, description="Parent chunk size in characters")
+    parent_chunk_overlap: int = Field(default=200, description="Parent chunk overlap in characters")
+    parent_child_paragraph_mode: bool = Field(default=False, description="Prefer paragraph boundaries (double newline) for parent-child chunking")
+    parent_chunk_delimiters: Optional[str] = Field(default=None, description="Optional comma-separated delimiters used to align parent chunk boundaries")
+    child_chunk_delimiters: Optional[str] = Field(default=None, description="Optional comma-separated delimiters used to align child chunk boundaries")
+    parent_child_fetch_k: int = Field(default=48, description="Child candidates fetched for parent-child retrieval expansion")
     log_every_batches: int = Field(default=1, description="Emit ingest logs every N batches")
     ingestion_batch_size: int = Field(default=32, description="Batch size for embedding/upsert during ingestion")
     retrieve_fetch_k: int = Field(default=24, description="Dense candidates fetched before hybrid rerank")
@@ -65,7 +72,7 @@ class RAGSettings(BaseSettings):
     )
     sparse_embedding_provider: str = Field(
         default="fastembed",
-        description="Sparse embedding backend provider: fastembed or flagembedding",
+        description="Sparse embedding provider. Supports fastembed, flagembedding, or compatibility values (same/auto/openai/openrouter/avalai/openaicompatible/sentence-transformers/openvino) mapped to a supported sparse backend.",
     )
     sparse_embedding_model_path: Optional[str] = Field(
         default=None,
@@ -110,7 +117,7 @@ class RAGSettings(BaseSettings):
     rerank_enabled: bool = Field(default=False, description="Enable dedicated rerank model after retrieval")
     rerank_provider: str = Field(
         default="cohere",
-        description="Rerank provider (cohere/jina/openai/openrouter/avalai/openaicompatible/local/openvino)",
+        description="Rerank provider (cohere/jina/openai/openrouter/avalai/openaicompatible/local/fastembed/sentence-transformers/optimum-intel/openvino/flagembedding/same/auto).",
     )
     rerank_model: str = Field(default="rerank-v3.5", description="Rerank model")
     rerank_api_key: Optional[str] = Field(default=None, description="Rerank API key override")

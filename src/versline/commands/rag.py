@@ -34,6 +34,13 @@ def _apply_rag_overrides(
     vector_size: Optional[int],
     chunk_size: Optional[int],
     chunk_overlap: Optional[int],
+    parent_child_enabled: Optional[bool],
+    parent_chunk_size: Optional[int],
+    parent_chunk_overlap: Optional[int],
+    parent_child_paragraph_mode: Optional[bool],
+    parent_chunk_delimiters: Optional[str],
+    child_chunk_delimiters: Optional[str],
+    parent_child_fetch_k: Optional[int],
     ingestion_batch_size: Optional[int],
     retrieve_fetch_k: Optional[int],
     hybrid_dense_weight: Optional[float],
@@ -118,6 +125,20 @@ def _apply_rag_overrides(
         settings.rag.chunk_size = chunk_size
     if chunk_overlap is not None:
         settings.rag.chunk_overlap = chunk_overlap
+    if parent_child_enabled is not None:
+        settings.rag.parent_child_enabled = parent_child_enabled
+    if parent_chunk_size is not None:
+        settings.rag.parent_chunk_size = parent_chunk_size
+    if parent_chunk_overlap is not None:
+        settings.rag.parent_chunk_overlap = parent_chunk_overlap
+    if parent_child_paragraph_mode is not None:
+        settings.rag.parent_child_paragraph_mode = parent_child_paragraph_mode
+    if parent_chunk_delimiters is not None:
+        settings.rag.parent_chunk_delimiters = parent_chunk_delimiters
+    if child_chunk_delimiters is not None:
+        settings.rag.child_chunk_delimiters = child_chunk_delimiters
+    if parent_child_fetch_k is not None:
+        settings.rag.parent_child_fetch_k = parent_child_fetch_k
     if ingestion_batch_size is not None:
         settings.rag.ingestion_batch_size = ingestion_batch_size
     if retrieve_fetch_k is not None:
@@ -304,6 +325,13 @@ def ingest(
     vector_size: Optional[int] = typer.Option(None, "--vector-size", min=1, help="Fixed vector size for collection creation (defaults to embedding dimension when omitted)"),
     chunk_size: Optional[int] = typer.Option(None, "--chunk-size", help="Chunk size in characters"),
     chunk_overlap: Optional[int] = typer.Option(None, "--chunk-overlap", help="Chunk overlap in characters"),
+    parent_child: Optional[bool] = typer.Option(None, "--parent-child/--no-parent-child", help="Enable hierarchical parent-child retrieval"),
+    parent_chunk_size: Optional[int] = typer.Option(None, "--parent-chunk-size", help="Parent chunk size in characters"),
+    parent_chunk_overlap: Optional[int] = typer.Option(None, "--parent-chunk-overlap", help="Parent chunk overlap in characters"),
+    parent_child_paragraph: Optional[bool] = typer.Option(None, "--parent-child-paragraph/--no-parent-child-paragraph", help="Prefer paragraph boundaries (double newline) for parent-child chunking"),
+    parent_chunk_delimiters: Optional[str] = typer.Option(None, "--parent-chunk-delimiters", help="Comma-separated delimiters for parent chunk boundaries (supports escaped values like \\n\\n)"),
+    child_chunk_delimiters: Optional[str] = typer.Option(None, "--child-chunk-delimiters", help="Comma-separated delimiters for child chunk boundaries (supports escaped values like \\n\\n)"),
+    parent_child_fetch_k: Optional[int] = typer.Option(None, "--parent-child-fetch-k", help="Child candidates fetched before parent expansion"),
     ingestion_batch_size: Optional[int] = typer.Option(None, "--ingestion-batch-size", help="Ingestion batch size"),
     log_every_batches: Optional[int] = typer.Option(None, "--log-every-batches", help="Emit ingest logs every N batches"),
     retrieve_fetch_k: Optional[int] = typer.Option(None, "--retrieve-fetch-k", help="Dense candidates fetched before rerank/hybrid"),
@@ -316,7 +344,7 @@ def ingest(
     sparse_proxy: Optional[str] = typer.Option(None, "--sparse-proxy", help="Proxy used for sparse embedding model download/init"),
     sparse_cache_dir: Optional[str] = typer.Option(None, "--sparse-cache-dir", help="Sparse FastEmbed cache directory (forces local-files-only mode)"),
     sparse_local_files_only: Optional[bool] = typer.Option(None, "--sparse-local-files-only/--no-sparse-local-files-only", help="Use local sparse model files only"),
-    sparse_provider: Optional[str] = typer.Option(None, "--sparse-provider", help="Sparse backend provider: fastembed or flagembedding"),
+    sparse_provider: Optional[str] = typer.Option(None, "--sparse-provider", help="Sparse provider (fastembed/flagembedding) or compatibility values: same/auto/openai/openrouter/avalai/openaicompatible/sentence-transformers/openvino"),
     sparse_model_path: Optional[str] = typer.Option(None, "--sparse-model-path", help="Local path for sparse model artifacts"),
     sparse_use_fp16: Optional[bool] = typer.Option(None, "--sparse-use-fp16/--no-sparse-use-fp16", help="Use fp16 for FlagEmbedding sparse backend"),
     sparse_device: Optional[str] = typer.Option(None, "--sparse-device", help="Sparse backend device (cpu/cuda)"),
@@ -334,7 +362,7 @@ def ingest(
     retry_base_delay_seconds: Optional[float] = typer.Option(None, "--retry-base-delay", help="Base retry delay (seconds)"),
     retry_max_delay_seconds: Optional[float] = typer.Option(None, "--retry-max-delay", help="Max retry delay (seconds)"),
     rerank: Optional[bool] = typer.Option(None, "--rerank/--no-rerank", help="Enable dedicated rerank model"),
-    rerank_provider: Optional[str] = typer.Option(None, "--rerank-provider", help="Rerank provider (cohere/jina/openai/openrouter/avalai/openaicompatible/local/openvino)"),
+    rerank_provider: Optional[str] = typer.Option(None, "--rerank-provider", help="Rerank provider (cohere/jina/openai/openrouter/avalai/openaicompatible/local/fastembed/sentence-transformers/openvino/flagembedding/same/auto)"),
     rerank_model: Optional[str] = typer.Option(None, "--rerank-model", help="Dedicated rerank model"),
     rerank_api_key: Optional[str] = typer.Option(None, "--rerank-api-key", help="Rerank API key"),
     rerank_api_endpoint: Optional[str] = typer.Option(None, "--rerank-api-endpoint", help="Rerank API endpoint"),
@@ -381,6 +409,13 @@ def ingest(
         vector_size=vector_size,
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
+        parent_child_enabled=parent_child,
+        parent_chunk_size=parent_chunk_size,
+        parent_chunk_overlap=parent_chunk_overlap,
+        parent_child_paragraph_mode=parent_child_paragraph,
+        parent_chunk_delimiters=parent_chunk_delimiters,
+        child_chunk_delimiters=child_chunk_delimiters,
+        parent_child_fetch_k=parent_child_fetch_k,
         ingestion_batch_size=ingestion_batch_size,
         retrieve_fetch_k=retrieve_fetch_k,
         hybrid_dense_weight=hybrid_dense_weight,
@@ -520,6 +555,13 @@ def ask(
     vector_size: Optional[int] = typer.Option(None, "--vector-size", min=1, help="Fixed vector size for collection creation (defaults to embedding dimension when omitted)"),
     chunk_size: Optional[int] = typer.Option(None, "--chunk-size", help="Chunk size in characters"),
     chunk_overlap: Optional[int] = typer.Option(None, "--chunk-overlap", help="Chunk overlap in characters"),
+    parent_child: Optional[bool] = typer.Option(None, "--parent-child/--no-parent-child", help="Enable hierarchical parent-child retrieval"),
+    parent_chunk_size: Optional[int] = typer.Option(None, "--parent-chunk-size", help="Parent chunk size in characters"),
+    parent_chunk_overlap: Optional[int] = typer.Option(None, "--parent-chunk-overlap", help="Parent chunk overlap in characters"),
+    parent_child_paragraph: Optional[bool] = typer.Option(None, "--parent-child-paragraph/--no-parent-child-paragraph", help="Prefer paragraph boundaries (double newline) for parent-child chunking"),
+    parent_chunk_delimiters: Optional[str] = typer.Option(None, "--parent-chunk-delimiters", help="Comma-separated delimiters for parent chunk boundaries (supports escaped values like \\n\\n)"),
+    child_chunk_delimiters: Optional[str] = typer.Option(None, "--child-chunk-delimiters", help="Comma-separated delimiters for child chunk boundaries (supports escaped values like \\n\\n)"),
+    parent_child_fetch_k: Optional[int] = typer.Option(None, "--parent-child-fetch-k", help="Child candidates fetched before parent expansion"),
     ingestion_batch_size: Optional[int] = typer.Option(None, "--ingestion-batch-size", help="Ingestion batch size"),
     log_every_batches: Optional[int] = typer.Option(None, "--log-every-batches", help="Emit ingest logs every N batches"),
     retrieve_fetch_k: Optional[int] = typer.Option(None, "--retrieve-fetch-k", help="Dense candidates fetched before rerank/hybrid"),
@@ -532,7 +574,7 @@ def ask(
     sparse_proxy: Optional[str] = typer.Option(None, "--sparse-proxy", help="Proxy used for sparse embedding model download/init"),
     sparse_cache_dir: Optional[str] = typer.Option(None, "--sparse-cache-dir", help="Sparse FastEmbed cache directory (forces local-files-only mode)"),
     sparse_local_files_only: Optional[bool] = typer.Option(None, "--sparse-local-files-only/--no-sparse-local-files-only", help="Use local sparse model files only"),
-    sparse_provider: Optional[str] = typer.Option(None, "--sparse-provider", help="Sparse backend provider: fastembed or flagembedding"),
+    sparse_provider: Optional[str] = typer.Option(None, "--sparse-provider", help="Sparse provider (fastembed/flagembedding) or compatibility values: same/auto/openai/openrouter/avalai/openaicompatible/sentence-transformers/openvino"),
     sparse_model_path: Optional[str] = typer.Option(None, "--sparse-model-path", help="Local path for sparse model artifacts"),
     sparse_use_fp16: Optional[bool] = typer.Option(None, "--sparse-use-fp16/--no-sparse-use-fp16", help="Use fp16 for FlagEmbedding sparse backend"),
     sparse_device: Optional[str] = typer.Option(None, "--sparse-device", help="Sparse backend device (cpu/cuda)"),
@@ -551,7 +593,7 @@ def ask(
     retry_base_delay_seconds: Optional[float] = typer.Option(None, "--retry-base-delay", help="Base retry delay (seconds)"),
     retry_max_delay_seconds: Optional[float] = typer.Option(None, "--retry-max-delay", help="Max retry delay (seconds)"),
     rerank: Optional[bool] = typer.Option(None, "--rerank/--no-rerank", help="Enable dedicated rerank model"),
-    rerank_provider: Optional[str] = typer.Option(None, "--rerank-provider", help="Rerank provider (cohere/jina/openai/openrouter/avalai/openaicompatible/local/openvino)"),
+    rerank_provider: Optional[str] = typer.Option(None, "--rerank-provider", help="Rerank provider (cohere/jina/openai/openrouter/avalai/openaicompatible/local/fastembed/sentence-transformers/openvino/flagembedding/same/auto)"),
     rerank_model: Optional[str] = typer.Option(None, "--rerank-model", help="Dedicated rerank model"),
     rerank_api_key: Optional[str] = typer.Option(None, "--rerank-api-key", help="Rerank API key"),
     rerank_api_endpoint: Optional[str] = typer.Option(None, "--rerank-api-endpoint", help="Rerank API endpoint"),
@@ -598,6 +640,13 @@ def ask(
         vector_size=vector_size,
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
+        parent_child_enabled=parent_child,
+        parent_chunk_size=parent_chunk_size,
+        parent_chunk_overlap=parent_chunk_overlap,
+        parent_child_paragraph_mode=parent_child_paragraph,
+        parent_chunk_delimiters=parent_chunk_delimiters,
+        child_chunk_delimiters=child_chunk_delimiters,
+        parent_child_fetch_k=parent_child_fetch_k,
         ingestion_batch_size=ingestion_batch_size,
         retrieve_fetch_k=retrieve_fetch_k,
         hybrid_dense_weight=hybrid_dense_weight,

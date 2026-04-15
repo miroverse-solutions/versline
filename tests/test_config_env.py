@@ -9,6 +9,8 @@ from versline.config import reload_settings, settings
 class TestConfigEnv(unittest.TestCase):
     def setUp(self):
         self._original_env = os.environ.copy()
+        for key in ["VERSLINE_LLM_PROVIDER", "VERSLINE_LLM_MODEL", "VERSLINE_ENV_FILE"]:
+            os.environ.pop(key, None)
 
     def tearDown(self):
         os.environ.clear()

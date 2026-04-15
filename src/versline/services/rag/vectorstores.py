@@ -278,3 +278,37 @@ class QdrantVectorStore(BaseVectorStore):
             )
             for hit in points
         ]
+
+    def get_by_ids(self, collection_name: str, ids: List[str]) -> List[RetrievedChunk]:
+        if not ids:
+            return []
+
+        def operation():
+            self.rate_limiter.wait()
+            with scoped_proxy(self.proxy):
+                return self.client.retrieve(
+                    collection_name=collection_name,
+                    ids=ids,
+                    with_payload=True,
+                    with_vectors=False,
+                )
+
+        points = retry_call(
+            operation,
+            max_retries=settings.rag.retry_max_retries,
+            base_delay_seconds=settings.rag.retry_base_delay_seconds,
+            max_delay_seconds=settings.rag.retry_max_delay_seconds,
+            operation_name="qdrant_get_by_ids",
+        )
+
+        by_id = {
+            str(point.id): RetrievedChunk(
+                id=str(point.id),
+                text=str((point.payload or {}).get("text", "")),
+                score=0.0,
+                metadata=dict((point.payload or {}).get("metadata", {})),
+            )
+            for point in points
+        }
+        # Preserve requested order so parent ranking from child hits is stable.
+        return [by_id[item_id] for item_id in ids if item_id in by_id]

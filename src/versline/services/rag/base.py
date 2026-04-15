@@ -105,6 +105,9 @@ class BaseVectorStore(ABC):
             filters=filters,
         )
 
+    def get_by_ids(self, collection_name: str, ids: List[str]) -> List[RetrievedChunk]:
+        raise NotImplementedError
+
 
 class BaseGenerator(ABC):
     @abstractmethod

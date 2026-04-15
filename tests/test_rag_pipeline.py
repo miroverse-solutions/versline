@@ -84,6 +84,7 @@ class FakeVectorStore:
         self.hybrid_search_calls = 0
         self.fail_once_on_upsert_call = fail_once_on_upsert_call
         self.failed = False
+        self.points: Dict[str, RetrievedChunk] = {}
 
     def ensure_collection(self, collection_name: str, vector_size: int) -> None:
         self.collection = collection_name
@@ -101,6 +102,13 @@ class FakeVectorStore:
         ):
             self.failed = True
             raise RuntimeError("simulated network failure")
+        for chunk in chunks:
+            self.points[str(chunk.id)] = RetrievedChunk(
+                id=str(chunk.id),
+                text=chunk.text,
+                score=0.0,
+                metadata=dict(chunk.metadata),
+            )
 
     def upsert_hybrid(
         self,
@@ -133,6 +141,9 @@ class FakeVectorStore:
         self.hybrid_search_calls += 1
         return self.hybrid_search_results[:top_k]
 
+    def get_by_ids(self, collection_name: str, ids: List[str]) -> List[RetrievedChunk]:
+        return [self.points[item_id] for item_id in ids if item_id in self.points]
+
 
 class TestRAGPipeline(unittest.TestCase):
     def setUp(self):
@@ -144,12 +155,20 @@ class TestRAGPipeline(unittest.TestCase):
         self.prev_hybrid = settings.rag.hybrid_enabled
         self.prev_fetch = settings.rag.retrieve_fetch_k
         self.prev_vector_size = settings.rag.vector_size
+        self.prev_parent_child_enabled = settings.rag.parent_child_enabled
+        self.prev_parent_chunk_size = settings.rag.parent_chunk_size
+        self.prev_parent_chunk_overlap = settings.rag.parent_chunk_overlap
+        self.prev_parent_child_fetch_k = settings.rag.parent_child_fetch_k
 
         settings.rag.state_directory = self.base_path / "state"
         settings.rag.ingestion_batch_size = 2
         settings.rag.hybrid_enabled = True
         settings.rag.retrieve_fetch_k = 10
         settings.rag.vector_size = None
+        settings.rag.parent_child_enabled = False
+        settings.rag.parent_chunk_size = 2400
+        settings.rag.parent_chunk_overlap = 200
+        settings.rag.parent_child_fetch_k = 12
 
     def tearDown(self):
         settings.rag.state_directory = self.prev_state_dir
@@ -157,6 +176,10 @@ class TestRAGPipeline(unittest.TestCase):
         settings.rag.hybrid_enabled = self.prev_hybrid
         settings.rag.retrieve_fetch_k = self.prev_fetch
         settings.rag.vector_size = self.prev_vector_size
+        settings.rag.parent_child_enabled = self.prev_parent_child_enabled
+        settings.rag.parent_chunk_size = self.prev_parent_chunk_size
+        settings.rag.parent_chunk_overlap = self.prev_parent_chunk_overlap
+        settings.rag.parent_child_fetch_k = self.prev_parent_child_fetch_k
         self.temp_dir.cleanup()
 
     def _make_pipeline(self, store: FakeVectorStore, reranker=None) -> RAGPipeline:
@@ -247,6 +270,82 @@ class TestRAGPipeline(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0].id, "2")
         self.assertEqual(store.hybrid_search_calls, 1)
+
+    def test_parent_child_ingest_indexes_parent_and_child_chunks(self):
+        previous_parent_chunk_size = settings.rag.parent_chunk_size
+        previous_parent_chunk_overlap = settings.rag.parent_chunk_overlap
+        previous_chunk_size = settings.rag.chunk_size
+        previous_chunk_overlap = settings.rag.chunk_overlap
+        previous_parent_child_enabled = settings.rag.parent_child_enabled
+        settings.rag.parent_child_enabled = True
+        settings.rag.parent_chunk_size = 20
+        settings.rag.parent_chunk_overlap = 4
+        settings.rag.chunk_size = 10
+        settings.rag.chunk_overlap = 2
+        try:
+            source_file = self.base_path / "parent_child_ingest.md"
+            source_file.write_text("alpha beta gamma delta epsilon zeta eta theta", encoding="utf-8")
+
+            preprocessors = PreprocessorRegistry()
+            preprocessors.register("markdown", FakePreprocessor())
+
+            stores = VectorStoreRegistry()
+            store = FakeVectorStore()
+            stores.register("fake", store)
+            pipeline = RAGPipeline(
+                embedder=FakeEmbedder(),
+                sparse_embedder=FakeSparseEmbedder(),
+                generator=FakeGenerator(),
+                preprocessor_registry=preprocessors,
+                vector_store_registry=stores,
+                vector_backend="fake",
+                collection_name="test_collection",
+            )
+            result = pipeline.ingest_file(str(source_file), input_type="markdown")
+
+            parent_count = sum(1 for point in store.points.values() if point.metadata.get("chunk_level") == "parent")
+            child_count = sum(1 for point in store.points.values() if point.metadata.get("chunk_level") == "child")
+
+            self.assertGreater(parent_count, 0)
+            self.assertGreater(child_count, 0)
+            self.assertEqual(result["parent_chunks"], parent_count)
+            self.assertEqual(result["child_chunks"], child_count)
+        finally:
+            settings.rag.parent_chunk_size = previous_parent_chunk_size
+            settings.rag.parent_chunk_overlap = previous_parent_chunk_overlap
+            settings.rag.chunk_size = previous_chunk_size
+            settings.rag.chunk_overlap = previous_chunk_overlap
+            settings.rag.parent_child_enabled = previous_parent_child_enabled
+
+    def test_parent_child_retrieve_expands_to_parent_chunks(self):
+        previous_parent_child_enabled = settings.rag.parent_child_enabled
+        settings.rag.parent_child_enabled = True
+        try:
+            store = FakeVectorStore()
+            pipeline = self._make_pipeline(store)
+
+            parent_chunk = Chunk(
+                id="parent-1",
+                text="parent text with broad context",
+                metadata={"source": "a.md", "chunk_level": "parent"},
+            )
+            child_chunk = RetrievedChunk(
+                id="child-1",
+                text="narrow child context",
+                score=0.9,
+                metadata={"source": "a.md", "chunk_level": "child", "parent_id": "parent-1"},
+            )
+            store.upsert("test_collection", [parent_chunk], [[1.0, 1.0]])
+            store.hybrid_search_results = [child_chunk]
+
+            result = pipeline.retrieve(query="narrow", top_k=1)
+
+            self.assertEqual(len(result), 1)
+            self.assertEqual(result[0].id, "parent-1")
+            self.assertEqual(result[0].metadata.get("chunk_level"), "parent")
+            self.assertTrue(result[0].metadata.get("matched_children"))
+        finally:
+            settings.rag.parent_child_enabled = previous_parent_child_enabled
 
     def test_retrieval_uses_dedicated_reranker(self):
         previous_rerank_enabled = settings.rag.rerank_enabled
@@ -450,6 +549,39 @@ class TestRAGPipeline(unittest.TestCase):
             settings.rag.embedding_device = previous_device
             settings.rag.openvino_cache_dir = previous_ov_cache
 
+    def test_sparse_provider_sentence_alias_uses_sentence_sparse_backend(self):
+        previous_hybrid = settings.rag.hybrid_enabled
+        previous_sparse_provider = settings.rag.sparse_embedding_provider
+
+        stores = VectorStoreRegistry()
+        stores.register("fake", FakeVectorStore())
+
+        class DummySentenceSparse:
+            def __init__(self, *args, **kwargs):
+                self.kwargs = kwargs
+
+            def embed_documents(self, texts):
+                return [{"indices": [1], "values": [0.1]} for _ in texts]
+
+            def embed_query(self, text):
+                return {"indices": [1], "values": [0.1]}
+
+        settings.rag.hybrid_enabled = True
+        settings.rag.sparse_embedding_provider = "sentence-transformers"
+        try:
+            with patch("versline.services.rag.pipeline.SentenceTransformersSparseEmbedder", DummySentenceSparse):
+                pipeline = RAGPipeline(
+                    embedder=FakeEmbedder(),
+                    generator=FakeGenerator(),
+                    vector_store_registry=stores,
+                    vector_backend="fake",
+                    preflight=False,
+                )
+                self.assertIsInstance(pipeline.sparse_embedder, DummySentenceSparse)
+        finally:
+            settings.rag.hybrid_enabled = previous_hybrid
+            settings.rag.sparse_embedding_provider = previous_sparse_provider
+
     def test_openvino_rerank_backend_does_not_override_cohere_provider(self):
         previous_rerank_enabled = settings.rag.rerank_enabled
         previous_rerank_provider = settings.rag.rerank_provider
@@ -521,6 +653,37 @@ class TestRAGPipeline(unittest.TestCase):
             settings.rag.rerank_provider = previous_rerank_provider
             settings.rag.rerank_inference_backend = previous_rerank_backend
             settings.rag.rerank_model_path = previous_rerank_model_path
+
+    def test_rerank_provider_flagembedding_maps_to_sentence_transformers(self):
+        previous_rerank_enabled = settings.rag.rerank_enabled
+        previous_rerank_provider = settings.rag.rerank_provider
+
+        stores = VectorStoreRegistry()
+        stores.register("fake", FakeVectorStore())
+
+        class DummySTReranker:
+            def __init__(self, *args, **kwargs):
+                self.kwargs = kwargs
+
+            def rerank(self, query, items, top_k):
+                return items[:top_k]
+
+        settings.rag.rerank_enabled = True
+        settings.rag.rerank_provider = "flagembedding"
+        try:
+            with patch("versline.services.rag.pipeline.SentenceTransformersReranker", DummySTReranker):
+                pipeline = RAGPipeline(
+                    embedder=FakeEmbedder(),
+                    sparse_embedder=FakeSparseEmbedder(),
+                    generator=FakeGenerator(),
+                    vector_store_registry=stores,
+                    vector_backend="fake",
+                    preflight=False,
+                )
+                self.assertIsInstance(pipeline.reranker, DummySTReranker)
+        finally:
+            settings.rag.rerank_enabled = previous_rerank_enabled
+            settings.rag.rerank_provider = previous_rerank_provider
 
     def test_fastembed_rerank_openvino_backend_passes_onnx_providers(self):
         previous_rerank_enabled = settings.rag.rerank_enabled

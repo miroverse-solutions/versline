@@ -9,3 +9,8 @@ output/
 temp/
 work_dir/
 law-works-religious-norms/
+schfiqh_mds/
+
+qt.py
+#for quick testing, not part of the main codebase
+

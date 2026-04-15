@@ -46,6 +46,7 @@ dependencies = [
     "langchain-text-splitters>=1.1.1",
     "tavily-python>=0.7.23",
     "cohere>=5.21.1",
+    "optimum[openvino]>=1.17.0",
 ]
 
 [project.scripts]

@@ -12,19 +12,21 @@ from loguru import logger
 from versline.config import settings
 from versline.services.pricing import TokenTracker
 from versline.services.rag.base import BaseChunker, BaseEmbedder, BaseGenerator, BaseReranker, BaseWebSearcher, Chunk, RetrievedChunk
-from versline.services.rag.chunkers import SlidingWindowChunker
+from versline.services.rag.chunkers import HierarchicalChunker, SlidingWindowChunker
 from versline.services.rag.embedders import (
     FastEmbedDenseEmbedder,
     FastEmbedSparseEmbedder,
     FlagEmbeddingDenseEmbedder,
     FlagEmbeddingSparseEmbedder,
     OpenAICompatibleEmbedder,
+    OptimumIntelEmbedder,
+    SentenceTransformersSparseEmbedder,
     SentenceTransformersDenseEmbedder,
 )
 from versline.services.rag.generators import PromptRAGGenerator
 from versline.services.rag.mcp_client import MCPClientConfig, MCPContextClient
 from versline.services.rag.preprocessors import DEFAULT_EXTENSION_TO_INPUT_TYPE, MarkdownPreprocessor
-from versline.services.rag.rerankers import CohereReranker, FastEmbedReranker, JinaReranker, OpenAICompatibleReranker, SentenceTransformersReranker
+from versline.services.rag.rerankers import CohereReranker, FastEmbedReranker, JinaReranker, OpenAICompatibleReranker, OptimumIntelReranker, SentenceTransformersReranker
 from versline.services.rag.registry import PreprocessorRegistry, VectorStoreRegistry
 from versline.services.rag.runtime import ProgressStateStore, RateLimiter, TokenRateLimiter
 from versline.services.rag.vectorstores import QdrantVectorStore
@@ -32,6 +34,14 @@ from versline.services.rag.websearch import build_default_web_search_registry
 
 
 class RAGPipeline:
+    EMBEDDING_PROVIDER_SENTENCE_ALIASES = {
+        "sentence-transformers",
+        "sentence_transformers",
+        "sentencetransformers",
+        "sentence-transformer",
+        "sentence",
+    }
+
     @staticmethod
     def _normalized_proxy(proxy: Optional[str]) -> Optional[str]:
         if proxy is None:
@@ -44,6 +54,20 @@ class RAGPipeline:
         if raw is None:
             return []
         return [part.strip() for part in str(raw).split(",") if part.strip()]
+
+    @staticmethod
+    def _parse_delimiters(raw: Optional[str]) -> List[str]:
+        if raw is None:
+            return []
+        if str(raw).strip().startswith("#"):
+            return []
+        delimiters: List[str] = []
+        for part in str(raw).split(","):
+            cleaned = part.strip()
+            if not cleaned:
+                continue
+            delimiters.append(bytes(cleaned, "utf-8").decode("unicode_escape"))
+        return delimiters
 
     @staticmethod
     def _with_openvino_provider_options(
@@ -75,6 +99,58 @@ class RAGPipeline:
                 options["cache_dir"] = str(cache_dir)
             resolved.append(("OpenVINOExecutionProvider", options) if options else "OpenVINOExecutionProvider")
         return resolved
+
+    @classmethod
+    def _resolve_sparse_provider(
+        cls,
+        requested_provider: Optional[str],
+        *,
+        dense_provider: str,
+    ) -> str:
+        provider = (requested_provider or "fastembed").strip().lower()
+        if provider in {"auto", "same", "default"}:
+            provider = dense_provider
+
+        if provider == "flagembedding":
+            return "flagembedding"
+        if provider == "fastembed":
+            return "fastembed"
+
+        if provider in cls.EMBEDDING_PROVIDER_SENTENCE_ALIASES:
+            return "sentence-transformers"
+
+        if provider in {"openai", "openrouter", "avalai", "openaicompatible", "openvino", "optimum-intel", "optimum_intel", "optimum"}:
+            logger.warning(
+                f"Sparse provider '{requested_provider}' is mapped to fastembed because sparse embeddings are local lexical models."
+            )
+            return "fastembed"
+
+        logger.warning(
+            f"Unsupported sparse provider '{requested_provider}'. Falling back to fastembed for compatibility."
+        )
+        return "fastembed"
+
+    @classmethod
+    def _resolve_rerank_provider(
+        cls,
+        requested_provider: Optional[str],
+        *,
+        dense_provider: str,
+    ) -> str:
+        provider = (requested_provider or "cohere").strip().lower()
+        if provider in {"auto", "same", "default"}:
+            provider = dense_provider
+
+        if provider == "flagembedding":
+            logger.warning(
+                "rerank_provider=flagembedding is mapped to sentence-transformers reranker for compatibility."
+            )
+            return "sentence-transformers"
+
+        if provider in cls.EMBEDDING_PROVIDER_SENTENCE_ALIASES:
+            return "sentence-transformers"
+
+        return provider
 
     def __init__(
         self,
@@ -114,6 +190,13 @@ class RAGPipeline:
         sparse_embedding_batch_size: Optional[int] = None,
         chunk_size: Optional[int] = None,
         chunk_overlap: Optional[int] = None,
+        parent_child_enabled: Optional[bool] = None,
+        parent_chunk_size: Optional[int] = None,
+        parent_chunk_overlap: Optional[int] = None,
+        parent_child_paragraph_mode: Optional[bool] = None,
+        parent_chunk_delimiters: Optional[str] = None,
+        child_chunk_delimiters: Optional[str] = None,
+        parent_child_fetch_k: Optional[int] = None,
         ingestion_batch_size: Optional[int] = None,
         retrieve_fetch_k: Optional[int] = None,
         hybrid_enabled: Optional[bool] = None,
@@ -173,6 +256,20 @@ class RAGPipeline:
             settings.rag.chunk_size = int(chunk_size)
         if chunk_overlap is not None:
             settings.rag.chunk_overlap = int(chunk_overlap)
+        if parent_child_enabled is not None:
+            settings.rag.parent_child_enabled = bool(parent_child_enabled)
+        if parent_chunk_size is not None:
+            settings.rag.parent_chunk_size = int(parent_chunk_size)
+        if parent_chunk_overlap is not None:
+            settings.rag.parent_chunk_overlap = int(parent_chunk_overlap)
+        if parent_child_paragraph_mode is not None:
+            settings.rag.parent_child_paragraph_mode = bool(parent_child_paragraph_mode)
+        if parent_chunk_delimiters is not None:
+            settings.rag.parent_chunk_delimiters = parent_chunk_delimiters
+        if child_chunk_delimiters is not None:
+            settings.rag.child_chunk_delimiters = child_chunk_delimiters
+        if parent_child_fetch_k is not None:
+            settings.rag.parent_child_fetch_k = int(parent_child_fetch_k)
         if ingestion_batch_size is not None:
             settings.rag.ingestion_batch_size = int(ingestion_batch_size)
         if retrieve_fetch_k is not None:
@@ -235,23 +332,31 @@ class RAGPipeline:
         self.rerank_rate_limiter = RateLimiter(settings.rag.rate_limit_rerank_rpm)
         self.rerank_token_rate_limiter = TokenRateLimiter(settings.rag.rate_limit_rerank_tpm)
 
-        self.chunker = chunker or SlidingWindowChunker(
-            chunk_size=settings.rag.chunk_size,
-            overlap=settings.rag.chunk_overlap,
-        )
+        self.parent_child_enabled = bool(settings.rag.parent_child_enabled)
+        if chunker is not None:
+            self.chunker = chunker
+        elif self.parent_child_enabled:
+            self.chunker = HierarchicalChunker(
+                parent_chunk_size=settings.rag.parent_chunk_size,
+                parent_overlap=settings.rag.parent_chunk_overlap,
+                child_chunk_size=settings.rag.chunk_size,
+                child_overlap=settings.rag.chunk_overlap,
+                paragraph_mode=bool(settings.rag.parent_child_paragraph_mode),
+                parent_delimiters=self._parse_delimiters(settings.rag.parent_chunk_delimiters),
+                child_delimiters=self._parse_delimiters(settings.rag.child_chunk_delimiters),
+            )
+        else:
+            self.chunker = SlidingWindowChunker(
+                chunk_size=settings.rag.chunk_size,
+                overlap=settings.rag.chunk_overlap,
+            )
+        dense_provider = (settings.rag.embedding_provider or "openai").lower()
+        dense_inference_backend = (settings.rag.embedding_inference_backend or "auto").lower()
         if embedder is not None:
             self.embedder = embedder
         else:
-            dense_provider = (settings.rag.embedding_provider or "openai").lower()
-            dense_inference_backend = (settings.rag.embedding_inference_backend or "auto").lower()
             dense_model = embedding_model or settings.rag.embedding_model
-            sentence_embedding_aliases = {
-                "sentence-transformers",
-                "sentence_transformers",
-                "sentencetransformers",
-                "sentence-transformer",
-                "sentence",
-            }
+            sentence_embedding_aliases = self.EMBEDDING_PROVIDER_SENTENCE_ALIASES
             if dense_provider == "openvino":
                 logger.warning(
                     "embedding_provider=openvino is treated as sentence-transformers with OpenVINO backend. "
@@ -313,15 +418,28 @@ class RAGPipeline:
                     device=settings.rag.embedding_device,
                     batch_size=settings.rag.embedding_batch_size,
                 )
+            elif dense_provider in {"optimum-intel", "optimum_intel", "optimum"}:
+                self.embedder = OptimumIntelEmbedder(
+                    model_name=dense_model,
+                    proxy=settings.rag.embedding_proxy,
+                    cache_dir=settings.rag.embedding_cache_dir,
+                    local_files_only=settings.rag.embedding_local_files_only,
+                    model_path=settings.rag.embedding_model_path,
+                    device=settings.rag.embedding_device,
+                    batch_size=settings.rag.embedding_batch_size,
+                )
             else:
                 raise ValueError(
                     "Unsupported dense embedding provider: "
-                    f"{dense_provider}. Supported providers: openai, openrouter, avalai, openaicompatible, fastembed, sentence-transformers (aliases: sentence, sentence_transformers), flagembedding, openvino"
+                    f"{dense_provider}. Supported providers: openai, openrouter, avalai, openaicompatible, fastembed, sentence-transformers (aliases: sentence, sentence_transformers), flagembedding, optimum-intel, openvino"
                 )
         self.sparse_embedder = sparse_embedder
         if self.sparse_embedder is None and settings.rag.hybrid_enabled:
             try:
-                sparse_provider = (settings.rag.sparse_embedding_provider or "fastembed").lower()
+                sparse_provider = self._resolve_sparse_provider(
+                    settings.rag.sparse_embedding_provider,
+                    dense_provider=dense_provider,
+                )
                 if sparse_provider == "flagembedding":
                     self.sparse_embedder = FlagEmbeddingSparseEmbedder(
                         settings.rag.sparse_embedding_model,
@@ -330,6 +448,16 @@ class RAGPipeline:
                         local_files_only=settings.rag.sparse_embedding_local_files_only,
                         model_path=settings.rag.sparse_embedding_model_path,
                         use_fp16=settings.rag.sparse_embedding_use_fp16,
+                        device=settings.rag.sparse_embedding_device,
+                        batch_size=settings.rag.sparse_embedding_batch_size,
+                    )
+                elif sparse_provider in self.EMBEDDING_PROVIDER_SENTENCE_ALIASES:
+                    self.sparse_embedder = SentenceTransformersSparseEmbedder(
+                        settings.rag.sparse_embedding_model,
+                        proxy=settings.rag.sparse_embedding_proxy or settings.rag.embedding_proxy,
+                        cache_dir=settings.rag.sparse_embedding_cache_dir,
+                        local_files_only=settings.rag.sparse_embedding_local_files_only,
+                        model_path=settings.rag.sparse_embedding_model_path,
                         device=settings.rag.sparse_embedding_device,
                         batch_size=settings.rag.sparse_embedding_batch_size,
                     )
@@ -366,15 +494,12 @@ class RAGPipeline:
         )
         self.reranker = reranker
         if self.reranker is None and settings.rag.rerank_enabled:
-            provider = (settings.rag.rerank_provider or "cohere").lower()
+            provider = self._resolve_rerank_provider(
+                settings.rag.rerank_provider,
+                dense_provider=dense_provider,
+            )
             rerank_inference_backend = (settings.rag.rerank_inference_backend or "auto").lower()
-            sentence_rerank_aliases = {
-                "sentence-transformers",
-                "sentence_transformers",
-                "sentencetransformers",
-                "sentence-transformer",
-                "sentence",
-            }
+            sentence_rerank_aliases = self.EMBEDDING_PROVIDER_SENTENCE_ALIASES
             if provider == "openvino":
                 logger.warning(
                     "rerank_provider=openvino is treated as sentence-transformers with OpenVINO backend. "
@@ -459,6 +584,18 @@ class RAGPipeline:
                     device=settings.rag.rerank_device,
                     batch_size=settings.rag.rerank_batch_size,
                     inference_backend=rerank_inference_backend,
+                    rate_limiter=self.rerank_rate_limiter,
+                    token_rate_limiter=self.rerank_token_rate_limiter,
+                )
+            elif provider in {"optimum-intel", "optimum_intel", "optimum"}:
+                self.reranker = OptimumIntelReranker(
+                    model=settings.rag.rerank_model,
+                    proxy=settings.rag.rerank_proxy,
+                    cache_dir=settings.rag.rerank_cache_dir,
+                    local_files_only=settings.rag.rerank_local_files_only,
+                    model_path=settings.rag.rerank_model_path,
+                    device=settings.rag.rerank_device,
+                    batch_size=settings.rag.rerank_batch_size,
                     rate_limiter=self.rerank_rate_limiter,
                     token_rate_limiter=self.rerank_token_rate_limiter,
                 )
@@ -683,12 +820,159 @@ class RAGPipeline:
             "collection": collection_name,
             "chunk_size": settings.rag.chunk_size,
             "chunk_overlap": settings.rag.chunk_overlap,
+            "parent_child_enabled": bool(settings.rag.parent_child_enabled),
+            "parent_chunk_size": settings.rag.parent_chunk_size,
+            "parent_chunk_overlap": settings.rag.parent_chunk_overlap,
+            "parent_child_paragraph_mode": bool(settings.rag.parent_child_paragraph_mode),
+            "parent_chunk_delimiters": settings.rag.parent_chunk_delimiters,
+            "child_chunk_delimiters": settings.rag.child_chunk_delimiters,
             "embedding_model": settings.rag.embedding_model,
         }
         raw = json.dumps(signature_payload, ensure_ascii=False, sort_keys=True)
         signature = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
         state_dir = settings.rag.state_directory / source_file.stem
         return ProgressStateStore(state_file=state_dir / f"rag_ingest_{signature}.json")
+
+    def _merge_filters(
+        self,
+        base_filters: Optional[Dict[str, Any]],
+        extra_filters: Optional[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        if not base_filters and not extra_filters:
+            return None
+        merged = dict(base_filters or {})
+        merged.update(extra_filters or {})
+        return merged
+
+    def _upsert_chunk_batch(self, collection_name: str, batch_chunks: List[Chunk]) -> None:
+        dense_vectors = self.embedder.embed_documents([item.text for item in batch_chunks])
+        if (
+            settings.rag.hybrid_enabled
+            and self.sparse_embedder is not None
+            and hasattr(self._active_store, "upsert_hybrid")
+        ):
+            sparse_vectors = self.sparse_embedder.embed_documents([item.text for item in batch_chunks])
+            self._active_store.upsert_hybrid(
+                collection_name,
+                chunks=batch_chunks,
+                dense_vectors=dense_vectors,
+                sparse_vectors=sparse_vectors,
+            )
+        else:
+            self._active_store.upsert(collection_name, chunks=batch_chunks, vectors=dense_vectors)
+
+    def _prepare_parent_child_chunks(self, documents: List[Any]) -> Tuple[List[Chunk], List[Chunk]]:
+        if hasattr(self.chunker, "chunk_with_parents"):
+            parent_chunks, child_chunks = self.chunker.chunk_with_parents(documents)
+            return list(parent_chunks), list(child_chunks)
+
+        child_chunks = self.chunker.chunk(documents)
+        return [], child_chunks
+
+    def _retrieve_parent_expanded(
+        self,
+        *,
+        query: str,
+        active_collection: str,
+        query_vector: List[float],
+        top_k: int,
+        fetch_k: int,
+        candidate_top_k: int,
+        filters: Optional[Dict[str, Any]],
+        rerank_enabled: bool,
+    ) -> List[RetrievedChunk]:
+        child_filters = self._merge_filters(filters, {"chunk_level": "child"})
+        child_fetch_k = max(fetch_k, int(settings.rag.parent_child_fetch_k or fetch_k))
+        child_top_k = max(candidate_top_k, child_fetch_k)
+
+        child_hits: List[RetrievedChunk] = []
+        if (
+            settings.rag.hybrid_enabled
+            and self.sparse_embedder is not None
+            and hasattr(self._active_store, "search_hybrid")
+        ):
+            sparse_query = self.sparse_embedder.embed_query(query)
+            child_hits = self._active_store.search_hybrid(
+                collection_name=active_collection,
+                dense_query_vector=query_vector,
+                sparse_query_vector=sparse_query,
+                top_k=child_top_k,
+                filters=child_filters,
+                fetch_k=child_fetch_k,
+            )
+
+        if not child_hits:
+            child_hits = self._active_store.search(
+                collection_name=active_collection,
+                query_vector=query_vector,
+                top_k=child_top_k,
+                filters=child_filters,
+            )
+
+        if not child_hits:
+            return []
+
+        parent_scores: Dict[str, float] = {}
+        parent_hits: Dict[str, List[RetrievedChunk]] = {}
+        for child in child_hits:
+            parent_id = str(child.metadata.get("parent_id", "")).strip()
+            if not parent_id:
+                continue
+            score = float(child.score)
+            if parent_id not in parent_scores or score > parent_scores[parent_id]:
+                parent_scores[parent_id] = score
+            parent_hits.setdefault(parent_id, []).append(child)
+
+        if not parent_scores:
+            return child_hits[:top_k]
+
+        ranked_parent_ids = [
+            item[0]
+            for item in sorted(parent_scores.items(), key=lambda item: item[1], reverse=True)[:child_top_k]
+        ]
+
+        parent_chunks: List[RetrievedChunk] = []
+        if hasattr(self._active_store, "get_by_ids"):
+            try:
+                parent_chunks = self._active_store.get_by_ids(active_collection, ranked_parent_ids)
+            except Exception as error:
+                logger.warning(f"Parent expansion by ids failed. Falling back to child chunks: {error}")
+
+        if not parent_chunks:
+            return child_hits[:top_k]
+
+        expanded: List[RetrievedChunk] = []
+        for item in parent_chunks:
+            parent_id = str(item.id)
+            score = parent_scores.get(parent_id, 0.0)
+            supporting_children = sorted(
+                parent_hits.get(parent_id, []),
+                key=lambda hit: float(hit.score),
+                reverse=True,
+            )[:3]
+            merged_metadata = dict(item.metadata)
+            merged_metadata["matched_children"] = [
+                {
+                    "id": child.id,
+                    "score": float(child.score),
+                    "char_start": child.metadata.get("char_start"),
+                    "char_end": child.metadata.get("char_end"),
+                }
+                for child in supporting_children
+            ]
+            expanded.append(
+                RetrievedChunk(
+                    id=item.id,
+                    text=item.text,
+                    score=score,
+                    metadata=merged_metadata,
+                )
+            )
+
+        expanded.sort(key=lambda item: float(item.score), reverse=True)
+        if rerank_enabled:
+            return self.reranker.rerank(query=query, items=expanded, top_k=top_k)
+        return expanded[:top_k]
 
     def ingest_path(
         self,
@@ -705,6 +989,8 @@ class RAGPipeline:
         logger.info(f"RAG ingest started: files={len(files)}, collection={active_collection}")
 
         total_chunks = 0
+        total_parent_chunks = 0
+        total_child_chunks = 0
         total_docs = 0
         indexed_files = 0
         collection_reset_done = False
@@ -717,14 +1003,20 @@ class RAGPipeline:
             preprocessor = self.preprocessors.get(resolved_input_type)
 
             documents = preprocessor.preprocess(str(file_path))
-            chunks = self.chunker.chunk(documents)
+            parent_chunks, chunks = ([], self.chunker.chunk(documents))
+            if self.parent_child_enabled:
+                parent_chunks, chunks = self._prepare_parent_child_chunks(documents)
             total_docs += len(documents)
 
             if progress_callback and chunks:
                 progress_callback(
                     file_index - 1,
                     len(files),
-                    f"Prepared {file_path.name}: {len(chunks)} chunks",
+                    (
+                        f"Prepared {file_path.name}: {len(chunks)} chunks"
+                        if not self.parent_child_enabled
+                        else f"Prepared {file_path.name}: {len(parent_chunks)} parent + {len(chunks)} child chunks"
+                    ),
                 )
 
             if not chunks:
@@ -759,71 +1051,158 @@ class RAGPipeline:
             if force:
                 state = {}
 
-            completed = int(state.get("completed_chunks", 0))
             batch_size = max(1, settings.rag.ingestion_batch_size)
-            start_index = completed if resume else 0
+            if self.parent_child_enabled:
+                if state.get("mode") != "parent_child":
+                    state = {}
 
-            if progress_callback and start_index > 0:
-                progress_callback(
-                    file_index - 1 + (start_index / max(1, len(chunks))),
-                    len(files),
-                    f"Resuming {file_path.name}: {start_index}/{len(chunks)} chunks",
-                )
+                completed_parent = int(state.get("completed_parent_chunks", 0)) if resume else 0
+                completed_child = int(state.get("completed_child_chunks", 0)) if resume else 0
+                total_units = max(1, len(parent_chunks) + len(chunks))
 
-            for start in range(start_index, len(chunks), batch_size):
-                end = min(start + batch_size, len(chunks))
-                batch_chunks = chunks[start:end]
-                batch_number = (start // batch_size) + 1
-                total_batches = (len(chunks) + batch_size - 1) // batch_size
-                log_every = max(1, int(settings.rag.log_every_batches or 1))
-                if progress_callback:
+                if progress_callback and (completed_parent > 0 or completed_child > 0):
+                    resumed = completed_parent + completed_child
                     progress_callback(
-                        file_index - 1 + (start / max(1, len(chunks))),
+                        file_index - 1 + (resumed / total_units),
                         len(files),
                         (
-                            f"Embedding {file_path.name}: batch {batch_number}/{total_batches} "
-                            f"(chunks {start + 1}-{end})"
+                            f"Resuming {file_path.name}: "
+                            f"parents {completed_parent}/{len(parent_chunks)}, children {completed_child}/{len(chunks)}"
                         ),
                     )
-                if batch_number == 1 or batch_number % log_every == 0 or end == len(chunks):
-                    logger.info(
-                        "Sending ingest batch "
-                        f"{batch_number}/{total_batches} for {file_path.name} "
-                        f"(chunks {start + 1}-{end} of {len(chunks)})"
-                    )
 
-                dense_vectors = self.embedder.embed_documents([item.text for item in batch_chunks])
-                if (
-                    settings.rag.hybrid_enabled
-                    and self.sparse_embedder is not None
-                    and hasattr(self._active_store, "upsert_hybrid")
-                ):
-                    sparse_vectors = self.sparse_embedder.embed_documents([item.text for item in batch_chunks])
-                    self._active_store.upsert_hybrid(
-                        active_collection,
-                        chunks=batch_chunks,
-                        dense_vectors=dense_vectors,
-                        sparse_vectors=sparse_vectors,
-                    )
-                else:
-                    self._active_store.upsert(active_collection, chunks=batch_chunks, vectors=dense_vectors)
+                for start in range(completed_parent, len(parent_chunks), batch_size):
+                    end = min(start + batch_size, len(parent_chunks))
+                    batch_chunks = parent_chunks[start:end]
+                    batch_number = (start // batch_size) + 1
+                    total_batches = (len(parent_chunks) + batch_size - 1) // batch_size
+                    log_every = max(1, int(settings.rag.log_every_batches or 1))
+                    if progress_callback:
+                        progress_callback(
+                            file_index - 1 + (start / total_units),
+                            len(files),
+                            (
+                                f"Embedding parent chunks {file_path.name}: "
+                                f"batch {batch_number}/{max(1, total_batches)} (chunks {start + 1}-{end})"
+                            ),
+                        )
+                    if batch_number == 1 or batch_number % log_every == 0 or end == len(parent_chunks):
+                        logger.info(
+                            "Sending parent ingest batch "
+                            f"{batch_number}/{max(1, total_batches)} for {file_path.name} "
+                            f"(chunks {start + 1}-{end} of {len(parent_chunks)})"
+                        )
 
-                state["completed_chunks"] = end
-                state["total_chunks"] = len(chunks)
-                state["source"] = str(file_path)
-                state["collection"] = active_collection
-                store.save(state)
+                    self._upsert_chunk_batch(active_collection, batch_chunks)
 
-                if progress_callback:
+                    state["mode"] = "parent_child"
+                    state["completed_parent_chunks"] = end
+                    state["total_parent_chunks"] = len(parent_chunks)
+                    state["completed_child_chunks"] = completed_child
+                    state["total_child_chunks"] = len(chunks)
+                    state["source"] = str(file_path)
+                    state["collection"] = active_collection
+                    store.save(state)
+
+                for start in range(completed_child, len(chunks), batch_size):
+                    end = min(start + batch_size, len(chunks))
+                    batch_chunks = chunks[start:end]
+                    batch_number = (start // batch_size) + 1
+                    total_batches = (len(chunks) + batch_size - 1) // batch_size
+                    log_every = max(1, int(settings.rag.log_every_batches or 1))
+                    overall_start = len(parent_chunks) + start
+                    overall_end = len(parent_chunks) + end
+                    if progress_callback:
+                        progress_callback(
+                            file_index - 1 + (overall_start / total_units),
+                            len(files),
+                            (
+                                f"Embedding child chunks {file_path.name}: "
+                                f"batch {batch_number}/{max(1, total_batches)} (chunks {start + 1}-{end})"
+                            ),
+                        )
+                    if batch_number == 1 or batch_number % log_every == 0 or end == len(chunks):
+                        logger.info(
+                            "Sending child ingest batch "
+                            f"{batch_number}/{max(1, total_batches)} for {file_path.name} "
+                            f"(chunks {start + 1}-{end} of {len(chunks)})"
+                        )
+
+                    self._upsert_chunk_batch(active_collection, batch_chunks)
+
+                    state["mode"] = "parent_child"
+                    state["completed_parent_chunks"] = len(parent_chunks)
+                    state["total_parent_chunks"] = len(parent_chunks)
+                    state["completed_child_chunks"] = end
+                    state["total_child_chunks"] = len(chunks)
+                    state["source"] = str(file_path)
+                    state["collection"] = active_collection
+                    store.save(state)
+
+                    if progress_callback:
+                        progress_callback(
+                            file_index - 1 + (overall_end / total_units),
+                            len(files),
+                            f"Indexing {file_path.name}: child {end}/{len(chunks)}",
+                        )
+            else:
+                completed = int(state.get("completed_chunks", 0))
+                start_index = completed if resume else 0
+
+                if progress_callback and start_index > 0:
                     progress_callback(
-                        file_index - 1 + (end / max(1, len(chunks))),
+                        file_index - 1 + (start_index / max(1, len(chunks))),
                         len(files),
-                        f"Indexing {file_path.name}: {end}/{len(chunks)} chunks",
+                        f"Resuming {file_path.name}: {start_index}/{len(chunks)} chunks",
                     )
+
+                for start in range(start_index, len(chunks), batch_size):
+                    end = min(start + batch_size, len(chunks))
+                    batch_chunks = chunks[start:end]
+                    batch_number = (start // batch_size) + 1
+                    total_batches = (len(chunks) + batch_size - 1) // batch_size
+                    log_every = max(1, int(settings.rag.log_every_batches or 1))
+                    if progress_callback:
+                        progress_callback(
+                            file_index - 1 + (start / max(1, len(chunks))),
+                            len(files),
+                            (
+                                f"Embedding {file_path.name}: batch {batch_number}/{total_batches} "
+                                f"(chunks {start + 1}-{end})"
+                            ),
+                        )
+                    if batch_number == 1 or batch_number % log_every == 0 or end == len(chunks):
+                        logger.info(
+                            "Sending ingest batch "
+                            f"{batch_number}/{total_batches} for {file_path.name} "
+                            f"(chunks {start + 1}-{end} of {len(chunks)})"
+                        )
+
+                    self._upsert_chunk_batch(active_collection, batch_chunks)
+
+                    state["completed_chunks"] = end
+                    state["total_chunks"] = len(chunks)
+                    state["source"] = str(file_path)
+                    state["collection"] = active_collection
+                    store.save(state)
+
+                    if progress_callback:
+                        progress_callback(
+                            file_index - 1 + (end / max(1, len(chunks))),
+                            len(files),
+                            f"Indexing {file_path.name}: {end}/{len(chunks)} chunks",
+                        )
 
             total_chunks += len(chunks)
+            total_parent_chunks += len(parent_chunks)
+            total_child_chunks += len(chunks)
             indexed_files += 1
-            logger.info(f"Completed file {file_path.name}: chunks={len(chunks)}")
+            if self.parent_child_enabled:
+                logger.info(
+                    f"Completed file {file_path.name}: parent_chunks={len(parent_chunks)}, child_chunks={len(chunks)}"
+                )
+            else:
+                logger.info(f"Completed file {file_path.name}: chunks={len(chunks)}")
 
         logger.info(
             "RAG ingest completed: "
@@ -835,6 +1214,8 @@ class RAGPipeline:
             "files": indexed_files,
             "documents": total_docs,
             "chunks": total_chunks,
+            "parent_chunks": total_parent_chunks,
+            "child_chunks": total_child_chunks,
         }
 
     def ingest_file(
@@ -869,6 +1250,18 @@ class RAGPipeline:
         fetch_k = max(top_k, int(settings.rag.retrieve_fetch_k or top_k))
         rerank_enabled = bool(settings.rag.rerank_enabled and self.reranker is not None)
         candidate_top_k = fetch_k if rerank_enabled else top_k
+
+        if self.parent_child_enabled:
+            return self._retrieve_parent_expanded(
+                query=query,
+                active_collection=active_collection,
+                query_vector=query_vector,
+                top_k=top_k,
+                fetch_k=fetch_k,
+                candidate_top_k=candidate_top_k,
+                filters=filters,
+                rerank_enabled=rerank_enabled,
+            )
 
         if (
             settings.rag.hybrid_enabled

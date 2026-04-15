@@ -121,7 +121,7 @@ VERSLINE_RAG_VECTOR_SIZE= # optional fixed dimension (e.g. 1024, 1536); leave em
 VERSLINE_RAG_QDRANT_URL=http://localhost:6333
 VERSLINE_RAG_QDRANT_API_KEY=
 VERSLINE_RAG_EMBEDDING_MODEL=text-embedding-3-small
-VERSLINE_RAG_EMBEDDING_PROVIDER=openai # openai, openrouter, avalai, openaicompatible, fastembed, sentence-transformers, flagembedding
+VERSLINE_RAG_EMBEDDING_PROVIDER=openai # openai, openrouter, avalai, openaicompatible, fastembed, sentence-transformers, flagembedding, optimum-intel
 VERSLINE_RAG_EMBEDDING_API_KEY=
 VERSLINE_RAG_EMBEDDING_API_ENDPOINT=
 VERSLINE_RAG_EMBEDDING_TIMEOUT_SECONDS=60
@@ -140,6 +140,10 @@ VERSLINE_RAG_QDRANT_TIMEOUT_SECONDS=20
 VERSLINE_RAG_RERANK_TIMEOUT_SECONDS=60
 VERSLINE_RAG_CHUNK_SIZE=1200
 VERSLINE_RAG_CHUNK_OVERLAP=200
+VERSLINE_RAG_PARENT_CHILD_ENABLED=false
+VERSLINE_RAG_PARENT_CHUNK_SIZE=2400
+VERSLINE_RAG_PARENT_CHUNK_OVERLAP=200
+VERSLINE_RAG_PARENT_CHILD_FETCH_K=48
 VERSLINE_RAG_INGESTION_BATCH_SIZE=32
 VERSLINE_RAG_RETRIEVE_FETCH_K=24
 VERSLINE_RAG_LOG_EVERY_BATCHES=1
@@ -156,7 +160,7 @@ VERSLINE_RAG_HYBRID_ENABLED=true
 VERSLINE_RAG_HYBRID_DENSE_WEIGHT=0.7
 VERSLINE_RAG_HYBRID_LEXICAL_WEIGHT=0.3
 VERSLINE_RAG_RERANK_ENABLED=false
-VERSLINE_RAG_RERANK_PROVIDER=cohere # cohere, jina, openai, openrouter, avalai, openaicompatible, local
+VERSLINE_RAG_RERANK_PROVIDER=cohere # cohere, jina, openai, openrouter, avalai, openaicompatible, local, fastembed, sentence-transformers, optimum-intel
 VERSLINE_RAG_RERANK_MODEL=rerank-v3.5
 VERSLINE_RAG_RERANK_API_KEY=
 VERSLINE_RAG_RERANK_API_ENDPOINT=
@@ -211,6 +215,17 @@ VERSLINE_RAG_PREFLIGHT_NETWORK=true
 # VERSLINE_RAG_EMBEDDING_LOCAL_FILES_ONLY=true
 # VERSLINE_RAG_EMBEDDING_DEVICE=cpu
 # VERSLINE_RAG_EMBEDDING_BATCH_SIZE=16
+
+# Preset: optimum-intel (OVModelForFeatureExtraction, Intel CPU/iGPU)
+# Best throughput on Intel hardware. Point MODEL_PATH to a pre-exported OpenVINO IR dir
+# (contains openvino_model.xml) to skip the one-time export step.
+# VERSLINE_RAG_EMBEDDING_PROVIDER=optimum-intel
+# VERSLINE_RAG_EMBEDDING_MODEL=Qwen/Qwen3-Embedding-0.6B
+# VERSLINE_RAG_EMBEDDING_MODEL_PATH=/absolute/path/to/Qwen3-Embedding-0.6B-OpenVINO
+# VERSLINE_RAG_EMBEDDING_LOCAL_FILES_ONLY=true
+# VERSLINE_RAG_EMBEDDING_DEVICE=CPU  # or GPU for Intel iGPU
+# VERSLINE_RAG_EMBEDDING_BATCH_SIZE=16
+# VERSLINE_RAG_OPENVINO_CACHE_DIR=/absolute/path/to/openvino_cache
 
 # --- Media configuration ---
 # Full path to ffmpeg/ffprobe binaries if not in system PATH
@@ -390,6 +405,10 @@ versline rag ingest ./docs --collection my_docs --resume --embedding-proxy http:
 # Ask with hybrid retrieval + custom rate limits
 versline rag ask "main points" --collection my_docs --hybrid --embedding-rpm 120 --generation-rpm 30 --qdrant-rpm 300
 
+# Ingest + ask with hierarchical parent-child retrieval
+versline rag ingest ./docs --collection my_docs --parent-child --parent-chunk-size 2400 --chunk-size 1200
+versline rag ask "main points" --collection my_docs --parent-child --top-k 5
+
 # Ask with mixed RPM + TPM limits
 versline rag ask "main points" --collection my_docs --embedding-rpm 120 --embedding-tpm 80000 --generation-rpm 30 --generation-tpm 20000 --rerank --rerank-tpm 30000
 
@@ -440,15 +459,30 @@ versline rag ask "main points" --collection my_docs --embedding-provider sentenc
 
 # Ask with FlagEmbedding dense backend (BGE-M3)
 versline rag ask "main points" --collection my_docs --embedding-provider flagembedding --embedding-model BAAI/bge-m3 --embedding-device cuda --embedding-use-fp16
+
+# Ask with optimum-intel backend (pre-exported OpenVINO IR on Intel CPU)
+versline rag ask "main points" --collection my_docs --embedding-provider optimum-intel --embedding-model Qwen/Qwen3-Embedding-0.6B --embedding-model-path /models/Qwen3-Embedding-0.6B-OpenVINO --embedding-local-files-only --embedding-device CPU --embedding-batch-size 16
+
+# Ask with optimum-intel backend on Intel iGPU (GPU device)
+versline rag ask "main points" --collection my_docs --embedding-provider optimum-intel --embedding-model Qwen/Qwen3-Embedding-0.6B --embedding-model-path /models/Qwen3-Embedding-0.6B-OpenVINO --embedding-local-files-only --embedding-device GPU
+
+# Ask with optimum-intel reranker (pre-exported OpenVINO IR cross-encoder on Intel CPU)
+versline rag ask "main points" --collection my_docs --hybrid --rerank --rerank-provider optimum-intel --rerank-model BAAI/bge-reranker-v2-m3 --rerank-model-path /models/bge-reranker-v2-m3-OpenVINO --rerank-local-files-only --rerank-device CPU
+
+# Ask with both optimum-intel embedding and reranker on Intel CPU
+versline rag ask "main points" --collection my_docs --hybrid --embedding-provider optimum-intel --embedding-model Qwen/Qwen3-Embedding-0.6B --embedding-model-path /models/Qwen3-Embedding-0.6B-OpenVINO --embedding-local-files-only --embedding-device CPU --rerank --rerank-provider optimum-intel --rerank-model BAAI/bge-reranker-v2-m3 --rerank-model-path /models/bge-reranker-v2-m3-OpenVINO --rerank-local-files-only --rerank-device CPU
 ```
 
 ### RAG Operational Profiles
 
 - **Direct (no proxy):** do not set `VERSLINE_RAG_*_PROXY` values (or pass empty values via CLI).
 - **Per-service proxy:** set only the services you need, e.g. `VERSLINE_RAG_EMBEDDING_PROXY`, `VERSLINE_RAG_GENERATION_PROXY`, `VERSLINE_RAG_WEB_SEARCH_PROXY`, while keeping `VERSLINE_RAG_QDRANT_PROXY=` empty.
-- **Offline dense mode:** set `VERSLINE_RAG_EMBEDDING_PROVIDER` to `fastembed` / `sentence-transformers` / `flagembedding`, enable `VERSLINE_RAG_EMBEDDING_LOCAL_FILES_ONLY=true`, and set `VERSLINE_RAG_EMBEDDING_CACHE_DIR` or `VERSLINE_RAG_EMBEDDING_MODEL_PATH`.
+- **Offline dense mode:** set `VERSLINE_RAG_EMBEDDING_PROVIDER` to `fastembed` / `sentence-transformers` / `flagembedding` / `optimum-intel`, enable `VERSLINE_RAG_EMBEDDING_LOCAL_FILES_ONLY=true`, and set `VERSLINE_RAG_EMBEDDING_CACHE_DIR` or `VERSLINE_RAG_EMBEDDING_MODEL_PATH`.
+- **Intel CPU/iGPU acceleration (optimum-intel):** set `VERSLINE_RAG_EMBEDDING_PROVIDER=optimum-intel` and point `VERSLINE_RAG_EMBEDDING_MODEL_PATH` to a pre-exported OpenVINO IR directory (contains `openvino_model.xml`). Set `VERSLINE_RAG_EMBEDDING_DEVICE=CPU` or `GPU` for iGPU. On first run with a plain HF model directory the model is exported automatically (requires network access once).
 - **Offline sparse mode:** set `VERSLINE_RAG_SPARSE_EMBEDDING_LOCAL_FILES_ONLY=true` and point `VERSLINE_RAG_SPARSE_EMBEDDING_CACHE_DIR` or `VERSLINE_RAG_SPARSE_EMBEDDING_MODEL_PATH` to local artifacts.
+- **Hierarchical parent-child retrieval:** set `VERSLINE_RAG_PARENT_CHILD_ENABLED=true` to index parent+child chunks and retrieve child matches expanded to parent context for generation.
 - **Local rerank mode:** set `VERSLINE_RAG_RERANK_PROVIDER=local`. If `VERSLINE_RAG_RERANK_MODEL_PATH` (or `VERSLINE_RAG_RERANK_LOCAL_FILES_ONLY`) is set, Versline loads a local sentence-transformers CrossEncoder model from files; otherwise it uses an OpenAI-compatible endpoint (default `http://localhost:11434/v1`, placeholder API key `local` when empty).
+- **Intel CPU/iGPU reranker acceleration (optimum-intel):** set `VERSLINE_RAG_RERANK_PROVIDER=optimum-intel` and point `VERSLINE_RAG_RERANK_MODEL_PATH` to a pre-exported OpenVINO IR directory (contains `openvino_model.xml`). Uses `OVModelForSequenceClassification` directly (no inference-backend flag required). Set `VERSLINE_RAG_RERANK_DEVICE=CPU` or `GPU` for iGPU. On first run with a plain HF checkpoint the model is exported automatically (requires network access once).
 - **OpenVINO acceleration:** set `VERSLINE_RAG_EMBEDDING_INFERENCE_BACKEND=openvino` and/or `VERSLINE_RAG_RERANK_INFERENCE_BACKEND=openvino` to enable OpenVINO where the selected provider supports it (for local sentence-transformers embedding/rerank paths). The selected provider is preserved and is not auto-switched.
 - **Preflight in locked environments:** keep `VERSLINE_RAG_PREFLIGHT_ENABLED=true` and set `VERSLINE_RAG_PREFLIGHT_NETWORK=false` to validate config without outbound endpoint checks.
 
@@ -456,7 +490,7 @@ versline rag ask "main points" --collection my_docs --embedding-provider flagemb
 
 - Install minimum runtime dependencies in your environment:
     ```bash
-    pip install -U openvino optimum[openvino] sentence-transformers
+    pip install -U openvino 'optimum[openvino]' sentence-transformers numpy
     ```
 - Use a local sentence-transformers path for predictable OpenVINO runs:
     - `VERSLINE_RAG_EMBEDDING_PROVIDER=sentence-transformers`
@@ -468,13 +502,21 @@ versline rag ask "main points" --collection my_docs --embedding-provider flagemb
     - remove the model cache directory used by `VERSLINE_RAG_EMBEDDING_CACHE_DIR` / `VERSLINE_RAG_RERANK_CACHE_DIR`
     - rerun with network access one time, then switch back to local/offline mode
 - OpenVINO is a local inference runtime. It applies to sentence-transformers/local rerank paths and can also be used with FastEmbed (embedding and rerank) when ONNX providers are set to `OpenVINOExecutionProvider,CPUExecutionProvider`.
+- The `optimum-intel` provider uses `OVModelForFeatureExtraction` directly with mean-pooling. It operates independently of `embedding_inference_backend` and is best suited for Intel CPU/iGPU scenarios on pre-exported OpenVINO IR models. To export a model from HuggingFace:
+    ```bash
+    optimum-cli export openvino --model Qwen/Qwen3-Embedding-0.6B --task feature-extraction /models/Qwen3-Embedding-0.6B-OpenVINO
+    ```
+- To use `optimum-intel` for **reranking**, set `VERSLINE_RAG_RERANK_PROVIDER=optimum-intel`. Uses `OVModelForSequenceClassification` with sigmoid over the first logit. Export a cross-encoder model with:
+    ```bash
+    optimum-cli export openvino --model BAAI/bge-reranker-v2-m3 --task sequence-classification /models/bge-reranker-v2-m3-OpenVINO
+    ```
 - API-managed providers (`openai`, `cohere`, `jina`, `openrouter`, `avalai`) keep their own provider runtime.
 
 ### RAG Key Options (CLI)
 
 | Group | Main flags |
 | :--- | :--- |
-| Chunking/Ingest | `--vector-size`, `--chunk-size`, `--chunk-overlap`, `--ingestion-batch-size`, `--log-every-batches`, `--resume`, `--force` |
+| Chunking/Ingest | `--vector-size`, `--chunk-size`, `--chunk-overlap`, `--parent-child/--no-parent-child`, `--parent-chunk-size`, `--parent-chunk-overlap`, `--parent-child-fetch-k`, `--ingestion-batch-size`, `--log-every-batches`, `--resume`, `--force` |
 | Retrieval/Hybrid | `--top-k`, `--retrieve-fetch-k`, `--hybrid/--no-hybrid`, `--hybrid-dense-weight`, `--hybrid-lexical-weight` |
 | Dense backend | `--embedding-provider`, `--embedding-model`, `--embedding-model-path`, `--embedding-cache-dir`, `--embedding-local-files-only`, `--embedding-device`, `--embedding-use-fp16`, `--embedding-batch-size`, `--embedding-backend` |
 | Sparse backend | `--sparse-provider`, `--sparse-model`, `--sparse-model-path`, `--sparse-cache-dir`, `--sparse-local-files-only`, `--sparse-device`, `--sparse-use-fp16`, `--sparse-batch-size` |
