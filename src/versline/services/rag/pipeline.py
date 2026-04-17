@@ -29,6 +29,7 @@ from versline.services.rag.preprocessors import DEFAULT_EXTENSION_TO_INPUT_TYPE,
 from versline.services.rag.rerankers import CohereReranker, FastEmbedReranker, JinaReranker, OpenAICompatibleReranker, OptimumIntelReranker, SentenceTransformersReranker
 from versline.services.rag.registry import PreprocessorRegistry, VectorStoreRegistry
 from versline.services.rag.runtime import ProgressStateStore, RateLimiter, TokenRateLimiter
+from versline.services.rag.runtime import is_memory_pressure_error
 from versline.services.rag.vectorstores import QdrantVectorStore
 from versline.services.rag.websearch import build_default_web_search_registry
 
@@ -861,6 +862,14 @@ class RAGPipeline:
         else:
             self._active_store.upsert(collection_name, chunks=batch_chunks, vectors=dense_vectors)
 
+    @staticmethod
+    def _next_reduced_batch_size(current_batch_size: int) -> int:
+        if current_batch_size <= 1:
+            return 1
+        if current_batch_size <= 2:
+            return 1
+        return max(1, current_batch_size // 2)
+
     def _prepare_parent_child_chunks(self, documents: List[Any]) -> Tuple[List[Chunk], List[Chunk]]:
         if hasattr(self.chunker, "chunk_with_parents"):
             parent_chunks, child_chunks = self.chunker.chunk_with_parents(documents)
@@ -1071,29 +1080,54 @@ class RAGPipeline:
                         ),
                     )
 
-                for start in range(completed_parent, len(parent_chunks), batch_size):
-                    end = min(start + batch_size, len(parent_chunks))
-                    batch_chunks = parent_chunks[start:end]
-                    batch_number = (start // batch_size) + 1
-                    total_batches = (len(parent_chunks) + batch_size - 1) // batch_size
+                parent_start = completed_parent
+                parent_batch_size = batch_size
+                parent_batches_sent = 0
+                parent_success_streak = 0
+                while parent_start < len(parent_chunks):
+                    end = min(parent_start + parent_batch_size, len(parent_chunks))
+                    batch_chunks = parent_chunks[parent_start:end]
+                    parent_batches_sent += 1
+                    batch_number = parent_batches_sent
+                    total_batches = max(1, (len(parent_chunks) + batch_size - 1) // batch_size)
                     log_every = max(1, int(settings.rag.log_every_batches or 1))
                     if progress_callback:
                         progress_callback(
-                            file_index - 1 + (start / total_units),
+                            file_index - 1 + (parent_start / total_units),
                             len(files),
                             (
                                 f"Embedding parent chunks {file_path.name}: "
-                                f"batch {batch_number}/{max(1, total_batches)} (chunks {start + 1}-{end})"
+                                f"batch {batch_number}/{max(1, total_batches)} (chunks {parent_start + 1}-{end}, size={parent_batch_size})"
                             ),
                         )
                     if batch_number == 1 or batch_number % log_every == 0 or end == len(parent_chunks):
                         logger.info(
                             "Sending parent ingest batch "
                             f"{batch_number}/{max(1, total_batches)} for {file_path.name} "
-                            f"(chunks {start + 1}-{end} of {len(parent_chunks)})"
+                            f"(chunks {parent_start + 1}-{end} of {len(parent_chunks)}; batch_size={parent_batch_size})"
                         )
 
-                    self._upsert_chunk_batch(active_collection, batch_chunks)
+                    try:
+                        self._upsert_chunk_batch(active_collection, batch_chunks)
+                    except Exception as error:
+                        if is_memory_pressure_error(error) and parent_batch_size > 1:
+                            next_size = self._next_reduced_batch_size(parent_batch_size)
+                            logger.warning(
+                                "Parent ingest batch failed due to memory pressure; "
+                                f"reducing batch_size from {parent_batch_size} to {next_size}. Error: {error}"
+                            )
+                            parent_batch_size = next_size
+                            parent_success_streak = 0
+                            continue
+                        raise
+
+                    parent_success_streak += 1
+                    if parent_batch_size < batch_size and parent_success_streak >= 3:
+                        parent_batch_size = min(batch_size, parent_batch_size * 2)
+                        parent_success_streak = 0
+                        logger.info(
+                            f"Parent ingest batch size recovered to {parent_batch_size} for {file_path.name}"
+                        )
 
                     state["mode"] = "parent_child"
                     state["completed_parent_chunks"] = end
@@ -1104,13 +1138,20 @@ class RAGPipeline:
                     state["collection"] = active_collection
                     store.save(state)
 
-                for start in range(completed_child, len(chunks), batch_size):
-                    end = min(start + batch_size, len(chunks))
-                    batch_chunks = chunks[start:end]
-                    batch_number = (start // batch_size) + 1
-                    total_batches = (len(chunks) + batch_size - 1) // batch_size
+                    parent_start = end
+
+                child_start = completed_child
+                child_batch_size = batch_size
+                child_batches_sent = 0
+                child_success_streak = 0
+                while child_start < len(chunks):
+                    end = min(child_start + child_batch_size, len(chunks))
+                    batch_chunks = chunks[child_start:end]
+                    child_batches_sent += 1
+                    batch_number = child_batches_sent
+                    total_batches = max(1, (len(chunks) + batch_size - 1) // batch_size)
                     log_every = max(1, int(settings.rag.log_every_batches or 1))
-                    overall_start = len(parent_chunks) + start
+                    overall_start = len(parent_chunks) + child_start
                     overall_end = len(parent_chunks) + end
                     if progress_callback:
                         progress_callback(
@@ -1118,17 +1159,37 @@ class RAGPipeline:
                             len(files),
                             (
                                 f"Embedding child chunks {file_path.name}: "
-                                f"batch {batch_number}/{max(1, total_batches)} (chunks {start + 1}-{end})"
+                                f"batch {batch_number}/{max(1, total_batches)} (chunks {child_start + 1}-{end}, size={child_batch_size})"
                             ),
                         )
                     if batch_number == 1 or batch_number % log_every == 0 or end == len(chunks):
                         logger.info(
                             "Sending child ingest batch "
                             f"{batch_number}/{max(1, total_batches)} for {file_path.name} "
-                            f"(chunks {start + 1}-{end} of {len(chunks)})"
+                            f"(chunks {child_start + 1}-{end} of {len(chunks)}; batch_size={child_batch_size})"
                         )
 
-                    self._upsert_chunk_batch(active_collection, batch_chunks)
+                    try:
+                        self._upsert_chunk_batch(active_collection, batch_chunks)
+                    except Exception as error:
+                        if is_memory_pressure_error(error) and child_batch_size > 1:
+                            next_size = self._next_reduced_batch_size(child_batch_size)
+                            logger.warning(
+                                "Child ingest batch failed due to memory pressure; "
+                                f"reducing batch_size from {child_batch_size} to {next_size}. Error: {error}"
+                            )
+                            child_batch_size = next_size
+                            child_success_streak = 0
+                            continue
+                        raise
+
+                    child_success_streak += 1
+                    if child_batch_size < batch_size and child_success_streak >= 3:
+                        child_batch_size = min(batch_size, child_batch_size * 2)
+                        child_success_streak = 0
+                        logger.info(
+                            f"Child ingest batch size recovered to {child_batch_size} for {file_path.name}"
+                        )
 
                     state["mode"] = "parent_child"
                     state["completed_parent_chunks"] = len(parent_chunks)
@@ -1145,6 +1206,8 @@ class RAGPipeline:
                             len(files),
                             f"Indexing {file_path.name}: child {end}/{len(chunks)}",
                         )
+
+                    child_start = end
             else:
                 completed = int(state.get("completed_chunks", 0))
                 start_index = completed if resume else 0
@@ -1156,29 +1219,54 @@ class RAGPipeline:
                         f"Resuming {file_path.name}: {start_index}/{len(chunks)} chunks",
                     )
 
-                for start in range(start_index, len(chunks), batch_size):
-                    end = min(start + batch_size, len(chunks))
-                    batch_chunks = chunks[start:end]
-                    batch_number = (start // batch_size) + 1
-                    total_batches = (len(chunks) + batch_size - 1) // batch_size
+                current_start = start_index
+                current_batch_size = batch_size
+                batches_sent = 0
+                success_streak = 0
+                while current_start < len(chunks):
+                    end = min(current_start + current_batch_size, len(chunks))
+                    batch_chunks = chunks[current_start:end]
+                    batches_sent += 1
+                    batch_number = batches_sent
+                    total_batches = max(1, (len(chunks) + batch_size - 1) // batch_size)
                     log_every = max(1, int(settings.rag.log_every_batches or 1))
                     if progress_callback:
                         progress_callback(
-                            file_index - 1 + (start / max(1, len(chunks))),
+                            file_index - 1 + (current_start / max(1, len(chunks))),
                             len(files),
                             (
                                 f"Embedding {file_path.name}: batch {batch_number}/{total_batches} "
-                                f"(chunks {start + 1}-{end})"
+                                f"(chunks {current_start + 1}-{end}, size={current_batch_size})"
                             ),
                         )
                     if batch_number == 1 or batch_number % log_every == 0 or end == len(chunks):
                         logger.info(
                             "Sending ingest batch "
                             f"{batch_number}/{total_batches} for {file_path.name} "
-                            f"(chunks {start + 1}-{end} of {len(chunks)})"
+                            f"(chunks {current_start + 1}-{end} of {len(chunks)}; batch_size={current_batch_size})"
                         )
 
-                    self._upsert_chunk_batch(active_collection, batch_chunks)
+                    try:
+                        self._upsert_chunk_batch(active_collection, batch_chunks)
+                    except Exception as error:
+                        if is_memory_pressure_error(error) and current_batch_size > 1:
+                            next_size = self._next_reduced_batch_size(current_batch_size)
+                            logger.warning(
+                                "Ingest batch failed due to memory pressure; "
+                                f"reducing batch_size from {current_batch_size} to {next_size}. Error: {error}"
+                            )
+                            current_batch_size = next_size
+                            success_streak = 0
+                            continue
+                        raise
+
+                    success_streak += 1
+                    if current_batch_size < batch_size and success_streak >= 3:
+                        current_batch_size = min(batch_size, current_batch_size * 2)
+                        success_streak = 0
+                        logger.info(
+                            f"Ingest batch size recovered to {current_batch_size} for {file_path.name}"
+                        )
 
                     state["completed_chunks"] = end
                     state["total_chunks"] = len(chunks)
@@ -1192,6 +1280,8 @@ class RAGPipeline:
                             len(files),
                             f"Indexing {file_path.name}: {end}/{len(chunks)} chunks",
                         )
+
+                    current_start = end
 
             total_chunks += len(chunks)
             total_parent_chunks += len(parent_chunks)

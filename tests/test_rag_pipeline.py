@@ -44,6 +44,23 @@ class FakeEmbedder(BaseEmbedder):
         return [float(len(text)), 1.0]
 
 
+class OOMOnLargeBatchEmbedder(BaseEmbedder):
+    def __init__(self, fail_above: int = 2):
+        self.fail_above = fail_above
+        self.calls = 0
+        self.failures = 0
+
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        self.calls += 1
+        if len(texts) > self.fail_above:
+            self.failures += 1
+            raise RuntimeError("CUDA out of memory")
+        return [[float(len(item)), 1.0] for item in texts]
+
+    def embed_query(self, text: str) -> List[float]:
+        return [float(len(text)), 1.0]
+
+
 class FakeGenerator(BaseGenerator):
     def generate(self, query: str, context_chunks: List[RetrievedChunk], **kwargs) -> str:
         return f"answer:{query}:{len(context_chunks)}"
@@ -159,6 +176,7 @@ class TestRAGPipeline(unittest.TestCase):
         self.prev_parent_chunk_size = settings.rag.parent_chunk_size
         self.prev_parent_chunk_overlap = settings.rag.parent_chunk_overlap
         self.prev_parent_child_fetch_k = settings.rag.parent_child_fetch_k
+        self.prev_rerank_enabled = settings.rag.rerank_enabled
 
         settings.rag.state_directory = self.base_path / "state"
         settings.rag.ingestion_batch_size = 2
@@ -169,6 +187,7 @@ class TestRAGPipeline(unittest.TestCase):
         settings.rag.parent_chunk_size = 2400
         settings.rag.parent_chunk_overlap = 200
         settings.rag.parent_child_fetch_k = 12
+        settings.rag.rerank_enabled = False
 
     def tearDown(self):
         settings.rag.state_directory = self.prev_state_dir
@@ -180,9 +199,10 @@ class TestRAGPipeline(unittest.TestCase):
         settings.rag.parent_chunk_size = self.prev_parent_chunk_size
         settings.rag.parent_chunk_overlap = self.prev_parent_chunk_overlap
         settings.rag.parent_child_fetch_k = self.prev_parent_child_fetch_k
+        settings.rag.rerank_enabled = self.prev_rerank_enabled
         self.temp_dir.cleanup()
 
-    def _make_pipeline(self, store: FakeVectorStore, reranker=None) -> RAGPipeline:
+    def _make_pipeline(self, store: FakeVectorStore, reranker=None, embedder: BaseEmbedder | None = None) -> RAGPipeline:
         preprocessors = PreprocessorRegistry()
         preprocessors.register("markdown", FakePreprocessor())
 
@@ -191,7 +211,7 @@ class TestRAGPipeline(unittest.TestCase):
 
         return RAGPipeline(
             chunker=FakeChunker(),
-            embedder=FakeEmbedder(),
+            embedder=embedder or FakeEmbedder(),
             sparse_embedder=FakeSparseEmbedder(),
             reranker=reranker,
             generator=FakeGenerator(),
@@ -239,6 +259,21 @@ class TestRAGPipeline(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             pipeline.ingest_file(str(source_file), input_type="markdown")
+
+    def test_ingest_adapts_batch_size_after_memory_pressure(self):
+        source_file = self.base_path / "adaptive_oom.md"
+        source_file.write_text("a\nb\nc\nd\ne", encoding="utf-8")
+
+        store = FakeVectorStore()
+        oom_embedder = OOMOnLargeBatchEmbedder(fail_above=2)
+        pipeline = self._make_pipeline(store, embedder=oom_embedder)
+
+        settings.rag.ingestion_batch_size = 4
+        result = pipeline.ingest_file(str(source_file), input_type="markdown")
+
+        self.assertEqual(result["chunks"], 5)
+        self.assertGreaterEqual(oom_embedder.failures, 1)
+        self.assertGreaterEqual(store.upsert_calls, 2)
 
     def test_resume_after_interruption(self):
         source_file = self.base_path / "resume.md"

@@ -182,6 +182,26 @@ def retry_call(
     raise last_error
 
 
+def is_memory_pressure_error(error: BaseException) -> bool:
+    if isinstance(error, MemoryError):
+        return True
+
+    text = str(error or "").strip().lower()
+    if not text:
+        return False
+
+    markers = (
+        "out of memory",
+        "oom",
+        "cuda out of memory",
+        "cannot allocate memory",
+        "std::bad_alloc",
+        "insufficient memory",
+        "memory limit",
+    )
+    return any(marker in text for marker in markers)
+
+
 class ProgressStateStore:
     def __init__(self, state_file: Path):
         self.state_file = state_file

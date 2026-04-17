@@ -1,6 +1,7 @@
 import typer
 from loguru import logger
 import sys
+import os
 from pathlib import Path
 from typing import Optional
 from versline.config import settings, reload_settings
@@ -47,6 +48,16 @@ def main(
     """
     if env_file is not None:
         reload_settings(env_file=env_file)
+
+    # OpenVINO/HF model init during rag ingest can trigger short-lived memory
+    # spikes. Use a less aggressive soft trigger by default, while still
+    # allowing users to override both knobs explicitly via environment.
+    _argv = sys.argv[1:]
+    if any(
+        _argv[i] == "rag" and i + 1 < len(_argv) and _argv[i + 1] == "ingest"
+        for i in range(len(_argv))
+    ):
+        os.environ.setdefault("VERSLINE_RESOURCE_RAM_SOFT_TRIGGER_PCT", "95")
 
     configure_logging(verbose)
     apply_resource_limits(

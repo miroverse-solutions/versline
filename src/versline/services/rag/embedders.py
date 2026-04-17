@@ -21,6 +21,23 @@ from versline.services.rag.runtime import (
 )
 
 
+def _normalize_torch_device(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    normalized = str(value).strip().lower()
+    if not normalized:
+        return None
+    if normalized in {"cpu", "xpu", "mps"}:
+        return normalized
+    if normalized in {"gpu", "cuda"}:
+        return "cuda"
+    if normalized.startswith("gpu:"):
+        return "cuda:" + normalized.split(":", 1)[1]
+    if normalized.startswith("cuda:"):
+        return normalized
+    return normalized
+
+
 class OpenAICompatibleEmbedder(BaseEmbedder):
     def __init__(
         self,
@@ -242,7 +259,7 @@ class SentenceTransformersDenseEmbedder(BaseEmbedder):
         self.model_path = model_path if model_path is not None else settings.rag.embedding_model_path
         configured_local_only = settings.rag.embedding_local_files_only if local_files_only is None else bool(local_files_only)
         self.local_files_only = True if self.cache_dir else configured_local_only
-        self.device = device if device is not None else settings.rag.embedding_device
+        self.device = _normalize_torch_device(device if device is not None else settings.rag.embedding_device)
         self.batch_size = max(1, int(batch_size if batch_size is not None else settings.rag.embedding_batch_size))
         self.inference_backend = (inference_backend if inference_backend is not None else settings.rag.embedding_inference_backend or "auto").lower()
 
@@ -315,7 +332,7 @@ class FlagEmbeddingDenseEmbedder(BaseEmbedder):
         configured_local_only = settings.rag.embedding_local_files_only if local_files_only is None else bool(local_files_only)
         self.local_files_only = True if self.cache_dir else configured_local_only
         self.use_fp16 = settings.rag.embedding_use_fp16 if use_fp16 is None else bool(use_fp16)
-        self.device = device if device is not None else settings.rag.embedding_device
+        self.device = _normalize_torch_device(device if device is not None else settings.rag.embedding_device)
         self.batch_size = max(1, int(batch_size if batch_size is not None else settings.rag.embedding_batch_size))
 
         try:

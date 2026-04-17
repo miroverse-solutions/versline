@@ -3,7 +3,13 @@ import time
 import unittest
 from unittest.mock import patch
 
-from versline.services.rag.runtime import TokenRateLimiter, RateLimiter, retry_call, scoped_proxy
+from versline.services.rag.runtime import (
+    TokenRateLimiter,
+    RateLimiter,
+    is_memory_pressure_error,
+    retry_call,
+    scoped_proxy,
+)
 
 
 class TestRAGRuntime(unittest.TestCase):
@@ -73,6 +79,14 @@ class TestRAGRuntime(unittest.TestCase):
         reservation_id = limiter.reserve(20)
         limiter.finalize(reservation_id, actual_tokens=35, mode="estimate_only")
         self.assertEqual(limiter._window_total, 20)
+
+    def test_is_memory_pressure_error_detects_known_markers(self):
+        self.assertTrue(is_memory_pressure_error(MemoryError("no memory")))
+        self.assertTrue(is_memory_pressure_error(RuntimeError("CUDA out of memory")))
+        self.assertTrue(is_memory_pressure_error(RuntimeError("std::bad_alloc")))
+
+    def test_is_memory_pressure_error_ignores_unrelated_errors(self):
+        self.assertFalse(is_memory_pressure_error(RuntimeError("network timeout")))
 
 
 if __name__ == "__main__":

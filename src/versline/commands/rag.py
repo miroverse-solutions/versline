@@ -6,6 +6,7 @@ from loguru import logger
 from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn
 
 from versline.config import settings
+from versline.services.rag.tuning import tune_ingest_settings
 from versline.services.pricing import print_cost_report
 
 app = typer.Typer(help="RAG ingestion, retrieval, and generation.")
@@ -315,6 +316,8 @@ def ingest(
     embedding_use_fp16: Optional[bool] = typer.Option(None, "--embedding-use-fp16/--no-embedding-use-fp16", help="Use fp16 for dense local backends when supported"),
     embedding_device: Optional[str] = typer.Option(None, "--embedding-device", help="Dense embedding device (cpu/cuda)"),
     embedding_batch_size: Optional[int] = typer.Option(None, "--embedding-batch-size", help="Dense embedding batch size"),
+    auto_tune: Optional[bool] = typer.Option(None, "--auto-tune/--no-auto-tune", help="Auto-tune ingest resource knobs based on provider and available RAM"),
+    low_memory: Optional[bool] = typer.Option(None, "--low-memory/--no-low-memory", help="Conservative ingest profile for low-RAM systems (forces cpu + smaller batches unless explicitly overridden)"),
     embedding_inference_backend: Optional[str] = typer.Option(None, "--embedding-backend", help="Dense embedding inference backend: auto or openvino"),
     openvino_cache_dir: Optional[str] = typer.Option(None, "--openvino-cache-dir", help="Cache directory for OpenVINO compiled artifacts"),
     embedding_timeout_seconds: Optional[float] = typer.Option(None, "--embedding-timeout", help="Embedding timeout seconds"),
@@ -353,6 +356,7 @@ def ingest(
     qdrant_proxy: Optional[str] = typer.Option(None, "--qdrant-proxy", help="Proxy used only for Qdrant"),
     qdrant_url: Optional[str] = typer.Option(None, "--qdrant-url", help="Qdrant URL"),
     qdrant_api_key: Optional[str] = typer.Option(None, "--qdrant-api-key", help="Qdrant API key"),
+    hybrid: Optional[bool] = typer.Option(None, "--hybrid/--no-hybrid", help="Enable sparse+dense hybrid indexing during ingest"),
     embedding_rpm: Optional[int] = typer.Option(None, "--embedding-rpm", help="Rate limit for embeddings (req/min)"),
     embedding_tpm: Optional[int] = typer.Option(None, "--embedding-tpm", help="Token limit for embeddings (tokens/min)"),
     generation_rpm: Optional[int] = typer.Option(None, "--generation-rpm", help="Rate limit for generation (req/min)"),
@@ -399,10 +403,59 @@ def ingest(
     web_search_proxy: Optional[str] = typer.Option(None, "--web-search-proxy", help="Proxy used only for web search"),
     web_search_max_context_chars: Optional[int] = typer.Option(None, "--web-search-max-context-chars", help="Max chars from web search context"),
     web_search_rpm: Optional[int] = typer.Option(None, "--web-search-rpm", help="Rate limit for web search (req/min)"),
-    preflight: bool = typer.Option(True, "--preflight/--no-preflight", help="Validate RAG settings before execution"),
-    preflight_network: bool = typer.Option(True, "--preflight-network/--no-preflight-network", help="Check Qdrant/WebSearch endpoints in preflight"),
+    preflight: Optional[bool] = typer.Option(None, "--preflight/--no-preflight", help="Validate RAG settings before execution"),
+    preflight_network: Optional[bool] = typer.Option(None, "--preflight-network/--no-preflight-network", help="Check Qdrant/WebSearch endpoints in preflight"),
 ):
     from versline.services.rag import RAGPipeline
+
+    if rerank:
+        logger.warning(
+            "--rerank is ignored for ingest because reranking is only used in retrieval/generation paths."
+        )
+
+    effective_auto_tune = settings.rag.auto_tune if auto_tune is None else bool(auto_tune)
+    effective_low_memory = settings.rag.low_memory if low_memory is None else bool(low_memory)
+    effective_preflight = settings.rag.preflight_enabled if preflight is None else bool(preflight)
+    effective_preflight_network = settings.rag.preflight_network if preflight_network is None else bool(preflight_network)
+    effective_hybrid = settings.rag.hybrid_enabled if hybrid is None else bool(hybrid)
+    if effective_low_memory and hybrid is None and effective_hybrid:
+        effective_hybrid = False
+        logger.info(
+            "Low-memory mode auto-disabled hybrid sparse indexing to reduce model memory footprint. "
+            "Use --hybrid to force-enable it."
+        )
+
+    tuning_provider = embedding_provider or settings.rag.embedding_provider
+    tuning_embedding_device = embedding_device if embedding_device is not None else settings.rag.embedding_device
+    tuning_embedding_batch_size = (
+        embedding_batch_size if embedding_batch_size is not None else settings.rag.embedding_batch_size
+    )
+    tuning_ingestion_batch_size = (
+        ingestion_batch_size if ingestion_batch_size is not None else settings.rag.ingestion_batch_size
+    )
+
+    tuning_decision = tune_ingest_settings(
+        auto_tune=effective_auto_tune,
+        low_memory=effective_low_memory,
+        embedding_provider=tuning_provider,
+        embedding_device=tuning_embedding_device,
+        embedding_device_explicit=embedding_device is not None,
+        embedding_batch_size=tuning_embedding_batch_size,
+        ingestion_batch_size=tuning_ingestion_batch_size,
+        max_ram_mb=settings.resource.max_ram_mb,
+    )
+    embedding_device = tuning_decision.embedding_device
+    embedding_batch_size = tuning_decision.embedding_batch_size
+    ingestion_batch_size = tuning_decision.ingestion_batch_size
+
+    if effective_auto_tune or effective_low_memory:
+        logger.info(
+            "Ingest tuning applied: "
+            f"profile={tuning_decision.profile}, "
+            f"embedding_device={embedding_device}, "
+            f"embedding_batch_size={embedding_batch_size}, "
+            f"ingestion_batch_size={ingestion_batch_size}"
+        )
 
     _apply_llm_overrides(provider, model, api_key, api_endpoint, proxy)
     _apply_rag_overrides(
@@ -436,8 +489,8 @@ def ingest(
         qdrant_timeout_seconds=qdrant_timeout_seconds,
         rerank_timeout_seconds=rerank_timeout_seconds,
         log_every_batches=log_every_batches,
-        preflight_enabled=preflight,
-        preflight_network=preflight_network,
+        preflight_enabled=effective_preflight,
+        preflight_network=effective_preflight_network,
         embedding_proxy=embedding_proxy,
         sparse_embedding_proxy=sparse_proxy,
         sparse_embedding_cache_dir=sparse_cache_dir,
@@ -457,9 +510,9 @@ def ingest(
         retry_max_retries=retry_max_retries,
         retry_base_delay_seconds=retry_base_delay_seconds,
         retry_max_delay_seconds=retry_max_delay_seconds,
-        hybrid=None,
+        hybrid=effective_hybrid,
         sparse_model=sparse_model,
-        rerank_enabled=rerank,
+        rerank_enabled=False,
         rerank_provider=rerank_provider,
         rerank_model=rerank_model,
         rerank_api_key=rerank_api_key,

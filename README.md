@@ -244,6 +244,11 @@ VERSLINE_RESOURCE_MAX_CPU_CORES=0
 # Maximum GPU VRAM fraction per device (0.0 = unlimited, e.g. 0.8 = 80%).
 # Requires PyTorch with CUDA support.
 VERSLINE_RESOURCE_MAX_GPU_VRAM_FRACTION=0.0
+# Soft watchdog trigger percent for RAM cap (50..100). Default 85.
+# Example: 95 means SIGTERM only near the hard cap.
+VERSLINE_RESOURCE_RAM_SOFT_TRIGGER_PCT=85
+# Run RSS watchdog even when cgroup hard limit is active. Default false.
+VERSLINE_RESOURCE_RUN_WATCHDOG_WITH_CGROUP=false
 ```
 
 
@@ -272,11 +277,16 @@ All three default to `0` / `0.0` which means **unlimited** — no limit is appli
 
 | Limit | Mechanism | Platform |
 | :--- | :--- | :--- |
-| `MAX_RAM_MB` | `resource.setrlimit(RLIMIT_AS, ...)` — caps virtual address space | Linux only |
+| `MAX_RAM_MB` | **Primary:** writes to cgroup v2 `memory.max` (kernel-enforced, fires on allocation). **Fallback:** RSS watchdog thread polls `/proc/self/status` every 0.5 s and sends `SIGTERM` at `VERSLINE_RESOURCE_RAM_SOFT_TRIGGER_PCT` (default 85 %). | Linux only |
 | `MAX_CPU_CORES` | `os.sched_setaffinity(0, {0..N-1})` — pins process to first N cores | Linux / most POSIX |
 | `MAX_GPU_VRAM_FRACTION` | `torch.cuda.set_per_process_memory_fraction(f, device)` | PyTorch + CUDA only |
 
-> **RAM note:** `RLIMIT_AS` limits the entire virtual address space, not just RSS. Set this value with headroom (e.g. at least 2× peak RSS) to avoid spurious `MemoryError` during memory-mapped operations.
+> **RAM note:** The primary mechanism writes the limit to the process's own **cgroup v2 `memory.max`** file. This is enforced synchronously by the kernel on every allocation, so even a sudden spike during model export or OpenVINO conversion is caught immediately — unlike a polling watchdog. If the cgroup file is not writable (e.g. in non-systemd or container environments), a fallback RSS watchdog thread is started instead.
+> 
+> The watchdog trigger can be tuned with `VERSLINE_RESOURCE_RAM_SOFT_TRIGGER_PCT` (range `50..100`, default `85`).
+> Example: set `95` to reduce early terminations for model init spikes while still retaining a safety margin.
+> 
+> When cgroup hard limit is active, watchdog is disabled by default to avoid premature soft-kill during init spikes. Set `VERSLINE_RESOURCE_RUN_WATCHDOG_WITH_CGROUP=true` to enable both layers.
 
 > **GPU note:** This limit only affects local model inference (sentence-transformers, FastEmbed with CUDA, etc.). API-managed providers (OpenAI, Cohere, etc.) are unaffected.
 

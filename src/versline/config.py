@@ -64,6 +64,8 @@ class RAGSettings(BaseSettings):
     parent_child_fetch_k: int = Field(default=48, description="Child candidates fetched for parent-child retrieval expansion")
     log_every_batches: int = Field(default=1, description="Emit ingest logs every N batches")
     ingestion_batch_size: int = Field(default=32, description="Batch size for embedding/upsert during ingestion")
+    auto_tune: bool = Field(default=True, description="Enable smart RAG auto tuning by default")
+    low_memory: bool = Field(default=False, description="Enable conservative low-memory RAG profile by default")
     retrieve_fetch_k: int = Field(default=24, description="Dense candidates fetched before hybrid rerank")
     hybrid_enabled: bool = Field(default=True, description="Enable hybrid retrieval reranking")
     sparse_embedding_model: str = Field(
@@ -220,6 +222,9 @@ def reload_settings(env_file: Optional[Path] = None, *, override_env: bool = Tru
     settings.llm = refreshed_settings.llm
     settings.ffmpeg = refreshed_settings.ffmpeg
     settings.rag = refreshed_settings.rag
+    settings.resource = refreshed_settings.resource
     settings.output_directory = refreshed_settings.output_directory
     settings.temp_directory = refreshed_settings.temp_directory
     return settings
+
+
