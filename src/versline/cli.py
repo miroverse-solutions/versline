@@ -8,6 +8,84 @@ from versline.config import settings, reload_settings
 from versline.commands import transcribe, translate, qude, qualcode, rag
 from versline.core.resources import apply_resource_limits
 
+
+_LOCAL_RAG_PROVIDERS = {
+    "fastembed",
+    "flagembedding",
+    "local",
+    "openvino",
+    "optimum",
+    "optimum-intel",
+    "optimum_intel",
+    "sentence",
+    "sentence-transformers",
+    "sentence_transformer",
+    "sentence_transformers",
+    "sentencetransformer",
+    "sentencetransformers",
+}
+
+
+def _normalize_provider(value: Optional[str]) -> str:
+    return str(value or "").strip().lower()
+
+
+def _extract_cli_option_value(argv: list[str], option_name: str) -> Optional[str]:
+    option_prefix = f"{option_name}="
+    value: Optional[str] = None
+    for idx, token in enumerate(argv):
+        if token.startswith(option_prefix):
+            value = token[len(option_prefix):]
+            continue
+        if token == option_name and idx + 1 < len(argv):
+            candidate = argv[idx + 1]
+            if not candidate.startswith("-"):
+                value = candidate
+    return value
+
+
+def _is_local_provider(provider: Optional[str]) -> bool:
+    return _normalize_provider(provider) in _LOCAL_RAG_PROVIDERS
+
+
+def _is_rag_local_execution(argv: list[str]) -> bool:
+    try:
+        rag_index = argv.index("rag")
+    except ValueError:
+        return False
+
+    subcommand: Optional[str] = None
+    if rag_index + 1 < len(argv):
+        candidate = argv[rag_index + 1]
+        if not candidate.startswith("-"):
+            subcommand = candidate
+
+    embedding_provider = _extract_cli_option_value(argv, "--embedding-provider")
+    effective_embedding_provider = embedding_provider or settings.rag.embedding_provider
+    has_local_embedding = _is_local_provider(effective_embedding_provider)
+
+    if subcommand == "ingest":
+        return has_local_embedding
+
+    rerank_provider = _extract_cli_option_value(argv, "--rerank-provider")
+    effective_rerank_provider = rerank_provider or settings.rag.rerank_provider
+
+    rerank_enabled = settings.rag.rerank_enabled
+    if "--rerank" in argv:
+        rerank_enabled = True
+    if "--no-rerank" in argv:
+        rerank_enabled = False
+
+    has_local_rerank = rerank_enabled and _is_local_provider(effective_rerank_provider)
+    return has_local_embedding or has_local_rerank
+
+
+def _is_rag_ingest(argv: list[str]) -> bool:
+    return any(
+        argv[i] == "rag" and i + 1 < len(argv) and argv[i + 1] == "ingest"
+        for i in range(len(argv))
+    )
+
 app = typer.Typer(
     name="versline",
     help="[bold green]Miroverse Toolkit[/bold green] CLI and Library for [yellow]Media Transcription, Document Translation, and Question Generation using LLMs.",
@@ -49,22 +127,22 @@ def main(
     if env_file is not None:
         reload_settings(env_file=env_file)
 
-    # OpenVINO/HF model init during rag ingest can trigger short-lived memory
-    # spikes. Use a less aggressive soft trigger by default, while still
-    # allowing users to override both knobs explicitly via environment.
     _argv = sys.argv[1:]
-    if any(
-        _argv[i] == "rag" and i + 1 < len(_argv) and _argv[i + 1] == "ingest"
-        for i in range(len(_argv))
-    ):
+    should_apply_limits = _is_rag_local_execution(_argv)
+
+    # OpenVINO/HF model init during local rag ingest can trigger short-lived
+    # memory spikes. Use a less aggressive soft trigger by default, while still
+    # allowing users to override both knobs explicitly via environment.
+    if should_apply_limits and _is_rag_ingest(_argv):
         os.environ.setdefault("VERSLINE_RESOURCE_RAM_SOFT_TRIGGER_PCT", "95")
 
     configure_logging(verbose)
-    apply_resource_limits(
-        max_ram_mb=settings.resource.max_ram_mb,
-        max_cpu_cores=settings.resource.max_cpu_cores,
-        max_gpu_vram_fraction=settings.resource.max_gpu_vram_fraction,
-    )
+    if should_apply_limits:
+        apply_resource_limits(
+            max_ram_mb=settings.resource.max_ram_mb,
+            max_cpu_cores=settings.resource.max_cpu_cores,
+            max_gpu_vram_fraction=settings.resource.max_gpu_vram_fraction,
+        )
     # logger.debug(f"Loaded settings: {settings.model_dump()}")
 
 def configure_logging(verbose: bool):

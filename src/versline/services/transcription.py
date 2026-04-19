@@ -23,6 +23,39 @@ class AudioTranscriber:
             self.transcription_prompt = ""
         # self.json_prompt = ... # handled if needed
 
+    def _resolve_provider_name(self) -> str:
+        raw_provider = (
+            settings.llm.provider
+            or os.getenv("VERSLINE_LLM_PROVIDER")
+            or "google"
+        )
+        normalized = str(raw_provider).strip().lower()
+        aliases = {
+            "google": "gemini",
+            "openai-compatible": "openaicompatible",
+            "openai_compatible": "openaicompatible",
+            "custom": "openaicompatible",
+        }
+        return aliases.get(normalized, normalized)
+
+    def _build_avalai_extra_body(self, model_name: str) -> dict | None:
+        explicit_provider = (
+            (settings.llm.avalai_provider if hasattr(settings.llm, "avalai_provider") else None)
+            or os.getenv("VERSLINE_LLM_AVALAI_PROVIDER")
+            or os.getenv("VERSLINE_AVALAI_PROVIDER")
+        )
+        if explicit_provider:
+            return {"provider": str(explicit_provider).strip().lower()}
+
+        model = str(model_name or "").strip().lower()
+        if model.startswith("gemini"):
+            return {"provider": "google"}
+        if model.startswith("claude"):
+            return {"provider": "anthropic"}
+        if model.startswith(("gpt", "o1", "o3", "text-embedding", "whisper")):
+            return {"provider": "openai"}
+        return None
+
     def extract_speaker_samples(self, text, sample_length=200):
         if not text:
             return {}
@@ -125,39 +158,41 @@ class AudioTranscriber:
     def transcribe_chunk_with_retry(self, model_name, audio_path, prompt, max_retries=3):
         for attempt in range(max_retries):
             try:
-                # Assuming provider selection logic based on settings
-                provider = settings.llm.provider.lower() if settings.llm.provider else "google" # Default to google if none?
-                # Actually settings has a default, but let's be safe.
-                # settings.llm.provider defaults to "Google" in config.py.
+                provider = self._resolve_provider_name()
                 
                 logger.info(f"Processing chunk with {provider} (attempt {attempt+1}/{max_retries})")
                 
                 result = None
-                if provider == "google":
+                if provider == "gemini":
                     client = ai.configure_gemini(settings.llm)
                     result = self.transcribe_audio_chunk_by_gemini(client, model_name, audio_path, prompt)
                 elif provider == "openai": # OpenAI
                     client = ai.configure_openai(settings.llm)
-                    result = self.transcribe_audio_chunk_by_openaicompatible(client, model_name, audio_path, prompt)
+                    result = self.transcribe_audio_chunk_by_openaicompatible(client, model_name, audio_path, prompt, provider=provider)
                 elif provider == "avalai":
                     # Temporarily set endpoint for AvalAI
                     original_endpoint = settings.llm.api_endpoint
                     settings.llm.api_endpoint = "https://api.avalai.ir/v1"
                     try:
                         client = ai.configure_openai(settings.llm)
-                        result = self.transcribe_audio_chunk_by_openaicompatible(client, model_name, audio_path, prompt)
+                        result = self.transcribe_audio_chunk_by_openaicompatible(client, model_name, audio_path, prompt, provider=provider)
                     finally:
                         settings.llm.api_endpoint = original_endpoint
                 elif provider == "openaicompatible":
                     client = ai.configure_openai(settings.llm)
-                    result = self.transcribe_audio_chunk_by_openaicompatible(client, model_name, audio_path, prompt)
+                    result = self.transcribe_audio_chunk_by_openaicompatible(client, model_name, audio_path, prompt, provider=provider)
                 elif provider == "openrouter":
-                    client = ai.configure_openrouter(settings.llm)
-                    result = self.transcribe_audio_chunk_by_openaicompatible(client, model_name, audio_path, prompt, mode="responses") # OpenRouter often supports standard chat
+                    original_endpoint = settings.llm.api_endpoint
+                    settings.llm.api_endpoint = "https://openrouter.ai/api/v1"
+                    try:
+                        client = ai.configure_openai(settings.llm)
+                        result = self.transcribe_audio_chunk_by_openaicompatible(client, model_name, audio_path, prompt, provider=provider, mode="responses") # OpenRouter often supports standard chat
+                    finally:
+                        settings.llm.api_endpoint = original_endpoint
                 else:
                      logger.warning(f"Unknown provider {provider}, trying OpenAI Compatible default")
                      client = ai.configure_openai(settings.llm)
-                     result = self.transcribe_audio_chunk_by_openaicompatible(client, model_name, audio_path, prompt)
+                     result = self.transcribe_audio_chunk_by_openaicompatible(client, model_name, audio_path, prompt, provider=provider)
 
                 if result and result.strip():
                     return result
@@ -206,7 +241,7 @@ class AudioTranscriber:
             logger.error(f"Gemini Error: {e}")
             raise
 
-    def transcribe_audio_chunk_by_openaicompatible(self, client, model_name, audio_path, prompt, mode="input_audio"):
+    def transcribe_audio_chunk_by_openaicompatible(self, client, model_name, audio_path, prompt, provider="openai", mode="input_audio"):
         # Implementation of OpenAI Audio/Multimodal
         # ... (Refer to old code logic)
         try:
@@ -237,18 +272,27 @@ class AudioTranscriber:
             ]
             
             is_avalai = (
-                self.provider == "avalai"
+                provider == "avalai"
                 or (hasattr(client, "base_url") and ("avalai.ir" in str(client.base_url) or "avalapis.ir" in str(client.base_url)))
             )
+
+            create_kwargs = {
+                "model": model_name,
+                "messages": messages,
+            }
+            if is_avalai:
+                avalai_extra_body = self._build_avalai_extra_body(model_name)
+                if avalai_extra_body:
+                    create_kwargs["extra_body"] = avalai_extra_body
             
             if is_avalai and hasattr(client.chat.completions, 'with_raw_response'):
-                response_raw = client.chat.completions.with_raw_response.create(model=model_name, messages=messages)
+                response_raw = client.chat.completions.with_raw_response.create(**create_kwargs)
                 request_id = response_raw.headers.get("x-request-id")
                 if request_id:
                     self.tracker.add_avalai_request(request_id)
                 completion = response_raw.parse()
             else:
-                completion = client.chat.completions.create(model=model_name, messages=messages)
+                completion = client.chat.completions.create(**create_kwargs)
             
             if completion.usage:
                 self.tracker.add_usage(

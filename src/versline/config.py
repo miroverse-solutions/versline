@@ -15,6 +15,14 @@ class LLMSettings(BaseSettings):
     model: str = Field(default="gemini-2.0-flash", description="LLM Model")
     api_endpoint: Optional[str] = Field(default=None, description="Custom API Endpoint")
     proxy: Optional[str] = Field(default=None, description="Proxy URL")
+    avalai_provider: Optional[str] = Field(
+        default=None,
+        description="Optional AvalAI upstream provider hint (e.g. google, openai, anthropic)",
+    )
+    avalai_user_api_key: Optional[str] = Field(
+        default=None,
+        description="Optional AvalAI User API key used for exact transaction cost lookup",
+    )
 
     model_config = SettingsConfigDict(env_prefix='VERSLINE_LLM_', env_file='.env', extra='ignore')
 
