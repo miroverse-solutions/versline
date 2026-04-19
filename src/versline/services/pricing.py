@@ -140,13 +140,9 @@ def print_cost_report(
     table.add_row("Total Input Tokens", f"{tracker.total_input_tokens:,}")
     table.add_row("Total Output Tokens", f"{tracker.total_output_tokens:,}")
     
-    # AvalAI Exact Lookup
-    lookup_api_key = (
-        settings.llm.avalai_user_api_key
-        or os.getenv("VERSLINE_LLM_AVALAI_USER_API_KEY")
-        or os.getenv("VERSLINE_AVALAI_USER_API_KEY")
-        or api_key
-    )
+    # AvalAI exact lookup is performed against User API transaction endpoint
+    # using tracked x-request-id values from model calls.
+    lookup_api_key = api_key or settings.llm.api_key
     lookup_proxy = proxy or settings.llm.proxy or os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY")
 
     if tracker.avalai_request_ids and lookup_api_key:

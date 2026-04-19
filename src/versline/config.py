@@ -19,10 +19,6 @@ class LLMSettings(BaseSettings):
         default=None,
         description="Optional AvalAI upstream provider hint (e.g. google, openai, anthropic)",
     )
-    avalai_user_api_key: Optional[str] = Field(
-        default=None,
-        description="Optional AvalAI User API key used for exact transaction cost lookup",
-    )
 
     model_config = SettingsConfigDict(env_prefix='VERSLINE_LLM_', env_file='.env', extra='ignore')
 

@@ -116,9 +116,6 @@ VERSLINE_LLM_API_ENDPOINT=
 # Optional: AvalAI upstream provider hint (e.g. google/openai/anthropic)
 # Useful when model id alone is ambiguous for AvalAI routing.
 VERSLINE_LLM_AVALAI_PROVIDER=
-# Optional: AvalAI User API key for exact cost lookup endpoint
-# (/user/v1/transactions/lookup). If empty, VERSLINE_LLM_API_KEY is used.
-VERSLINE_LLM_AVALAI_USER_API_KEY=
 
 # --- RAG configuration ---
 VERSLINE_RAG_VECTOR_BACKEND=qdrant
@@ -260,9 +257,9 @@ VERSLINE_RESOURCE_RUN_WATCHDOG_WITH_CGROUP=false
 ### AvalAI Notes
 
 - For `VERSLINE_LLM_PROVIDER=AvalAI` with Gemini model IDs (for example `gemini-3-flash-preview`), Versline auto-sends provider hint `google` to AvalAI. You can override explicitly with `VERSLINE_LLM_AVALAI_PROVIDER`.
-- Exact AvalAI cost lookup uses the User API endpoint (`/user/v1/transactions/lookup`).
+- Exact AvalAI cost lookup uses the User API endpoint (`/user/v1/transactions/lookup`) and tracked `x-request-id` values from API responses.
 - In restricted networks, set `VERSLINE_LLM_PROXY` so cost lookup can reach AvalAI.
-- If your User API key is different from your LLM API key, set `VERSLINE_LLM_AVALAI_USER_API_KEY`.
+- Cost lookup uses the same `VERSLINE_LLM_API_KEY` (there is no separate key variable for User API in Versline config).
 
 
 ## ⚡ Resource Limits
@@ -348,7 +345,6 @@ versline transcribe [OPTIONS] FILE_PATH
 
 AvalAI-specific env options (applies to all commands that use LLM settings):
 - `VERSLINE_LLM_AVALAI_PROVIDER`: Upstream provider hint for AvalAI routing (for example `google`, `openai`, `anthropic`).
-- `VERSLINE_LLM_AVALAI_USER_API_KEY`: User API key used for exact cost lookup endpoint (`/user/v1/transactions/lookup`).
 - `VERSLINE_LLM_PROXY`: Proxy used for model calls and AvalAI cost lookup in restricted networks.
 
 ---
@@ -735,7 +731,6 @@ settings.llm.api_key = "YOUR_API_KEY"
 settings.llm.model = "gpt-4o-mini"
 # Optional AvalAI routing/cost settings
 settings.llm.avalai_provider = "openai"  # e.g. google/openai/anthropic
-settings.llm.avalai_user_api_key = "YOUR_AVALAI_USER_API_KEY"
 
 # Optional proxy for API calls and cost lookup
 settings.llm.proxy = "socks5://127.0.0.1:10808"
