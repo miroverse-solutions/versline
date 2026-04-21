@@ -45,6 +45,7 @@ def qualcode_file(
     formats: List[str] = typer.Option(["json", "markdown"], "--format", help="Output formats (repeatable): json, markdown, csv, segments-csv, detailed-csv"),
     codes: List[str] = typer.Option([], "--code", help="Seed codebook item (repeatable)"),
     codebook: Optional[Path] = typer.Option(None, "--codebook", help="Path to codebook file (.txt, .md, .csv, .json)"),
+    central_concepts: Optional[Path] = typer.Option(None, "--central-concepts", help="Path to central concepts file (.md, .markdown, .txt)", exists=True),
     code_mode: str = typer.Option("guided", "--code-mode", help="Codebook policy: guided or strict"),
     analysis_language: str = typer.Option("auto", "--analysis-language", help="Language for analytic fields: auto, fa, en"),
     fail_on_parse_error: bool = typer.Option(False, "--fail-on-parse-error", help="Fail command if any batch JSON parse fails"),
@@ -98,6 +99,7 @@ def qualcode_file(
             include_citation=citation,
             words_per_batch=words_per_batch,
             force=force,
+            central_concepts_path=str(central_concepts) if central_concepts else None,
         )
 
         with Progress(

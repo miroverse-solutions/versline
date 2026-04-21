@@ -26,6 +26,8 @@ METHOD_PROMPTS = {
     "colaizzi": "qual_colaizzi_prompt.md",
 }
 
+CENTRAL_CONCEPTS_UPDATE_PROMPT = "qual_central_concepts_update_prompt.md"
+
 
 class QualitativeCoder:
     def __init__(
@@ -42,6 +44,7 @@ class QualitativeCoder:
         csv_fill_quotes_from_segments: bool = True,
         export_excel: bool = True,
         force: bool = False,
+        central_concepts_path: Optional[str] = None,
     ):
         self.tracker = TokenTracker()
         self.output_dir = Path(output_dir)
@@ -69,6 +72,13 @@ class QualitativeCoder:
         self.method_prompts = {
             method: load_prompt(METHOD_PROMPTS[method]) for method in self.methods
         }
+        self.central_concepts_update_prompt = load_prompt(CENTRAL_CONCEPTS_UPDATE_PROMPT)
+
+        self.central_concepts_path: Optional[Path] = None
+        self.central_concepts_raw: str = ""
+        self.central_concepts_data: Optional[Dict[str, Any]] = None
+        if central_concepts_path:
+            self._load_central_concepts_file(Path(central_concepts_path))
 
     def _normalize_methods(self, methods: List[str]) -> List[str]:
         normalized = []
@@ -181,6 +191,151 @@ class QualitativeCoder:
         normalized = re.sub(r"\s+", " ", normalized).strip().lower()
         return normalized
 
+    def _load_central_concepts_file(self, central_concepts_path: Path):
+        path = central_concepts_path.resolve()
+        if not path.exists():
+            raise ValueError(f"Central concepts file not found: {path}")
+        if path.suffix.lower() not in {".md", ".markdown", ".txt"}:
+            raise ValueError("Central concepts file must be markdown/text (.md, .markdown, .txt)")
+
+        raw_text = path.read_text(encoding="utf-8")
+        parsed = self._parse_central_concepts_markdown(raw_text)
+
+        self.central_concepts_path = path
+        self.central_concepts_raw = raw_text
+        self.central_concepts_data = parsed
+
+    def _parse_central_concepts_markdown(self, content: str) -> Dict[str, Any]:
+        title = "مفاهیم مرکزی"
+        sections: List[Dict[str, Any]] = []
+
+        current_section: Optional[Dict[str, Any]] = None
+        current_concept: Optional[Dict[str, str]] = None
+
+        for raw_line in content.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+
+            match = re.match(r"^(#{1,6})\s+(.+?)\s*$", line)
+            if not match:
+                continue
+
+            level = len(match.group(1))
+            text = match.group(2).strip()
+            if not text:
+                continue
+
+            if level == 1:
+                title = text
+                continue
+
+            if level == 2:
+                current_section = {"section": text, "concepts": []}
+                sections.append(current_section)
+                current_concept = None
+                continue
+
+            if level == 3:
+                if current_section is None:
+                    current_section = {"section": "سایر", "concepts": []}
+                    sections.append(current_section)
+                current_concept = {"concept": text, "evidence_refs": ""}
+                current_section["concepts"].append(current_concept)
+                continue
+
+            if level == 4:
+                if current_section is None:
+                    current_section = {"section": "سایر", "concepts": []}
+                    sections.append(current_section)
+                if current_concept is None:
+                    current_concept = {"concept": "(بدون عنوان)", "evidence_refs": ""}
+                    current_section["concepts"].append(current_concept)
+
+                if current_concept["evidence_refs"]:
+                    current_concept["evidence_refs"] += f" | {text}"
+                else:
+                    current_concept["evidence_refs"] = text
+
+        if not sections:
+            raise ValueError(
+                "Central concepts file has no parsable structure. Use Markdown headings like ##, ###, ####."
+            )
+
+        return {
+            "title": title,
+            "sections": sections,
+        }
+
+    def _render_central_concepts_markdown(self, central_concepts: Dict[str, Any]) -> str:
+        title = str(central_concepts.get("title", "مفاهیم مرکزی")).strip() or "مفاهیم مرکزی"
+        sections = central_concepts.get("sections", [])
+
+        lines: List[str] = [f"# {title}", ""]
+        for section in sections:
+            section_name = str(section.get("section", "")).strip()
+            if not section_name:
+                continue
+
+            lines.append(f"## {section_name}")
+            lines.append("")
+
+            concepts = section.get("concepts", [])
+            if not isinstance(concepts, list):
+                continue
+
+            for concept in concepts:
+                concept_name = str(concept.get("concept", "")).strip()
+                evidence_refs = str(concept.get("evidence_refs", "")).strip()
+                if not concept_name:
+                    continue
+
+                lines.append(f"### {concept_name}")
+                lines.append("")
+                lines.append(f"#### {evidence_refs or '-'}")
+                lines.append("")
+
+        return "\n".join(lines).strip() + "\n"
+
+    def _central_concepts_for_prompt(self) -> Optional[Dict[str, Any]]:
+        if not self.central_concepts_data:
+            return None
+
+        sections = []
+        for section in self.central_concepts_data.get("sections", []):
+            section_name = str(section.get("section", "")).strip()
+            if not section_name:
+                continue
+
+            compact_concepts = []
+            for concept in section.get("concepts", []):
+                concept_name = str(concept.get("concept", "")).strip()
+                evidence_refs = str(concept.get("evidence_refs", "")).strip()
+                if not concept_name:
+                    continue
+                compact_concepts.append(
+                    {
+                        "concept": concept_name,
+                        "evidence_refs": evidence_refs,
+                    }
+                )
+
+            if compact_concepts:
+                sections.append(
+                    {
+                        "section": section_name,
+                        "concepts": compact_concepts,
+                    }
+                )
+
+        if not sections:
+            return None
+
+        return {
+            "title": self.central_concepts_data.get("title", "مفاهیم مرکزی"),
+            "sections": sections,
+        }
+
     def _estimate_word_count(self, text: str) -> int:
         tokens = re.findall(r"[A-Za-z0-9_\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]+", text or "")
         return len(tokens)
@@ -264,6 +419,10 @@ class QualitativeCoder:
             "analysis_language": self.analysis_language,
             "provider": self.provider,
             "model": self.model,
+            "central_concepts_path": str(self.central_concepts_path) if self.central_concepts_path else None,
+            "central_concepts_hash": hashlib.sha1(self.central_concepts_raw.encode("utf-8")).hexdigest()
+            if self.central_concepts_raw
+            else None,
         }
         raw = json.dumps(signature_payload, ensure_ascii=False, sort_keys=True)
         signature = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
@@ -310,6 +469,16 @@ class QualitativeCoder:
         else:
             codebook_instruction = "No codebook is provided. Build codes directly from the data."
 
+        central_concepts_payload = self._central_concepts_for_prompt()
+        if central_concepts_payload:
+            central_concepts_instruction = (
+                "A curated central-concepts file is provided. You MUST treat it as a scientific baseline: "
+                "preserve its conceptual intent, align new coding decisions with it where supported by evidence, "
+                "and only diverge when data clearly requires revision."
+            )
+        else:
+            central_concepts_instruction = "No central-concepts file is provided."
+
         if target_language == "fa":
             language_instruction = (
                 "Input may be Persian, English, or code-mixed. You MUST generate analytic fields in Persian "
@@ -331,6 +500,7 @@ class QualitativeCoder:
                 "allowed_codes": self.codebook_codes,
             },
             "analysis_language": target_language,
+            "central_concepts": central_concepts_payload,
             "segments": [
                 {
                     "id": segment["id"],
@@ -347,6 +517,7 @@ class QualitativeCoder:
             f"{self.schema_prompt}\n\n"
             f"{citation_instruction}\n\n"
             f"{codebook_instruction}\n\n"
+            f"{central_concepts_instruction}\n\n"
             f"{language_instruction}\n\n"
             "Analyze the following input and return only a JSON object:\n"
             f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
@@ -485,7 +656,7 @@ class QualitativeCoder:
         )
         return ai.configure_openai(llm_settings)
 
-    def _request_llm(self, prompt: str) -> Dict[str, Any]:
+    def _request_llm_json_object(self, prompt: str, system_message: str, fallback: Dict[str, Any]) -> Dict[str, Any]:
         if self.provider == "gemini":
             client = ai.configure_gemini(settings.llm)
             if client is None:
@@ -506,7 +677,7 @@ class QualitativeCoder:
                 raise RuntimeError("Failed to initialize OpenAI-compatible client")
 
             messages = [
-                {"role": "system", "content": "You are a rigorous qualitative researcher."},
+                {"role": "system", "content": system_message},
                 {"role": "user", "content": prompt},
             ]
 
@@ -546,7 +717,10 @@ class QualitativeCoder:
             return parsed
 
         logger.error("Failed to parse JSON response: unable to recover valid JSON object")
-        return {
+        return deepcopy(fallback)
+
+    def _request_llm(self, prompt: str) -> Dict[str, Any]:
+        fallback = {
             "method": "unknown",
             "codes": [],
             "categories": [],
@@ -556,6 +730,135 @@ class QualitativeCoder:
             "memo": "",
             "_parse_failed": True,
         }
+
+        return self._request_llm_json_object(
+            prompt=prompt,
+            system_message="You are a rigorous qualitative researcher.",
+            fallback=fallback,
+        )
+
+    def _build_central_concepts_update_prompt(self, method_results: Dict[str, Dict[str, Any]], target_language: str) -> str:
+        if not self.central_concepts_data:
+            raise ValueError("Central concepts are not loaded")
+
+        condensed_results: Dict[str, Any] = {}
+        for method, result in method_results.items():
+            codes = result.get("codes", [])
+            categories = result.get("categories", [])
+            themes = result.get("themes", [])
+            findings = result.get("findings", [])
+
+            condensed_results[method] = {
+                "codes": [
+                    {
+                        "code": code.get("code", ""),
+                        "description": code.get("description", ""),
+                        "segment_ids": code.get("segment_ids", []),
+                    }
+                    for code in codes
+                    if isinstance(code, dict)
+                ],
+                "categories": categories if isinstance(categories, list) else [],
+                "themes": themes if isinstance(themes, list) else [],
+                "findings": findings if isinstance(findings, list) else [],
+            }
+
+        payload = {
+            "analysis_language": target_language,
+            "method_results": condensed_results,
+            "central_concepts_original": self.central_concepts_data,
+        }
+
+        return (
+            f"{self.central_concepts_update_prompt}\n\n"
+            "Return only a valid JSON object.\n"
+            f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
+        )
+
+    def _normalize_updated_central_concepts(self, response: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        if not isinstance(response, dict):
+            return None
+
+        sections_raw = response.get("sections", [])
+        if not isinstance(sections_raw, list):
+            return None
+
+        sections: List[Dict[str, Any]] = []
+        for section in sections_raw:
+            if not isinstance(section, dict):
+                continue
+
+            section_name = str(section.get("section", "")).strip()
+            if not section_name:
+                continue
+
+            concepts_raw = section.get("concepts", [])
+            if not isinstance(concepts_raw, list):
+                continue
+
+            concepts: List[Dict[str, str]] = []
+            for concept in concepts_raw:
+                if not isinstance(concept, dict):
+                    continue
+
+                concept_name = str(concept.get("concept", "")).strip()
+                evidence_refs = str(concept.get("evidence_refs", "")).strip()
+                if not concept_name:
+                    continue
+
+                concepts.append(
+                    {
+                        "concept": concept_name,
+                        "evidence_refs": evidence_refs,
+                    }
+                )
+
+            if concepts:
+                sections.append(
+                    {
+                        "section": section_name,
+                        "concepts": concepts,
+                    }
+                )
+
+        if not sections:
+            return None
+
+        title = str(response.get("title", "")).strip() or str(
+            self.central_concepts_data.get("title", "مفاهیم مرکزی")
+        )
+        update_memo = str(response.get("update_memo", "")).strip()
+
+        return {
+            "title": title,
+            "sections": sections,
+            "update_memo": update_memo,
+        }
+
+    def _update_central_concepts(self, method_results: Dict[str, Dict[str, Any]], target_language: str) -> Optional[Dict[str, Any]]:
+        if not self.central_concepts_data:
+            return None
+
+        prompt = self._build_central_concepts_update_prompt(method_results, target_language)
+        fallback = {
+            "title": self.central_concepts_data.get("title", "مفاهیم مرکزی"),
+            "sections": self.central_concepts_data.get("sections", []),
+            "update_memo": "Central concepts update failed to parse; original concepts were preserved.",
+        }
+
+        response = self._request_llm_json_object(
+            prompt=prompt,
+            system_message=(
+                "You are a rigorous qualitative methodology expert. "
+                "Revise central concepts conservatively and only with grounded evidence."
+            ),
+            fallback=fallback,
+        )
+
+        normalized = self._normalize_updated_central_concepts(response)
+        if normalized is None:
+            return deepcopy(fallback)
+        return normalized
 
     def _merge_method_results(self, method: str, batch_results: List[Dict[str, Any]]) -> Dict[str, Any]:
         merged = {
@@ -619,7 +922,17 @@ class QualitativeCoder:
         lines.append(f"- Provider: {meta.get('provider', 'unknown')}")
         lines.append(f"- Model: {meta.get('model', 'unknown')}")
         lines.append(f"- Citation mode: {meta.get('citation_enabled', False)}")
+        lines.append(f"- Central concepts provided: {meta.get('central_concepts_provided', False)}")
         lines.append("")
+
+        central_concepts = data.get("central_concepts")
+        if isinstance(central_concepts, dict):
+            update_memo = str(central_concepts.get("update_memo", "")).strip()
+            if update_memo:
+                lines.append("## Central Concepts Update")
+                lines.append("")
+                lines.append(update_memo)
+                lines.append("")
 
         methods_data: Dict[str, Dict[str, Any]] = data.get("methods", {})
         for method, result in methods_data.items():
@@ -880,10 +1193,24 @@ class QualitativeCoder:
                 "Rerun with different chunking/model or disable --fail-on-parse-error."
             )
 
+        updated_central_concepts = self._update_central_concepts(method_results, target_language)
+
         segment_text_by_id = {
             str(segment["id"]): str(segment.get("text", ""))
             for segment in segments
         }
+
+        central_concepts_payload = None
+        if self.central_concepts_data and updated_central_concepts:
+            central_concepts_payload = {
+                "input_file": str(self.central_concepts_path) if self.central_concepts_path else None,
+                "original": self.central_concepts_data,
+                "updated": {
+                    "title": updated_central_concepts.get("title", self.central_concepts_data.get("title", "مفاهیم مرکزی")),
+                    "sections": updated_central_concepts.get("sections", []),
+                },
+                "update_memo": updated_central_concepts.get("update_memo", ""),
+            }
 
         data = {
             "meta": {
@@ -898,6 +1225,7 @@ class QualitativeCoder:
                 "codebook_codes": self.codebook_codes,
                 "batch_count": total_batches,
                 "parse_failures": parse_failures,
+                "central_concepts_provided": bool(self.central_concepts_data),
             },
             "segments": [
                 {
@@ -908,6 +1236,7 @@ class QualitativeCoder:
                 for segment in segments
             ],
             "methods": method_results,
+            "central_concepts": central_concepts_payload,
             "maxqda_hint": {
                 "schema": "structured-json",
                 "notes": "Use methods/method-name/codes with segment_ids as mapping references.",
@@ -927,6 +1256,12 @@ class QualitativeCoder:
             md_path = self.output_dir / f"{stem}_qual_{timestamp}.md"
             md_path.write_text(self._to_markdown_report(data), encoding="utf-8")
             outputs["markdown"] = md_path
+
+        if central_concepts_payload:
+            central_md_path = self.output_dir / f"{stem}_central_concepts_{timestamp}.md"
+            rendered = self._render_central_concepts_markdown(central_concepts_payload["updated"])
+            central_md_path.write_text(rendered, encoding="utf-8")
+            outputs["central-concepts"] = central_md_path
 
         if "csv" in self.output_formats:
             csv_path = self.output_dir / f"{stem}_qual_{timestamp}.csv"
