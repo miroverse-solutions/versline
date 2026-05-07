@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from typing import Optional
 from versline.config import settings, reload_settings
-from versline.commands import transcribe, translate, qude, qualcode, rag
+from versline.commands import transcribe, translate, qude, qualcode, rag, slides
 from versline.core.resources import apply_resource_limits
 
 
@@ -98,6 +98,7 @@ app.add_typer(transcribe.app, name="transcribe", help="[cyan]Convert audio/video
 app.add_typer(translate.app, name="translate", help="[cyan]Translate text files[/cyan] to other languages.")
 app.add_typer(qude.app, name="qude", help="[cyan]Generate questions[/cyan] from documents (Flashcards, MCQs).")
 app.add_typer(qualcode.app, name="qualcode", help="[cyan]Run qualitative coding[/cyan] on markdown files.")
+app.add_typer(slides.app, name="slides", help="[cyan]Generate immersive HTML/TS slides[/cyan] from markdown files.")
 app.add_typer(rag.app, name="rag", help="[cyan]Run RAG pipelines[/cyan] with ingestion and querying.")
 
 @app.callback()

@@ -53,7 +53,7 @@ dependencies = [
 versline = "versline.cli:app"
 
 [tool.setuptools.package-data]
-versline = ["resources/prompts/*.md"]
+versline = ["resources/prompts/*.md", "resources/assets/*"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
