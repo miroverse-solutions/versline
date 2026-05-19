@@ -156,11 +156,12 @@ class AudioTranscriber:
             return 0, [], None, None
 
     def transcribe_chunk_with_retry(self, model_name, audio_path, prompt, max_retries=3):
+        chunk_name = Path(audio_path).name
         for attempt in range(max_retries):
             try:
                 provider = self._resolve_provider_name()
-                
-                logger.info(f"Processing chunk with {provider} (attempt {attempt+1}/{max_retries})")
+
+                logger.info(f"[{chunk_name}] attempt {attempt+1}/{max_retries} — provider={provider}, model={model_name}")
                 
                 result = None
                 if provider == "gemini":
@@ -170,9 +171,12 @@ class AudioTranscriber:
                     client = ai.configure_openai(settings.llm)
                     result = self.transcribe_audio_chunk_by_openaicompatible(client, model_name, audio_path, prompt, provider=provider)
                 elif provider == "avalai":
-                    # Temporarily set endpoint for AvalAI
+                    # Temporarily set endpoint for AvalAI, respecting user-configured endpoint
                     original_endpoint = settings.llm.api_endpoint
-                    settings.llm.api_endpoint = "https://api.avalai.ir/v1"
+                    effective_endpoint = original_endpoint or "https://api.avalai.ir/v1"
+                    if original_endpoint and original_endpoint != "https://api.avalai.ir/v1":
+                        logger.debug(f"[avalai] Using custom endpoint from config: {original_endpoint}")
+                    settings.llm.api_endpoint = effective_endpoint
                     try:
                         client = ai.configure_openai(settings.llm)
                         result = self.transcribe_audio_chunk_by_openaicompatible(client, model_name, audio_path, prompt, provider=provider)
@@ -196,14 +200,21 @@ class AudioTranscriber:
 
                 if result and result.strip():
                     return result
-                raise RuntimeError("Empty transcription result")
+                raise RuntimeError("Empty transcription result (model returned blank response)")
             except Exception as e:
+                endpoint_hint = getattr(settings.llm, "api_endpoint", None) or "(default)"
                 if attempt < max_retries - 1:
                     wait_time = (attempt + 1) * 5
-                    logger.warning(f"⚠️ Attempt {attempt + 1} failed: {e}. Retrying in {wait_time}s...")
+                    logger.warning(
+                        f"[{chunk_name}] attempt {attempt+1} failed — {type(e).__name__}: {e} "
+                        f"(endpoint={endpoint_hint}, model={model_name}). Retrying in {wait_time}s…"
+                    )
                     time.sleep(wait_time)
                 else:
-                    logger.error(f"❌ All {max_retries} attempts failed for {Path(audio_path).name}")
+                    logger.error(
+                        f"[{chunk_name}] all {max_retries} attempts failed — "
+                        f"{type(e).__name__}: {e} (endpoint={endpoint_hint}, model={model_name})"
+                    )
                     raise
 
     def transcribe_audio_chunk_by_gemini(self, client, model_name, audio_path, prompt):
@@ -302,41 +313,53 @@ class AudioTranscriber:
 
             return completion.choices[0].message.content
         except Exception as e:
-            logger.error(f"OpenAI Error: {e}")
+            endpoint = getattr(client, "base_url", "unknown")
+            logger.error(f"API call failed — {type(e).__name__}: {e} (endpoint={endpoint}, model={model_name})")
             raise
 
     def process_file(self, file_path: str, chunk_length=900, overlap=180, progress_callback=None, force=False):
+        import shutil
         file_path = str(Path(file_path).resolve())
         work_dir = Path("work_dir") / Path(file_path).stem
         work_dir.mkdir(parents=True, exist_ok=True)
         temp_dir = work_dir / "temp_chunks"
         progress_file = work_dir / "progress.json"
         
-        if force and progress_file.exists():
-            logger.warning("Force mode enabled: Deleting previous progress.")
-            try:
-                progress_file.unlink()
-            except OSError as e:
-                logger.warning(f"Failed to delete progress file: {e}")
+        if force:
+            if progress_file.exists():
+                logger.warning("Force mode enabled: Deleting previous progress.")
+                try:
+                    progress_file.unlink()
+                except OSError as e:
+                    logger.warning(f"Failed to delete progress file: {e}")
+            if temp_dir.exists():
+                logger.warning("Force mode enabled: Deleting cached audio chunks.")
+                try:
+                    shutil.rmtree(str(temp_dir))
+                except OSError as e:
+                    logger.warning(f"Failed to delete temp chunks: {e}")
         
         last_index, transcriptions, _, speaker_samples = self.load_progress(str(progress_file))
         if speaker_samples is None:
             speaker_samples = {}
-            
-        chunks = media.split_audio_with_ffmpeg(
-            file_path, chunk_length, overlap, str(temp_dir)
-        )
+
+        existing_chunks = sorted(temp_dir.glob("chunk_*.mp3")) if temp_dir.exists() else []
+        if existing_chunks:
+            logger.info(f"📂 Using {len(existing_chunks)} cached audio chunks (skipping re-split).")
+            chunks = [str(p) for p in existing_chunks]
+        else:
+            chunks = media.split_audio_with_ffmpeg(
+                file_path, chunk_length, overlap, str(temp_dir)
+            )
         
         total_chunks = len(chunks)
         if progress_callback:
             progress_callback(0, total_chunks, "Starting transcription...")
         
-        # If resuming, we might not need to re-split all if they exist, but split is fast enough usually.
-        # Check if we need to skip chunks
         if last_index > 0:
-            logger.info(f"Skipping first {last_index} chunks...")
+            logger.info(f"▶ Resuming from chunk {last_index + 1}/{total_chunks} ({last_index} already done).")
             if progress_callback:
-                 progress_callback(last_index, total_chunks, f"Resuming from chunk {last_index+1}...")
+                progress_callback(last_index, total_chunks, f"Resuming from chunk {last_index+1}/{total_chunks}…")
             
         final_text_blocks = transcriptions[:] # Copy existing
         
@@ -345,7 +368,7 @@ class AudioTranscriber:
                 continue
                 
             chunk_name = Path(chunk_path).name
-            logger.info(f"Processing chunk {i+1}/{len(chunks)}: {chunk_name}")
+            logger.info(f"[{i+1}/{total_chunks}] Transcribing {chunk_name}…")
             if progress_callback:
                 progress_callback(i, total_chunks, f"Transcribing chunk {i+1}/{total_chunks}...")
             

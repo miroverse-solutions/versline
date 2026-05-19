@@ -108,7 +108,7 @@ class TextTranslator:
                         client = ai.configure_openrouter(settings.llm)
                     elif provider == "avalai":
                         original_endpoint = settings.llm.api_endpoint
-                        settings.llm.api_endpoint = "https://api.avalai.ir/v1"
+                        settings.llm.api_endpoint = original_endpoint or "https://api.avalai.ir/v1"
                         try:
                             client = ai.configure_openai(settings.llm)
                         finally:
