@@ -9,6 +9,8 @@ Guidelines:
 * Use headings (##, ###) to organize major topics
 * Add bullet lists for key points, examples, or enumerations where appropriate
 * This summary should be detailed enough to use for studying — do not omit important information
+* {didactic_instruction}
+* {compression_instruction}
 * {language_instruction}
 * {terms_instruction}
 * Output ONLY the summary in valid Markdown, ready to be concatenated with adjacent sections

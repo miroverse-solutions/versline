@@ -258,6 +258,7 @@ VERSLINE_RESOURCE_RUN_WATCHDOG_WITH_CGROUP=false
 
 - For `VERSLINE_LLM_PROVIDER=AvalAI` with Gemini model IDs (for example `gemini-3-flash-preview`), Versline auto-sends provider hint `google` to AvalAI. You can override explicitly with `VERSLINE_LLM_AVALAI_PROVIDER`.
 - Exact AvalAI cost lookup uses the User API endpoint (`/user/v1/transactions/lookup`) and tracked `x-request-id` values from API responses.
+- **Domain mirroring**: if `VERSLINE_LLM_API_ENDPOINT` is set to an `avalapis.ir` URL, the cost-lookup endpoint is automatically derived from that same domain (e.g. `https://api.avalapis.ir/user/v1/transactions/lookup`). No extra configuration is needed; the canonical `api.avalai.ir` endpoint is used when no custom endpoint is set.
 - In restricted networks, set `VERSLINE_LLM_PROXY` so cost lookup can reach AvalAI.
 - Cost lookup uses the same `VERSLINE_LLM_API_KEY` (there is no separate key variable for User API in Versline config).
 
@@ -389,8 +390,10 @@ versline summarize [OPTIONS] FILE_PATH
 | Option | Short | Description | Default |
 | :--- | :--- | :--- | :--- |
 | `--mode` | `-m` | Summarization mode: `outline`, `detailed`, or `slides`. | `"detailed"` |
+| `--compression` | `-c` | Target output length as a percentage of the original (1–100). `10` = very brief; `50` = moderate; `90` = near-complete. Omit to let the LLM decide. | `None` (LLM decides) |
 | `--output-lang` | `-l` | Language to write the summary in (`auto` = same as source). Example: `Persian`, `English`. | `"auto"` |
 | `--preserve-terms / --no-preserve-terms` | | When outputting in a different language, include the original-language term in parentheses after each specialised technical term. | `True` |
+| `--didactic / --no-didactic` | `-d` | Enable two-phase pedagogical restructuring (see below). | `False` |
 | `--output` | `-o` | Output `.md` file path. | `[name]_summary_[mode].md` |
 | `--model` | | LLM Model name. | Config |
 | `--provider` | | Service provider. | Config |
@@ -410,10 +413,21 @@ versline summarize [OPTIONS] FILE_PATH
 
 > **Note on `--preserve-terms`:** Enabled by default when `--output-lang` differs from the source. The LLM is instructed to write each specialised term followed by the source-language original in parentheses, e.g. *هوش مصنوعی (artificial intelligence)*. Use `--no-preserve-terms` to suppress this.
 
+> **Note on `--didactic`:** Activates a **two-phase pedagogical pipeline** regardless of the selected mode.
+> - *Phase 1 (Analysis)*: The full document is sent to the LLM which produces a **teaching blueprint** — concept dependency map, recommended teaching order, sections that need more explanation, and natural concept groupings.
+> - *Phase 2 (Generation)*: The full document is sent again together with the blueprint and the mode-specific prompt. The LLM is free to **reorder, expand, or group** content across section boundaries to maximise comprehension.
+> - **Prompt caching**: The document tokens from Phase 1 are cached automatically (Google Gemini explicit context cache; OpenAI-compatible providers via stable system-message prefix). Phase 2 reuses those cached tokens, significantly reducing the cost for large documents.
+
 **Examples:**
 ```bash
 # Detailed summary in the same language as the source (default)
 versline summarize lecture.md
+
+# Very brief summary (~20% of original length)
+versline summarize lecture.md --compression 20
+
+# Near-complete notes (~80% of original length)
+versline summarize lecture.md --compression 80 --mode detailed
 
 # Hierarchical outline
 versline summarize chapter.pdf --mode outline
@@ -426,6 +440,15 @@ versline summarize presentation.md --mode slides --output-lang English --preserv
 
 # Suppress parenthetical original terms
 versline summarize notes.md --output-lang French --no-preserve-terms
+
+# Didactic mode: reorder + expand for teaching (two-phase, with prompt caching)
+versline summarize textbook.md --didactic
+
+# Didactic + cross-language + term preservation in one command
+versline summarize lecture.md --didactic --output-lang English --preserve-terms
+
+# Very brief Persian outline of an English paper
+versline summarize paper.md --mode outline --output-lang Persian --compression 15
 
 # Slide deck blueprint with custom output path
 versline summarize report.docx --mode slides --output report_slides.md
@@ -892,8 +915,13 @@ summarizer = TextSummarizer(mode="detailed", output_lang="Persian", preserve_ter
 persian_summary = summarizer.process_file("paper.md")
 # Technical terms appear as: شبکه عصبی (neural network)
 
-# Presentation slide outline in English
-slide_summarizer = TextSummarizer(mode="slides", output_lang="English")
+# Didactic mode: two-phase pedagogical restructuring with prompt caching
+# Phase 1 → teaching blueprint; Phase 2 → reordered/expanded output (cached tokens)
+summarizer = TextSummarizer(mode="detailed", didactic=True)
+didactic_summary = summarizer.process_file("textbook.md")
+
+# Presentation slide outline in English with didactic restructuring
+slide_summarizer = TextSummarizer(mode="slides", output_lang="English", didactic=True)
 slide_outline = slide_summarizer.process_file("report.docx")
 ```
 

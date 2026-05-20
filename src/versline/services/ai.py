@@ -51,6 +51,137 @@ def configure_gemini(llm_settings):
         logger.error(f"❌ Error configuring Gemini client: {e}")
         return None
 
+
+# ---------------------------------------------------------------------------
+# Prompt caching helpers
+# ---------------------------------------------------------------------------
+
+def create_gemini_context_cache(
+    client,
+    model: str,
+    document_text: str,
+    ttl_seconds: int = 3600,
+) -> Optional[str]:
+    """Upload *document_text* to a Gemini context cache and return the cache name.
+
+    Returns *None* if context caching is unavailable for the model, the document
+    is too small, or any other error occurs — callers should fall back gracefully.
+    """
+    try:
+        from google.genai import types
+
+        cache = client.caches.create(
+            model=model,
+            config=types.CreateCachedContentConfig(
+                contents=[
+                    types.Content(
+                        role="user",
+                        parts=[types.Part(text=document_text)],
+                    )
+                ],
+                ttl=f"{ttl_seconds}s",
+            ),
+        )
+        logger.debug(f"Gemini context cache created: {cache.name}")
+        return cache.name
+    except Exception as exc:
+        logger.debug(f"Gemini context cache creation skipped ({type(exc).__name__}): {exc}")
+        return None
+
+
+def delete_gemini_context_cache(client, cache_name: str) -> None:
+    """Delete a Gemini context cache.  Errors are silently ignored."""
+    try:
+        client.caches.delete(name=cache_name)
+        logger.debug(f"Gemini context cache deleted: {cache_name}")
+    except Exception as exc:
+        logger.debug(f"Failed to delete Gemini cache {cache_name}: {exc}")
+
+
+def call_gemini_with_cache(
+    client,
+    model: str,
+    cache_name: str,
+    prompt: str,
+    tracker,
+) -> str:
+    """Generate text from *prompt* using a pre-created Gemini context cache.
+
+    The cached document content is prepended automatically by the API;
+    *prompt* should contain only the new instruction for this call.
+    """
+    from google.genai import types
+
+    response = client.models.generate_content(
+        model=model,
+        contents=prompt,
+        config=types.GenerateContentConfig(cached_content=cache_name),
+    )
+    if response.usage_metadata:
+        cached = (
+            getattr(response.usage_metadata, "cached_content_token_count", None) or 0
+        )
+        tracker.add_usage(
+            response.usage_metadata.prompt_token_count,
+            response.usage_metadata.candidates_token_count,
+            cached_tokens=cached,
+        )
+    return response.text
+
+
+def call_openai_with_document_prefix(
+    client,
+    model: str,
+    document_text: str,
+    instruction: str,
+    tracker,
+    is_avalai: bool = False,
+) -> str:
+    """Call an OpenAI-compatible API with the document in the system message.
+
+    Placing the document as a stable system-message prefix enables automatic
+    prompt caching on supported models (gpt-4o, etc.) when the total prompt
+    exceeds 1 024 tokens — no extra API calls or setup required.
+
+    Cached-token savings are read from ``usage.prompt_tokens_details`` and
+    recorded in *tracker*.
+    """
+    messages = [
+        {"role": "system", "content": document_text},
+        {"role": "user", "content": instruction},
+    ]
+
+    if is_avalai and hasattr(client.chat.completions, "with_raw_response"):
+        raw = client.chat.completions.with_raw_response.create(
+            model=model,
+            messages=messages,
+        )
+        request_id = raw.headers.get("x-request-id")
+        if request_id:
+            tracker.add_avalai_request(request_id)
+        completion = raw.parse()
+    else:
+        completion = client.chat.completions.create(
+            model=model,
+            messages=messages,
+        )
+
+    if completion.usage:
+        cached = (
+            getattr(
+                getattr(completion.usage, "prompt_tokens_details", None),
+                "cached_tokens",
+                None,
+            )
+            or 0
+        )
+        tracker.add_usage(
+            completion.usage.prompt_tokens,
+            completion.usage.completion_tokens,
+            cached_tokens=cached,
+        )
+    return completion.choices[0].message.content
+
 def configure_openai(llm_settings):
     """Configure OpenAI API client with defined settings."""
     try:

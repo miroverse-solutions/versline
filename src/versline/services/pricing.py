@@ -2,6 +2,7 @@
 
 import time
 import os
+import uuid
 import httpx
 from loguru import logger
 from typing import Optional, List, Dict
@@ -27,19 +28,25 @@ class TokenTracker:
     def __init__(self):
         self.total_input_tokens = 0
         self.total_output_tokens = 0
+        self.total_cached_tokens = 0
         self.total_cost_usd = 0.0
         self.avalai_request_ids = []
     
-    def add_usage(self, input_tokens: int, output_tokens: int, cost: float = 0.0):
+    def add_usage(self, input_tokens: int, output_tokens: int, cost: float = 0.0, cached_tokens: int = 0):
         """Add token usage."""
         self.total_input_tokens += input_tokens
         self.total_output_tokens += output_tokens
+        self.total_cached_tokens += cached_tokens
         self.total_cost_usd += cost
     
     def add_avalai_request(self, request_id: str):
         """Track AvalAI request ID for cost lookup."""
         if request_id:
-            self.avalai_request_ids.append(request_id)
+            try:
+                uuid.UUID(request_id)
+                self.avalai_request_ids.append(request_id)
+            except ValueError:
+                logger.debug(f"AvalAI x-request-id {request_id!r} is not a UUID, skipping cost tracking")
 
 def get_http_client(proxy_url: Optional[str] = None, timeout_seconds: float = 30.0) -> httpx.Client:
     """Create HTTP client with optional proxy support."""
@@ -62,7 +69,7 @@ def _derive_avalai_lookup_url(api_endpoint: Optional[str] = None) -> str:
     from urllib.parse import urlparse
     parsed = urlparse(api_endpoint)
     host = parsed.hostname or ""
-    if host and "avalai" in host:
+    if host and "avalapis" in host:
         scheme = parsed.scheme or "https"
         return f"{scheme}://{host}/user/v1/transactions/lookup"
     return _AVALAI_DEFAULT_LOOKUP_URL
@@ -130,6 +137,9 @@ def lookup_avalai_cost(
                         found=data.get("summary", {}).get("found", 0)
                     )
                 logger.warning(f"AvalAI cost lookup failed: {response.status_code} - {response.text}")
+                if response.status_code == 400:
+                    # Bad request — invalid input, retrying won't help
+                    break
                 
             except httpx.TimeoutException as e:
                 logger.warning(

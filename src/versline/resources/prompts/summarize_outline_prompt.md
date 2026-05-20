@@ -8,6 +8,8 @@ Guidelines:
 * Under each heading, add concise bullet points capturing key concepts, arguments, and details
 * Preserve the logical flow and order of the original
 * Be comprehensive — this is a reference outline, not a brief summary
+* {didactic_instruction}
+* {compression_instruction}
 * {language_instruction}
 * {terms_instruction}
 * Output ONLY the outline in valid Markdown, ready to be concatenated with adjacent sections

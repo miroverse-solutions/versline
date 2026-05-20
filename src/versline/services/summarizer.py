@@ -1,6 +1,7 @@
 import re
 import time
 from pathlib import Path
+from typing import Optional
 
 from loguru import logger
 
@@ -16,6 +17,7 @@ MODES = {
     "slides": "summarize_slides_prompt.md",
 }
 
+_DIDACTIC_ANALYSIS_PROMPT_FILE = "summarize_didactic_analysis_prompt.md"
 
 # Sentinel for "same language as input"
 _AUTO_LANG = "auto"
@@ -36,6 +38,20 @@ class TextSummarizer:
         When *True* and *output_lang* differs from the source language, the LLM
         is instructed to include the original-language term in parentheses after
         every specialised technical term it translates.
+    didactic:
+        When *True*, the service switches to a **two-phase pedagogical mode**:
+
+        1. *Analysis phase* — the full document is sent to the LLM to produce a
+           teaching blueprint (concept dependencies, recommended order, sections
+           to expand, natural groupings).
+        2. *Generation phase* — the full document is sent again (using prompt
+           caching to avoid paying for duplicate tokens) together with the
+           blueprint and mode-specific prompt to produce a pedagogically
+           restructured output.
+
+        Unlike the default chunked pipeline, both phases always see the entire
+        document, so the LLM can reorder and expand content across section
+        boundaries.
     """
 
     def __init__(
@@ -43,12 +59,18 @@ class TextSummarizer:
         mode: str = "detailed",
         output_lang: str = _AUTO_LANG,
         preserve_terms: bool = True,
+        didactic: bool = False,
+        compression: Optional[int] = None,
     ):
         if mode not in MODES:
             raise ValueError(f"Invalid mode '{mode}'. Choose from: {list(MODES)}")
+        if compression is not None and not (1 <= compression <= 100):
+            raise ValueError("compression must be between 1 and 100.")
         self.mode = mode
         self.output_lang = output_lang.strip() if output_lang else _AUTO_LANG
         self.preserve_terms = preserve_terms
+        self.didactic = didactic
+        self.compression = compression
         self.tracker = TokenTracker()
 
         try:
@@ -56,6 +78,12 @@ class TextSummarizer:
         except FileNotFoundError:
             logger.warning(f"Summarization prompt for mode '{mode}' not found.")
             self.prompt_template = "{text}"
+
+        try:
+            self._didactic_analysis_template = load_prompt(_DIDACTIC_ANALYSIS_PROMPT_FILE)
+        except FileNotFoundError:
+            logger.warning("Didactic analysis prompt not found.")
+            self._didactic_analysis_template = "Analyze this document for teaching:\n\n{text}"
 
     # ------------------------------------------------------------------
     # Prompt instruction builders
@@ -80,6 +108,31 @@ class TextSummarizer:
             "e.g.: شبکه عصبی مصنوعی (artificial neural network). "
             "If a widely accepted equivalent exists in the output language, prefer it; "
             "otherwise keep the source-language term unchanged."
+        )
+
+    def _compression_instruction(self) -> str:
+        if self.compression is None:
+            return "Choose a level of detail naturally suited to the mode."
+        return (
+            f"Target an output length of approximately {self.compression}% of the original text. "
+            "Adjust the level of detail, examples, and elaboration accordingly — "
+            "lower percentages mean only the most essential points; "
+            "higher percentages mean preserving nearly all concepts and details."
+        )
+
+    def _didactic_instruction(self) -> str:
+        if not self.didactic:
+            return "Follow the source document order faithfully."
+        return (
+            "PEDAGOGICAL RESTRUCTURING — apply these rules before structuring the output:\n"
+            "* Reorder topics so prerequisite concepts always appear before the concepts "
+            "that depend on them, even if this departs from the source document order.\n"
+            "* Allocate more explanation and examples to foundational or commonly "
+            "misunderstood concepts; do not compress them for brevity.\n"
+            "* Group closely related ideas together even if they are scattered in the source.\n"
+            "* Add brief bridging phrases or sentences between sections to explain why the "
+            "order was chosen or how one concept leads to the next.\n"
+            "* The pedagogical blueprint provided above takes precedence over the source order."
         )
 
     # ------------------------------------------------------------------
@@ -151,7 +204,7 @@ class TextSummarizer:
         return [c for c in chunks if c.strip()]
 
     # ------------------------------------------------------------------
-    # LLM call
+    # LLM call (single chunk, standard mode)
     # ------------------------------------------------------------------
 
     def summarize_chunk(self, text: str, model_name: str, max_retries: int = 3) -> str:
@@ -159,6 +212,8 @@ class TextSummarizer:
             text=text,
             language_instruction=self._language_instruction(),
             terms_instruction=self._terms_instruction(),
+            didactic_instruction=self._didactic_instruction(),
+            compression_instruction=self._compression_instruction(),
         )
 
         for attempt in range(max_retries):
@@ -242,6 +297,120 @@ class TextSummarizer:
         raise RuntimeError(f"Failed to summarize chunk after {max_retries} attempts")
 
     # ------------------------------------------------------------------
+    # Two-phase didactic pipeline (with prompt caching)
+    # ------------------------------------------------------------------
+
+    def _analyse_pedagogically(self, full_text: str, model_name: str) -> str:
+        """Phase 1: send the full document and return a pedagogical blueprint."""
+        prompt = self._didactic_analysis_template.format(text=full_text)
+        provider = (settings.llm.provider or "google").lower()
+        logger.debug("Didactic analysis phase — sending full document for blueprint")
+
+        if provider == "google":
+            client = ai.configure_gemini(settings.llm)
+            response = client.models.generate_content(model=model_name, contents=prompt)
+            if response.usage_metadata:
+                self.tracker.add_usage(
+                    response.usage_metadata.prompt_token_count,
+                    response.usage_metadata.candidates_token_count,
+                )
+            return response.text or ""
+
+        # OpenAI-compatible
+        client = self._get_openai_client(provider)
+        is_avalai = self._is_avalai(provider, client)
+        return ai.call_openai_with_document_prefix(
+            client, model_name, "", prompt, self.tracker, is_avalai=is_avalai
+        )
+
+    def _generate_didactic(
+        self, full_text: str, blueprint: str, model_name: str
+    ) -> str:
+        """Phase 2: generate the mode-specific output using the cached document.
+
+        The full document is passed as the stable prefix (cached) and the
+        generation instruction — which combines the blueprint with the
+        mode-specific prompt — is passed as the variable part.
+        """
+        # Build generation instruction (no {text} — document is the cache/prefix)
+        instruction = (
+            f"## Pedagogical Blueprint\n\n{blueprint}\n\n"
+            "---\n\n"
+            "Using the document above (the full source) **and** the pedagogical "
+            "blueprint provided, produce the output according to these rules:\n\n"
+            + self.prompt_template.format(
+                text="[see the document provided above as context]",
+                language_instruction=self._language_instruction(),
+                terms_instruction=self._terms_instruction(),
+                didactic_instruction=self._didactic_instruction(),
+                compression_instruction=self._compression_instruction(),
+            )
+        )
+
+        provider = (settings.llm.provider or "google").lower()
+        logger.debug("Didactic generation phase — using prompt cache")
+
+        if provider == "google":
+            client = ai.configure_gemini(settings.llm)
+            # Try explicit context cache (saves tokens on Phase 2)
+            cache_name = ai.create_gemini_context_cache(
+                client, model_name, full_text, ttl_seconds=1800
+            )
+            try:
+                if cache_name:
+                    result = ai.call_gemini_with_cache(
+                        client, model_name, cache_name, instruction, self.tracker
+                    )
+                else:
+                    # Fallback: send full text inline
+                    combined = f"{full_text}\n\n---\n\n{instruction}"
+                    response = client.models.generate_content(
+                        model=model_name, contents=combined
+                    )
+                    if response.usage_metadata:
+                        self.tracker.add_usage(
+                            response.usage_metadata.prompt_token_count,
+                            response.usage_metadata.candidates_token_count,
+                        )
+                    result = response.text or ""
+            finally:
+                if cache_name:
+                    ai.delete_gemini_context_cache(client, cache_name)
+            return result
+
+        # OpenAI-compatible: document as system message = stable prefix for auto-caching
+        client = self._get_openai_client(provider)
+        is_avalai = self._is_avalai(provider, client)
+        return ai.call_openai_with_document_prefix(
+            client, model_name, full_text, instruction, self.tracker, is_avalai=is_avalai
+        )
+
+    # ------------------------------------------------------------------
+    # Internal helpers for client setup
+    # ------------------------------------------------------------------
+
+    def _get_openai_client(self, provider: str):
+        if provider == "openrouter":
+            return ai.configure_openrouter(settings.llm)
+        if provider == "avalai":
+            original = settings.llm.api_endpoint
+            settings.llm.api_endpoint = original or "https://api.avalai.ir/v1"
+            try:
+                return ai.configure_openai(settings.llm)
+            finally:
+                settings.llm.api_endpoint = original
+        return ai.configure_openai(settings.llm)
+
+    def _is_avalai(self, provider: str, client) -> bool:
+        return provider == "avalai" or (
+            hasattr(client, "base_url")
+            and (
+                "avalai.ir" in str(client.base_url)
+                or "avalapis.ir" in str(client.base_url)
+            )
+        )
+
+    # ------------------------------------------------------------------
     # Main entry point
     # ------------------------------------------------------------------
 
@@ -256,6 +425,12 @@ class TextSummarizer:
         if not text.strip():
             raise ValueError("Input file is empty after text extraction.")
 
+        if self.didactic:
+            return self._process_didactic(text, settings.llm.model, progress_callback)
+        return self._process_chunked(text, settings.llm.model, progress_callback)
+
+    def _process_chunked(self, text: str, model_name: str, progress_callback) -> str:
+        """Standard chunked pipeline (default, non-didactic)."""
         chunks = self.split_by_sections(text)
         total = len(chunks)
         results: list[str] = []
@@ -271,13 +446,31 @@ class TextSummarizer:
             if progress_callback:
                 progress_callback(i, total, f"Summarizing part {i + 1}/{total}…")
 
-            summarized = self.summarize_chunk(chunk, settings.llm.model)
+            summarized = self.summarize_chunk(chunk, model_name)
             results.append(summarized)
 
             if progress_callback:
                 progress_callback(i + 1, total, f"Completed part {i + 1}")
 
         return "\n\n".join(r for r in results if r.strip())
+
+    def _process_didactic(self, text: str, model_name: str, progress_callback) -> str:
+        """Two-phase didactic pipeline: analyse → cache → generate."""
+        if progress_callback:
+            progress_callback(0, 2, "Phase 1/2: Analysing document structure…")
+
+        blueprint = self._analyse_pedagogically(text, model_name)
+        logger.debug(f"Pedagogical blueprint ({len(blueprint)} chars) obtained")
+
+        if progress_callback:
+            progress_callback(1, 2, "Phase 2/2: Generating pedagogical output…")
+
+        result = self._generate_didactic(text, blueprint, model_name)
+
+        if progress_callback:
+            progress_callback(2, 2, "Done")
+
+        return result
 
 
 # ---------------------------------------------------------------------------

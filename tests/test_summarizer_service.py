@@ -279,6 +279,209 @@ class TestSummarizerProcessFile(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Tests for didactic mode
+# ---------------------------------------------------------------------------
+
+class TestDidacticMode(unittest.TestCase):
+    def test_didactic_flag_stored(self):
+        s = TextSummarizer(mode="detailed", didactic=True)
+        self.assertTrue(s.didactic)
+
+    def test_non_didactic_default(self):
+        s = TextSummarizer(mode="detailed")
+        self.assertFalse(s.didactic)
+
+    def test_didactic_instruction_non_empty(self):
+        s = TextSummarizer(mode="detailed", didactic=True)
+        instr = s._didactic_instruction()
+        self.assertIn("Reorder", instr)
+        self.assertIn("prerequisite", instr)
+
+    def test_non_didactic_instruction_neutral(self):
+        s = TextSummarizer(mode="detailed", didactic=False)
+        instr = s._didactic_instruction()
+        self.assertIn("source document order", instr)
+        self.assertNotIn("Reorder", instr)
+
+    def test_chunk_prompt_includes_didactic_instruction(self):
+        """summarize_chunk should always embed the didactic_instruction placeholder."""
+        from unittest.mock import patch, MagicMock
+
+        with patch("versline.services.summarizer.settings") as mock_s, \
+             patch("versline.services.summarizer.ai") as mock_ai:
+            mock_s.llm.provider = "openai"
+            mock_s.llm.model = "gpt-4o-mini"
+            mock_s.llm.api_key = "fake"
+            mock_s.llm.api_endpoint = None
+            mock_s.llm.proxy = None
+
+            fake = MagicMock()
+            fake.usage = MagicMock(prompt_tokens=5, completion_tokens=5)
+            fake.choices = [MagicMock(message=MagicMock(content="ok"))]
+            mock_client = MagicMock()
+            mock_client.chat.completions.create.return_value = fake
+            mock_ai.configure_openai.return_value = mock_client
+
+            s = TextSummarizer(mode="detailed", didactic=True)
+            s.summarize_chunk("Some text.", "gpt-4o-mini")
+
+            sent = mock_client.chat.completions.create.call_args.kwargs["messages"][0]["content"]
+            self.assertIn("Reorder", sent)
+
+    @patch("versline.services.summarizer.settings")
+    @patch("versline.services.summarizer.ai")
+    def test_didactic_process_file_two_phases(self, mock_ai, mock_settings):
+        """Didactic mode must call the LLM twice: analysis then generation."""
+        mock_settings.llm.provider = "openai"
+        mock_settings.llm.model = "gpt-4o-mini"
+        mock_settings.llm.api_key = "fake"
+        mock_settings.llm.api_endpoint = None
+        mock_settings.llm.proxy = None
+
+        call_count = [0]
+
+        def fake_prefix_call(client, model, document_text, instruction, tracker,
+                             is_avalai=False):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return "Blueprint: teach A before B."
+            return "## Pedagogically restructured output"
+
+        mock_ai.call_openai_with_document_prefix.side_effect = fake_prefix_call
+        mock_ai.configure_openai.return_value = MagicMock()
+
+        with tempfile.NamedTemporaryFile(
+            suffix=".md", mode="w", encoding="utf-8", delete=False
+        ) as f:
+            f.write("# Doc\n\n" + "content " * 50)
+            tmp_path = f.name
+
+        try:
+            s = TextSummarizer(mode="detailed", didactic=True)
+            result = s.process_file(tmp_path)
+            self.assertEqual(call_count[0], 2, "Expected exactly 2 LLM calls for didactic mode")
+            self.assertIn("restructured", result)
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+    @patch("versline.services.summarizer.settings")
+    @patch("versline.services.summarizer.ai")
+    def test_didactic_progress_callback_two_steps(self, mock_ai, mock_settings):
+        """Progress callback should report two phases in didactic mode."""
+        mock_settings.llm.provider = "openai"
+        mock_settings.llm.model = "gpt-4o-mini"
+        mock_settings.llm.api_key = "fake"
+        mock_settings.llm.api_endpoint = None
+        mock_settings.llm.proxy = None
+
+        mock_ai.call_openai_with_document_prefix.side_effect = [
+            "Blueprint.", "Final output."
+        ]
+        mock_ai.configure_openai.return_value = MagicMock()
+
+        with tempfile.NamedTemporaryFile(
+            suffix=".md", mode="w", encoding="utf-8", delete=False
+        ) as f:
+            f.write("# Doc\n\ncontent here\n")
+            tmp_path = f.name
+
+        calls = []
+        try:
+            s = TextSummarizer(mode="outline", didactic=True)
+            s.process_file(tmp_path, progress_callback=lambda c, t, m: calls.append(m))
+            messages = " ".join(calls)
+            self.assertIn("Phase 1", messages)
+            self.assertIn("Phase 2", messages)
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+    @patch("versline.services.summarizer.settings")
+    @patch("versline.services.summarizer.ai")
+    def test_didactic_gemini_uses_cache(self, mock_ai, mock_settings):
+        """For Google provider, didactic mode should attempt to create a context cache."""
+        mock_settings.llm.provider = "google"
+        mock_settings.llm.model = "gemini-1.5-pro"
+        mock_settings.llm.api_key = "fake"
+        mock_settings.llm.api_endpoint = None
+        mock_settings.llm.proxy = None
+
+        # Phase 1: analysis via regular generate_content
+        fake_response1 = MagicMock()
+        fake_response1.usage_metadata = MagicMock(
+            prompt_token_count=10, candidates_token_count=20
+        )
+        fake_response1.text = "Blueprint: A before B."
+
+        # Phase 2: generation via cache
+        mock_ai.create_gemini_context_cache.return_value = "cachedContent/abc123"
+        mock_ai.call_gemini_with_cache.return_value = "## Restructured output"
+        mock_ai.delete_gemini_context_cache.return_value = None
+
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = fake_response1
+        mock_ai.configure_gemini.return_value = mock_client
+
+        with tempfile.NamedTemporaryFile(
+            suffix=".md", mode="w", encoding="utf-8", delete=False
+        ) as f:
+            f.write("# Doc\n\n" + "content " * 50)
+            tmp_path = f.name
+
+        try:
+            s = TextSummarizer(mode="detailed", didactic=True)
+            result = s.process_file(tmp_path)
+            mock_ai.create_gemini_context_cache.assert_called_once()
+            mock_ai.call_gemini_with_cache.assert_called_once()
+            mock_ai.delete_gemini_context_cache.assert_called_once_with(
+                mock_client, "cachedContent/abc123"
+            )
+            self.assertIn("Restructured", result)
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+    @patch("versline.services.summarizer.settings")
+    @patch("versline.services.summarizer.ai")
+    def test_didactic_gemini_fallback_when_cache_unavailable(self, mock_ai, mock_settings):
+        """If Gemini cache creation returns None, fall back to inline full-text call."""
+        mock_settings.llm.provider = "google"
+        mock_settings.llm.model = "gemini-2.0-flash"
+        mock_settings.llm.api_key = "fake"
+        mock_settings.llm.api_endpoint = None
+        mock_settings.llm.proxy = None
+
+        fake_blueprint = MagicMock()
+        fake_blueprint.usage_metadata = MagicMock(
+            prompt_token_count=5, candidates_token_count=10
+        )
+        fake_blueprint.text = "Blueprint: teach sequentially."
+
+        fake_gen = MagicMock()
+        fake_gen.usage_metadata = MagicMock(
+            prompt_token_count=100, candidates_token_count=50
+        )
+        fake_gen.text = "## Fallback output"
+
+        mock_ai.create_gemini_context_cache.return_value = None  # cache unavailable
+        mock_client = MagicMock()
+        mock_client.models.generate_content.side_effect = [fake_blueprint, fake_gen]
+        mock_ai.configure_gemini.return_value = mock_client
+
+        with tempfile.NamedTemporaryFile(
+            suffix=".md", mode="w", encoding="utf-8", delete=False
+        ) as f:
+            f.write("# Doc\n\n" + "content " * 50)
+            tmp_path = f.name
+
+        try:
+            s = TextSummarizer(mode="detailed", didactic=True)
+            result = s.process_file(tmp_path)
+            mock_ai.call_gemini_with_cache.assert_not_called()
+            self.assertIn("Fallback", result)
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
 # Tests for output language and term preservation
 # ---------------------------------------------------------------------------
 

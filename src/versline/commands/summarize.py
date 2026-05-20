@@ -7,6 +7,7 @@ from loguru import logger
 from versline.services.summarizer import TextSummarizer, MODES, _AUTO_LANG
 from versline.config import settings
 from versline.services.pricing import print_cost_report
+from typing import Optional
 
 app = typer.Typer(help="Summarize files in multiple modes.")
 
@@ -49,7 +50,30 @@ def summarize_file(
             "term in parentheses after each specialised technical term."
         ),
     ),
-    output: Optional[Path] = typer.Option(
+    didactic: bool = typer.Option(
+        False,
+        "--didactic/--no-didactic",
+        "-d",
+        help=(
+            "Enable pedagogical restructuring mode. "
+            "The LLM first analyses the full document to build a teaching blueprint "
+            "(concept dependencies, optimal order, sections to expand), then generates "
+            "the output using that blueprint — reordering content where needed for "
+            "maximum comprehension. Uses prompt caching to avoid re-billing the "
+            "document tokens in the second phase."
+        ),
+    ),    compression: Optional[int] = typer.Option(
+        None,
+        "--compression",
+        "-c",
+        min=1,
+        max=100,
+        help=(
+            "Target output length as a percentage of the original text (1\u2013100). "
+            "10 = very brief (only essentials); 50 = moderate; 90 = near-complete. "
+            "Omit to let the LLM decide based on the selected mode."
+        ),
+    ),    output: Optional[Path] = typer.Option(
         None, "--output", "-o", help="Output .md file path"
     ),
     model: Optional[str] = typer.Option(None, help="LLM model to use (overrides config)"),
@@ -72,6 +96,8 @@ def summarize_file(
     (the LLM writes in that language natively, no post-translation step).
     Use [bold]--preserve-terms[/bold] to keep technical terms from the source language
     alongside their equivalents, e.g.: شبکه عصبی (neural network).
+    Use [bold]--didactic[/bold] for a two-phase pedagogical pipeline that reorders and
+    expands content for maximum comprehension, backed by prompt caching.
     """
     if ctx.invoked_subcommand is not None:
         return
@@ -98,9 +124,15 @@ def summarize_file(
     if proxy:
         settings.llm.proxy = proxy
 
-    logger.info(f"Starting summarization [{mode}] for: {file_path}")
+    logger.info(f"Starting summarization [{mode}{'|didactic' if didactic else ''}{'|' + str(compression) + '%' if compression else ''}] for: {file_path}")
 
-    summarizer = TextSummarizer(mode=mode, output_lang=output_lang, preserve_terms=preserve_terms)
+    summarizer = TextSummarizer(
+        mode=mode,
+        output_lang=output_lang,
+        preserve_terms=preserve_terms,
+        didactic=didactic,
+        compression=compression,
+    )
 
     try:
         result = ""

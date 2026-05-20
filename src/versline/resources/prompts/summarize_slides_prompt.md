@@ -8,6 +8,8 @@ Guidelines:
 * Under each slide title, list 3–5 concise bullet points — key messages, not full sentences
 * Keep bullets short and impactful, suitable for projected slides
 * Cover all major topics from the source material in a logical sequence
+* {didactic_instruction}
+* {compression_instruction}
 * {language_instruction}
 * {terms_instruction}
 * Output ONLY the slide outline in valid Markdown, ready to be concatenated with adjacent sections
