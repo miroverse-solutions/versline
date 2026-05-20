@@ -47,6 +47,27 @@ def get_http_client(proxy_url: Optional[str] = None, timeout_seconds: float = 30
         return httpx.Client(proxy=proxy_url, timeout=timeout_seconds)
     return httpx.Client(timeout=timeout_seconds)
 
+
+_AVALAI_DEFAULT_LOOKUP_URL = "https://api.avalai.ir/user/v1/transactions/lookup"
+
+
+def _derive_avalai_lookup_url(api_endpoint: Optional[str] = None) -> str:
+    """Derive the AvalAI transaction lookup URL from the configured API endpoint.
+
+    If the endpoint is hosted on avalapis.ir, the lookup URL mirrors that domain;
+    otherwise the canonical api.avalai.ir endpoint is used.
+    """
+    if not api_endpoint:
+        return _AVALAI_DEFAULT_LOOKUP_URL
+    from urllib.parse import urlparse
+    parsed = urlparse(api_endpoint)
+    host = parsed.hostname or ""
+    if host and "avalai" in host:
+        scheme = parsed.scheme or "https"
+        return f"{scheme}://{host}/user/v1/transactions/lookup"
+    return _AVALAI_DEFAULT_LOOKUP_URL
+
+
 def lookup_avalai_cost(
     request_ids: List[str],
     api_key: str,
@@ -54,6 +75,7 @@ def lookup_avalai_cost(
     wait_time: float = 5.0,
     proxy: Optional[str] = None,
     timeout_seconds: float = 30.0,
+    lookup_url: Optional[str] = None,
 ) -> CostReport:
     """Lookup exact cost for AvalAI requests."""
     if not request_ids:
@@ -61,7 +83,9 @@ def lookup_avalai_cost(
     
     if not api_key:
         return CostReport(total_cost_usd=0.0, total_cost_irt=0.0, error="No API key")
-    
+
+    resolved_lookup_url = lookup_url or _AVALAI_DEFAULT_LOOKUP_URL
+
     # Wait a bit for transactions to settle if needed (though API is usually fast)
     # The original code waited.
     if wait_time > 0:
@@ -71,7 +95,7 @@ def lookup_avalai_cost(
         for attempt in range(max_retries):
             try:
                 response = http_client.post(
-                    "https://api.avalai.ir/user/v1/transactions/lookup",
+                    resolved_lookup_url,
                     headers={
                         "Authorization": f"Bearer {api_key}",
                         "Content-Type": "application/json",
@@ -151,6 +175,7 @@ def print_cost_report(
                 tracker.avalai_request_ids,
                 lookup_api_key,
                 proxy=lookup_proxy,
+                lookup_url=_derive_avalai_lookup_url(settings.llm.api_endpoint),
             )
             if not report.error:
                 table.add_row("AvalAI Cost (Exact)", f"{report.total_cost_irt:,.0f} IRT")
