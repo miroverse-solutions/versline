@@ -374,6 +374,65 @@ versline translate [OPTIONS] FILE_PATH
 
 ---
 
+### 📄 `summarize`
+Summarize any document in one of three modes using LLMs. Non-markdown files (DOCX, PDF, PPTX, etc.) are automatically converted to markdown before processing. The document is split at heading boundaries to avoid breaking semantic meaning.
+
+**Usage:**
+```bash
+versline summarize [OPTIONS] FILE_PATH
+```
+
+**Arguments:**
+- `FILE_PATH`: Path to the input file (Markdown, TXT, DOCX, PDF, PPTX, …). [Required]
+
+**Options:**
+| Option | Short | Description | Default |
+| :--- | :--- | :--- | :--- |
+| `--mode` | `-m` | Summarization mode: `outline`, `detailed`, or `slides`. | `"detailed"` |
+| `--output-lang` | `-l` | Language to write the summary in (`auto` = same as source). Example: `Persian`, `English`. | `"auto"` |
+| `--preserve-terms / --no-preserve-terms` | | When outputting in a different language, include the original-language term in parentheses after each specialised technical term. | `True` |
+| `--output` | `-o` | Output `.md` file path. | `[name]_summary_[mode].md` |
+| `--model` | | LLM Model name. | Config |
+| `--provider` | | Service provider. | Config |
+| `--api-key` | | API Key. | Config |
+| `--api-endpoint` | | Custom API Endpoint. | Config |
+| `--proxy` | | Proxy URL. | Config |
+
+**Modes:**
+
+| Mode | Description |
+| :--- | :--- |
+| `outline` | Hierarchical detailed outline (فهرست تفصیلی) — section/subsection tree with key bullet points |
+| `detailed` | Detailed study-ready summary (خلاصه تفصیلی) — flowing prose preserving all important concepts |
+| `slides` | Full slide outline for presentation (اوت‌لاین اسلاید) — section headers + per-slide bullet points |
+
+> **Note on `--output-lang`:** The LLM generates the summary *directly* in the target language — there is no separate translation step. This produces more natural output and avoids the semantic loss of a translate-after-summarize pipeline.
+
+> **Note on `--preserve-terms`:** Enabled by default when `--output-lang` differs from the source. The LLM is instructed to write each specialised term followed by the source-language original in parentheses, e.g. *هوش مصنوعی (artificial intelligence)*. Use `--no-preserve-terms` to suppress this.
+
+**Examples:**
+```bash
+# Detailed summary in the same language as the source (default)
+versline summarize lecture.md
+
+# Hierarchical outline
+versline summarize chapter.pdf --mode outline
+
+# Summary generated directly in Persian (no translation step)
+versline summarize paper.md --output-lang Persian
+
+# Slide outline in English, keeping technical terms from the original Farsi source
+versline summarize presentation.md --mode slides --output-lang English --preserve-terms
+
+# Suppress parenthetical original terms
+versline summarize notes.md --output-lang French --no-preserve-terms
+
+# Slide deck blueprint with custom output path
+versline summarize report.docx --mode slides --output report_slides.md
+```
+
+---
+
 ### 🧠 `qude`
 Generate Flashcards (Anki) or Multiple Choice Questions (MCQ) from documents.
 
@@ -820,7 +879,25 @@ result = translator.process_file(
 )
 ```
 
-**3. Qualitative Coding in Library Mode:**
+**3. Summarize a Document:**
+```python
+from versline.services.summarizer import TextSummarizer
+
+# Default: same language as source, detailed mode
+summarizer = TextSummarizer(mode="detailed")
+markdown_summary = summarizer.process_file("lecture.pdf")
+
+# Generate a Persian summary of an English paper directly (no translation step)
+summarizer = TextSummarizer(mode="detailed", output_lang="Persian", preserve_terms=True)
+persian_summary = summarizer.process_file("paper.md")
+# Technical terms appear as: شبکه عصبی (neural network)
+
+# Presentation slide outline in English
+slide_summarizer = TextSummarizer(mode="slides", output_lang="English")
+slide_outline = slide_summarizer.process_file("report.docx")
+```
+
+**4. Qualitative Coding in Library Mode:**
 ```python
 from versline import QualitativeCoder, settings
 
