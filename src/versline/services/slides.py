@@ -970,6 +970,7 @@ class MarkdownSlideDeckGenerator:
         uniform_size: bool = True,
         slide_size: str = "medium",
         use_impress: bool = False,
+        user_note: Optional[str] = None,
     ):
         self.provider = provider or settings.llm.provider or "Google"
         self.model = model or settings.llm.model
@@ -985,6 +986,7 @@ class MarkdownSlideDeckGenerator:
         self.uniform_size = uniform_size
         self.slide_size = slide_size.lower() if slide_size.lower() in _SLIDE_SIZES else "medium"
         self.use_impress = use_impress
+        self.user_note = user_note
         self.tracker = TokenTracker()
         self.prompt_template = self._load_prompt_template()
         self.add_prompt_template = self._load_add_prompt_template()
@@ -1064,6 +1066,8 @@ class MarkdownSlideDeckGenerator:
                 "UNIFORM SLIDE DIMENSIONS: All slides MUST have identical dimensions. Do not vary the size, "
                 "scale factor, or padding between slides. Set data-scale=\"1\" on all slide elements."
             )
+        if self.user_note:
+            instructions.append(f"USER NOTE: {self.user_note}")
         if not instructions:
             return ""
         lines = "\n".join(f"- {instr}" for instr in instructions)

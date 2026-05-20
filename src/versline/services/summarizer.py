@@ -61,6 +61,7 @@ class TextSummarizer:
         preserve_terms: bool = True,
         didactic: bool = False,
         compression: Optional[int] = None,
+        user_note: Optional[str] = None,
     ):
         if mode not in MODES:
             raise ValueError(f"Invalid mode '{mode}'. Choose from: {list(MODES)}")
@@ -71,6 +72,7 @@ class TextSummarizer:
         self.preserve_terms = preserve_terms
         self.didactic = didactic
         self.compression = compression
+        self.user_note = user_note
         self.tracker = TokenTracker()
 
         try:
@@ -215,6 +217,8 @@ class TextSummarizer:
             didactic_instruction=self._didactic_instruction(),
             compression_instruction=self._compression_instruction(),
         )
+        if self.user_note:
+            prompt = prompt + f"\n\n---\n\n**Additional instructions from user:**\n{self.user_note}"
 
         for attempt in range(max_retries):
             try:
@@ -303,6 +307,8 @@ class TextSummarizer:
     def _analyse_pedagogically(self, full_text: str, model_name: str) -> str:
         """Phase 1: send the full document and return a pedagogical blueprint."""
         prompt = self._didactic_analysis_template.format(text=full_text)
+        if self.user_note:
+            prompt = prompt + f"\n\n---\n\n**Additional instructions from user:**\n{self.user_note}"
         provider = (settings.llm.provider or "google").lower()
         logger.debug("Didactic analysis phase — sending full document for blueprint")
 
@@ -346,6 +352,8 @@ class TextSummarizer:
                 compression_instruction=self._compression_instruction(),
             )
         )
+        if self.user_note:
+            instruction = instruction + f"\n\n---\n\n**Additional instructions from user:**\n{self.user_note}"
 
         provider = (settings.llm.provider or "google").lower()
         logger.debug("Didactic generation phase — using prompt cache")

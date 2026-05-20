@@ -9,8 +9,9 @@ from versline.services.pricing import TokenTracker
 from versline.services.document_processor import convert_to_markdown
 
 class TextTranslator:
-    def __init__(self):
+    def __init__(self, user_note: str | None = None):
         self.tracker = TokenTracker()
+        self.user_note = user_note
         try:
             self.prompt_template = load_prompt("translation_prompt.md")
         except FileNotFoundError:
@@ -79,6 +80,8 @@ class TextTranslator:
 
     def translate_chunk(self, text, target_language, model_name, max_retries=3):
         prompt = self.prompt_template.format(target_language=target_language, text=text)
+        if self.user_note:
+            prompt = prompt + f"\n\n---\n\n**Additional instructions from user:**\n{self.user_note}"
         
         for attempt in range(max_retries):
             try:

@@ -7,6 +7,7 @@ from loguru import logger
 from versline.services.summarizer import TextSummarizer, MODES, _AUTO_LANG
 from versline.config import settings
 from versline.services.pricing import print_cost_report
+from versline.core.prompts import resolve_user_note
 from typing import Optional
 
 app = typer.Typer(help="Summarize files in multiple modes.")
@@ -83,6 +84,8 @@ def summarize_file(
     api_key: Optional[str] = typer.Option(None, help="API key for the provider"),
     api_endpoint: Optional[str] = typer.Option(None, help="Custom API endpoint"),
     proxy: Optional[str] = typer.Option(None, help="Proxy URL"),
+    note: Optional[str] = typer.Option(None, "--note", help="Additional instruction to append to the prompt"),
+    note_file: Optional[Path] = typer.Option(None, "--note-file", help="Path to a .md or .txt file with an additional instruction"),
 ):
     """
     [bold blue]Summarize a file[/bold blue] using one of three modes:
@@ -132,6 +135,7 @@ def summarize_file(
         preserve_terms=preserve_terms,
         didactic=didactic,
         compression=compression,
+        user_note=resolve_user_note(note=note, note_file=str(note_file) if note_file else None),
     )
 
     try:

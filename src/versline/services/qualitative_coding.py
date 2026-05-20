@@ -45,6 +45,7 @@ class QualitativeCoder:
         export_excel: bool = True,
         force: bool = False,
         central_concepts_path: Optional[str] = None,
+        user_note: Optional[str] = None,
     ):
         self.tracker = TokenTracker()
         self.output_dir = Path(output_dir)
@@ -62,6 +63,7 @@ class QualitativeCoder:
         self.export_excel = export_excel
         self.last_parse_failures = 0
         self.force = force
+        self.user_note = user_note
 
         self.provider = (settings.llm.provider or "openai").lower()
         if self.provider == "google":
@@ -519,7 +521,8 @@ class QualitativeCoder:
             f"{codebook_instruction}\n\n"
             f"{central_concepts_instruction}\n\n"
             f"{language_instruction}\n\n"
-            "Analyze the following input and return only a JSON object:\n"
+            + (f"**Additional instructions from user:**\n{self.user_note}\n\n" if self.user_note else "")
+            + "Analyze the following input and return only a JSON object:\n"
             f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
         )
 

@@ -7,6 +7,7 @@ from loguru import logger
 from versline.services.translation import TextTranslator
 from versline.config import settings
 from versline.services.pricing import print_cost_report
+from versline.core.prompts import resolve_user_note
 
 app = typer.Typer(help="Translate files.")
 
@@ -47,6 +48,8 @@ def translate_file(
     api_endpoint: Optional[str] = typer.Option(None, help="Custom API Endpoint"),
     proxy: Optional[str] = typer.Option(None, help="Proxy URL"),
     force: bool = typer.Option(False, "--force", "-f", help="Force re-translation (ignore cache)"),
+    note: Optional[str] = typer.Option(None, "--note", help="Additional instruction to append to the prompt"),
+    note_file: Optional[Path] = typer.Option(None, "--note-file", help="Path to a .md or .txt file with an additional instruction"),
 ):
     """
     [bold blue]Translate a file[/bold blue] to a target language.
@@ -73,7 +76,8 @@ def translate_file(
 
     logger.info(f"Starting translation for: {file_path}")
     
-    translator = TextTranslator()
+    user_note = resolve_user_note(note=note, note_file=str(note_file) if note_file else None)
+    translator = TextTranslator(user_note=user_note)
     
     try:
         final_text = ""

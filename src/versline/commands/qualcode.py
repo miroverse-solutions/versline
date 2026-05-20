@@ -9,6 +9,7 @@ from loguru import logger
 from versline.config import settings
 from versline.services.qualitative_coding import QualitativeCoder
 from versline.services.pricing import print_cost_report
+from versline.core.prompts import resolve_user_note
 
 app = typer.Typer(help="Qualitative coding for Markdown files with multiple research methods.")
 
@@ -59,6 +60,8 @@ def qualcode_file(
     api_endpoint: Optional[str] = typer.Option(None, "--api-endpoint", help="Custom API endpoint"),
     proxy: Optional[str] = typer.Option(None, "--proxy", help="Proxy URL"),
     force: bool = typer.Option(False, "--force", "-f", help="Force rerun and ignore progress cache"),
+    note: Optional[str] = typer.Option(None, "--note", help="Additional instruction to append to the prompt"),
+    note_file: Optional[Path] = typer.Option(None, "--note-file", help="Path to a .md or .txt file with an additional instruction"),
 ):
     """Run qualitative coding analysis on a markdown/text file."""
     if ctx.invoked_subcommand is not None:
@@ -100,6 +103,7 @@ def qualcode_file(
             words_per_batch=words_per_batch,
             force=force,
             central_concepts_path=str(central_concepts) if central_concepts else None,
+            user_note=resolve_user_note(note=note, note_file=str(note_file) if note_file else None),
         )
 
         with Progress(

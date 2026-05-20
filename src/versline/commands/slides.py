@@ -8,6 +8,7 @@ from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn
 from versline.config import settings
 from versline.services.pricing import print_cost_report
 from versline.services.slides import MarkdownSlideDeckGenerator
+from versline.core.prompts import resolve_user_note
 
 app = typer.Typer(help="Generate immersive HTML/CSS/TypeScript slide decks from Markdown.")
 
@@ -84,6 +85,8 @@ def generate_slides(
             "Produces a standalone HTML deck; impress.js is bundled automatically."
         ),
     ),
+    note: Optional[str] = typer.Option(None, "--note", help="Additional instruction to append to the prompt"),
+    note_file: Optional[Path] = typer.Option(None, "--note-file", help="Path to a .md or .txt file with an additional instruction"),
 ):
     """Generate a premium slide deck from markdown using LLM-guided code generation."""
     if ctx.invoked_subcommand is not None:
@@ -123,6 +126,7 @@ def generate_slides(
         uniform_size=uniform_size,
         slide_size=slide_size,
         use_impress=use_impress,
+        user_note=resolve_user_note(note=note, note_file=str(note_file) if note_file else None),
     )
 
     try:

@@ -9,7 +9,7 @@ from versline.services.transcription import AudioTranscriber
 from versline.config import settings
 from versline.services.network import download_file
 from versline.services.pricing import print_cost_report
-from versline.core.prompts import load_prompt
+from versline.core.prompts import load_prompt, resolve_user_note
 
 app = typer.Typer(help="Transcribe audio/video files.")
 
@@ -29,6 +29,8 @@ def transcribe_file(
     prompt_file: Optional[Path] = typer.Option(None, help="Custom system prompt file"),
     json_output: bool = typer.Option(False, "--json", "-j", help="Output in JSON format (using predefined schema)"),
     force: bool = typer.Option(False, "--force", "-f", help="Force re-transcription (ignore cache)"),
+    note: Optional[str] = typer.Option(None, "--note", help="Additional instruction to append to the prompt"),
+    note_file: Optional[Path] = typer.Option(None, "--note-file", help="Path to a .md or .txt file with an additional instruction"),
 ):
     """
     Transcribe a single file (or URL).
@@ -82,7 +84,8 @@ def transcribe_file(
 
     logger.info(f"Starting transcription for: {resolved_path}")
     
-    transcriber = AudioTranscriber()
+    user_note = resolve_user_note(note=note, note_file=str(note_file) if note_file else None)
+    transcriber = AudioTranscriber(user_note=user_note)
     if prompt_file:
         if prompt_file.exists():
             transcriber.transcription_prompt = prompt_file.read_text(encoding="utf-8")

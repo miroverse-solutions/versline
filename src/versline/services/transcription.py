@@ -14,8 +14,9 @@ from versline.utils.common import find_best_text_overlap_point
 from versline.services.pricing import TokenTracker
 
 class AudioTranscriber:
-    def __init__(self):
+    def __init__(self, user_note: str | None = None):
         self.tracker = TokenTracker()
+        self.user_note = user_note
         try:
             self.transcription_prompt = load_prompt("transcription_prompt.md")
         except FileNotFoundError:
@@ -82,15 +83,15 @@ class AudioTranscriber:
 
     def build_prompt_with_context(self, base_prompt, chunk_index, speaker_samples=None):
         if chunk_index == 0 or not speaker_samples:
-            return base_prompt
-        
-        speaker_examples = []
-        for speaker_name, sample in speaker_samples.items():
-            speaker_examples.append(f"- **{speaker_name}:** «{sample}»")
-        
-        speaker_list_text = "\n".join(speaker_examples)
-        
-        context_instruction = f"""
+            prompt = base_prompt
+        else:
+            speaker_examples = []
+            for speaker_name, sample in speaker_samples.items():
+                speaker_examples.append(f"- **{speaker_name}:** «{sample}»")
+            
+            speaker_list_text = "\n".join(speaker_examples)
+            
+            context_instruction = f"""
 [بخش ۳: زمینه و نمونه صدای گویندگان از چانک‌های قبلی]
 ⚠️ این چانک ادامه چانک‌های قبلی است. تاکنون، گویندگان زیر شناسایی شده‌اند و نمونه‌ای از آخرین صحبت‌های هرکدام را در زیر می‌بینی:
 
@@ -106,15 +107,20 @@ class AudioTranscriber:
 **گوینده دوم:** ...
 **گوینده اول:** ...
 """
-        parts = base_prompt.split('[بخش ۴:', 1)
-        if len(parts) == 2:
-            return parts[0] + context_instruction + '\n[بخش ۴:' + parts[1]
-        
-        parts2 = base_prompt.split('[بخش ۴', 1)
-        if len(parts2) == 2:
-            return parts2[0] + context_instruction + '\n[بخش ۴' + parts2[1]
-            
-        return base_prompt + '\n' + context_instruction
+            parts = base_prompt.split('[بخش ۴:', 1)
+            if len(parts) == 2:
+                prompt = parts[0] + context_instruction + '\n[بخش ۴:' + parts[1]
+            else:
+                parts2 = base_prompt.split('[بخش ۴', 1)
+                if len(parts2) == 2:
+                    prompt = parts2[0] + context_instruction + '\n[بخش ۴' + parts2[1]
+                else:
+                    prompt = base_prompt + '\n' + context_instruction
+
+        if self.user_note:
+            prompt = prompt + f"\n\n---\n\n**Additional instructions from user:**\n{self.user_note}"
+
+        return prompt
 
     def save_progress(self, progress_file: str, chunk_index: int, transcriptions: list, chunk_meta: dict | None = None, speaker_samples: dict | None = None):
         data = {
