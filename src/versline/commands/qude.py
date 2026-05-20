@@ -9,6 +9,7 @@ from versline.core.constants import (
     DEFAULT_PAGES_PER_BATCH,
     DEFAULT_WORDS_PER_BATCH,
 )
+from versline.core.prompts import resolve_user_note
 
 app = typer.Typer(help="Generate questions from documents.")
 
@@ -40,6 +41,8 @@ def main(
     debug: bool = typer.Option(False, "--debug", help="Enable debug mode"),
     no_cache: bool = typer.Option(False, "--no-cache", help="Disable caching"),
     regenerate: bool = typer.Option(False, "--regenerate", "-r", help="Regenerate outputs from cache only"),
+    note: Optional[str] = typer.Option(None, "--note", help="Additional instruction to append to the prompt"),
+    note_file: Optional[Path] = typer.Option(None, "--note-file", help="Path to a .md or .txt file with additional instructions"),
 ):
     """
     Generate questions (Flashcards, MCQs) from documents (PDF, PPTX, DOCX, etc.).
@@ -72,6 +75,7 @@ def main(
         force=force,
         debug=debug,
         no_cache=no_cache,
+        user_note=resolve_user_note(note, str(note_file) if note_file else None),
     )
 
     if regenerate:

@@ -55,6 +55,7 @@ class QuestionDesigner:
         force: bool = False,
         debug: bool = False,
         no_cache: bool = False,
+        user_note: Optional[str] = None,
     ):
         self.input_path = Path(input_path)
         self.output_dir = Path(output_dir)
@@ -82,6 +83,7 @@ class QuestionDesigner:
         self.force = force
         self.debug = debug
         self.no_cache = no_cache
+        self.user_note = user_note
         
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
@@ -122,6 +124,9 @@ class QuestionDesigner:
                 qty_text = "Generate as many questions as possible to cover all key details and concepts found in the text."
                 
             self.system_prompt = self.system_prompt.replace("{{num_questions}}", qty_text)
+
+            if self.user_note:
+                self.system_prompt += f"\n\n---\n\n**Additional instructions from user:**\n{self.user_note}"
             
         except Exception as e:
             console.print(f"[red]Error loading prompts: {e}[/red]")

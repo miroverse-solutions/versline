@@ -501,6 +501,8 @@ versline qude [OPTIONS] INPUT_PATH
 | `--no-cache` | | Disable caching entirely. | `False` |
 | `--regenerate` | `-r` | Regenerate output files from existing cache (no AI calls). | `False` |
 | `--debug` | | Enable debug logging. | `False` |
+| `--note` | | Additional instruction appended to the prompt (inline string). | `None` |
+| `--note-file` | | Path to a `.md` or `.txt` file whose content is appended to the prompt. | `None` |
 
 ---
 
