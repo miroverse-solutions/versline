@@ -75,6 +75,15 @@ def generate_slides(
             "Set to 0 (default) to disable chunking and process the whole file at once."
         ),
     ),
+    use_impress: bool = typer.Option(
+        False,
+        "--impress/--no-impress",
+        help=(
+            "Generate slides using Impress.js for cinematic 3D spatial navigation "
+            "with zoom, rotation, and depth transitions. "
+            "Produces a standalone HTML deck; impress.js is bundled automatically."
+        ),
+    ),
 ):
     """Generate a premium slide deck from markdown using LLM-guided code generation."""
     if ctx.invoked_subcommand is not None:
@@ -113,6 +122,7 @@ def generate_slides(
         no_scroll=no_scroll,
         uniform_size=uniform_size,
         slide_size=slide_size,
+        use_impress=use_impress,
     )
 
     try:
@@ -140,6 +150,9 @@ def generate_slides(
         logger.success(f"TypeScript: {result['main_ts']}")
         logger.success(f"Spatial mapping: {result['spatial_mapping']}")
         logger.success(f"Font file: {result['font_file']}")
+
+        if result.get("impress_js"):
+            logger.success(f"Impress.js: {result['impress_js']}")
 
         if result.get("dist_dir"):
             logger.success(f"Vite build output: {result['dist_dir']}")

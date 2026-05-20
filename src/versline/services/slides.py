@@ -20,11 +20,38 @@ DEFAULT_SLIDES_FONT_PATH = (
     Path(__file__).resolve().parent.parent / "resources" / "assets" / "Vazirmatn[wght].ttf"
 )
 
+IMPRESS_JS_ASSET_PATH = (
+    Path(__file__).resolve().parent.parent / "resources" / "assets" / "impress.min.js"
+)
+IMPRESS_JS_CDN_URL = "https://cdn.jsdelivr.net/npm/impress.js@2.0.0/js/impress.min.js"
+
 _SLIDE_SIZES: Dict[str, tuple] = {
     "small":  ("720px", "480px"),
     "medium": ("960px", "640px"),
     "large":  ("1280px", "800px"),
 }
+
+
+def _ensure_impress_js_asset() -> Path:
+    """Return path to impress.min.js, downloading it from CDN if not yet cached."""
+    if IMPRESS_JS_ASSET_PATH.exists() and IMPRESS_JS_ASSET_PATH.stat().st_size > 0:
+        return IMPRESS_JS_ASSET_PATH
+
+    import urllib.request
+
+    logger.info(f"Downloading impress.js from {IMPRESS_JS_CDN_URL} ...")
+    try:
+        with urllib.request.urlopen(IMPRESS_JS_CDN_URL, timeout=30) as response:  # noqa: S310
+            content = response.read()
+        IMPRESS_JS_ASSET_PATH.write_bytes(content)
+        logger.info(f"impress.js cached at {IMPRESS_JS_ASSET_PATH} ({len(content):,} bytes)")
+        return IMPRESS_JS_ASSET_PATH
+    except Exception as exc:
+        raise RuntimeError(
+            f"Could not download impress.js: {exc}\n"
+            f"Please manually download impress.js from {IMPRESS_JS_CDN_URL} "
+            f"and place it at {IMPRESS_JS_ASSET_PATH}"
+        ) from exc
 
 
 @dataclass
@@ -361,6 +388,56 @@ def apply_local_font_bundle(
 ) -> SlideDeckArtifacts:
     clean_html = strip_external_links_from_html(artifacts.index_html)
     clean_html = ensure_local_module_script_entry(clean_html)
+    clean_css = strip_external_imports_from_css(artifacts.style_css)
+    clean_css = strip_conflicting_vazirmatn_face_from_css(clean_css)
+    font_css = build_local_font_css(font_file_name, font_family, variable_font, font_format)
+
+    return SlideDeckArtifacts(
+        spatial_mapping=artifacts.spatial_mapping,
+        index_html=clean_html.strip(),
+        style_css=(font_css + "\n\n" + clean_css.strip()).strip(),
+        main_ts=artifacts.main_ts,
+    )
+
+
+def ensure_impress_script_tags(html_content: str) -> str:
+    """Ensure `impress.min.js` script and `impress().init()` call are present before </body>."""
+    if not html_content.strip():
+        return html_content
+
+    has_impress_src = "impress.min.js" in html_content
+    has_impress_init = "impress().init()" in html_content
+
+    if has_impress_src and has_impress_init:
+        return html_content
+
+    injection = ""
+    if not has_impress_src:
+        injection += '\n  <script src="impress.min.js"></script>'
+    if not has_impress_init:
+        injection += "\n  <script>impress().init();</script>"
+
+    if "</body>" in html_content:
+        return html_content.replace("</body>", f"{injection}\n</body>", 1)
+    return html_content + injection
+
+
+def apply_impress_js_bundle(
+    artifacts: SlideDeckArtifacts,
+    font_file_name: str,
+    font_family: str,
+    variable_font: bool,
+    font_format: str,
+) -> SlideDeckArtifacts:
+    """Post-process artifacts for Impress.js mode.
+
+    - Strips external CDN links/imports (keeps local asset references intact).
+    - Injects local @font-face and broad font-family rule.
+    - Ensures impress.js script tags are present.
+    - Preserves the LLM-generated main_ts (no TypeScript runtime override).
+    """
+    clean_html = strip_external_links_from_html(artifacts.index_html)
+    clean_html = ensure_impress_script_tags(clean_html)
     clean_css = strip_external_imports_from_css(artifacts.style_css)
     clean_css = strip_conflicting_vazirmatn_face_from_css(clean_css)
     font_css = build_local_font_css(font_file_name, font_family, variable_font, font_format)
@@ -743,7 +820,8 @@ def inject_slides_into_deck(existing_html: str, new_slides_html: str) -> str:
 
         soup = BeautifulSoup(existing_html, "html.parser")
         container = (
-            soup.find(id="world")
+            soup.find(id="impress")
+            or soup.find(id="world")
             or soup.find(id="camera")
             or soup.select_one("#viewport > div")
             or soup.find("body")
@@ -891,6 +969,7 @@ class MarkdownSlideDeckGenerator:
         no_scroll: bool = True,
         uniform_size: bool = True,
         slide_size: str = "medium",
+        use_impress: bool = False,
     ):
         self.provider = provider or settings.llm.provider or "Google"
         self.model = model or settings.llm.model
@@ -905,6 +984,7 @@ class MarkdownSlideDeckGenerator:
         self.no_scroll = no_scroll
         self.uniform_size = uniform_size
         self.slide_size = slide_size.lower() if slide_size.lower() in _SLIDE_SIZES else "medium"
+        self.use_impress = use_impress
         self.tracker = TokenTracker()
         self.prompt_template = self._load_prompt_template()
         self.add_prompt_template = self._load_add_prompt_template()
@@ -914,9 +994,13 @@ class MarkdownSlideDeckGenerator:
             if not self.prompt_path.exists():
                 raise FileNotFoundError(f"Prompt file not found: {self.prompt_path}")
             return self.prompt_path.read_text(encoding="utf-8")
+        if self.use_impress:
+            return load_prompt("slides_impress_prompt.md")
         return load_prompt("slides_prompt.md")
 
     def _load_add_prompt_template(self) -> str:
+        if self.use_impress:
+            return load_prompt("slides_impress_add_prompt.md")
         return load_prompt("slides_add_prompt.md")
 
     def _resolve_provider_name(self) -> str:
@@ -1188,19 +1272,31 @@ class MarkdownSlideDeckGenerator:
         font_target_path = deck_dir / font_source_path.name
         shutil.copy2(font_source_path, font_target_path)
 
-        artifacts = apply_local_font_bundle(
-            artifacts=artifacts,
-            font_file_name=font_target_path.name,
-            font_family=self.font_family,
-            variable_font=_is_variable_font(font_source_path),
-            font_format=_css_font_format(font_source_path),
-        )
-        artifacts = apply_runtime_and_responsive_defaults(
-            artifacts,
-            no_scroll=self.no_scroll,
-            uniform_size=self.uniform_size,
-            slide_size=self.slide_size,
-        )
+        if self.use_impress:
+            impress_js_source = _ensure_impress_js_asset()
+            impress_js_target = deck_dir / "impress.min.js"
+            shutil.copy2(impress_js_source, impress_js_target)
+            artifacts = apply_impress_js_bundle(
+                artifacts=artifacts,
+                font_file_name=font_target_path.name,
+                font_family=self.font_family,
+                variable_font=_is_variable_font(font_source_path),
+                font_format=_css_font_format(font_source_path),
+            )
+        else:
+            artifacts = apply_local_font_bundle(
+                artifacts=artifacts,
+                font_file_name=font_target_path.name,
+                font_family=self.font_family,
+                variable_font=_is_variable_font(font_source_path),
+                font_format=_css_font_format(font_source_path),
+            )
+            artifacts = apply_runtime_and_responsive_defaults(
+                artifacts,
+                no_scroll=self.no_scroll,
+                uniform_size=self.uniform_size,
+                slide_size=self.slide_size,
+            )
 
         # --- Subsequent chunks: append slides only ---
         for chunk_idx, chunk in enumerate(chunks[1:], start=2):
@@ -1238,6 +1334,9 @@ class MarkdownSlideDeckGenerator:
             "spatial_mapping": str(mapping_path),
             "font_file": str(font_target_path),
         }
+
+        if self.use_impress:
+            result["impress_js"] = str(deck_dir / "impress.min.js")
 
         if build:
             dist_dir = self._build_with_vite(
