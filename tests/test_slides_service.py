@@ -2,11 +2,15 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from versline.services.slides import (
+    IMPRESS_JS_ASSET_PATH,
     SlideDeckArtifacts,
+    apply_impress_js_bundle,
     apply_local_font_bundle,
     apply_runtime_and_responsive_defaults,
+    ensure_impress_script_tags,
     extract_slide_artifacts,
     write_vite_project_files,
 )
@@ -138,6 +142,158 @@ body { margin: 0; }
         self.assertIn("margin-left: 0 !important", normalized.style_css)
         self.assertIn(".slide.active", normalized.style_css)
         self.assertIn("@media (max-width: 600px)", normalized.style_css)
+
+
+class TestEnsureImpressScriptTags(unittest.TestCase):
+    def test_already_complete_unchanged(self):
+        html = (
+            "<html><body>"
+            '<script src="impress.min.js"></script>'
+            "<script>impress().init();</script>"
+            "</body></html>"
+        )
+        result = ensure_impress_script_tags(html)
+        self.assertEqual(result.count('src="impress.min.js"'), 1)
+        self.assertEqual(result.count("impress().init()"), 1)
+
+    def test_injects_both_when_missing(self):
+        html = "<html><body><div id='impress'></div></body></html>"
+        result = ensure_impress_script_tags(html)
+        self.assertIn('src="impress.min.js"', result)
+        self.assertIn("impress().init();", result)
+        self.assertIn("</body>", result)
+        impress_js_pos = result.index('src="impress.min.js"')
+        body_close_pos = result.index("</body>")
+        self.assertLess(impress_js_pos, body_close_pos)
+
+    def test_injects_only_missing_src(self):
+        html = "<html><body><script>impress().init();</script></body></html>"
+        result = ensure_impress_script_tags(html)
+        self.assertIn('src="impress.min.js"', result)
+        self.assertEqual(result.count("impress().init()"), 1)
+
+    def test_injects_only_missing_init(self):
+        html = '<html><body><script src="impress.min.js"></script></body></html>'
+        result = ensure_impress_script_tags(html)
+        self.assertIn("impress().init();", result)
+        self.assertEqual(result.count('src="impress.min.js"'), 1)
+
+    def test_appends_at_end_when_no_body_tag(self):
+        html = "<div id='impress'><div class='step slide' data-x='0' data-y='0'>Slide</div></div>"
+        result = ensure_impress_script_tags(html)
+        self.assertIn('src="impress.min.js"', result)
+        self.assertIn("impress().init();", result)
+
+    def test_empty_input_returns_empty(self):
+        self.assertEqual(ensure_impress_script_tags(""), "")
+        self.assertEqual(ensure_impress_script_tags("   "), "   ")
+
+
+class TestApplyImpressJsBundle(unittest.TestCase):
+    def _make_artifacts(self, html="", css="", main_ts="// Navigation is handled by impress.js"):
+        return SlideDeckArtifacts(
+            spatial_mapping="test",
+            index_html=html or (
+                "<html><head>"
+                "<link rel='stylesheet' href='https://cdn.example.com/reset.css'>"
+                "<script src='https://cdn.example.com/lib.js'></script>"
+                "</head>"
+                "<body>"
+                "<div id='impress'>"
+                "<div class='step slide' data-x='0' data-y='0'>Slide 1</div>"
+                "</div>"
+                "</body></html>"
+            ),
+            style_css=css or "@import url('https://fonts.googleapis.com/css2?family=Inter&display=swap');\nbody { margin: 0; }",
+            main_ts=main_ts,
+        )
+
+    def test_strips_external_cdn_links(self):
+        artifacts = self._make_artifacts()
+        result = apply_impress_js_bundle(
+            artifacts, "Vazirmatn[wght].ttf", "Vazirmatn", True, "truetype"
+        )
+        self.assertNotIn("cdn.example.com", result.index_html)
+        self.assertNotIn("fonts.googleapis.com", result.style_css)
+
+    def test_injects_font_face(self):
+        artifacts = self._make_artifacts()
+        result = apply_impress_js_bundle(
+            artifacts, "Vazirmatn[wght].ttf", "Vazirmatn", True, "truetype"
+        )
+        self.assertIn("@font-face", result.style_css)
+        self.assertIn("Vazirmatn[wght].ttf", result.style_css)
+        self.assertIn("font-weight: 100 900", result.style_css)
+
+    def test_ensures_impress_script_tags_in_html(self):
+        artifacts = self._make_artifacts()
+        result = apply_impress_js_bundle(
+            artifacts, "Vazirmatn[wght].ttf", "Vazirmatn", True, "truetype"
+        )
+        self.assertIn('src="impress.min.js"', result.index_html)
+        self.assertIn("impress().init();", result.index_html)
+
+    def test_preserves_main_ts_placeholder(self):
+        placeholder = "// Navigation is handled by impress.js"
+        artifacts = self._make_artifacts(main_ts=placeholder)
+        result = apply_impress_js_bundle(
+            artifacts, "Vazirmatn[wght].ttf", "Vazirmatn", True, "truetype"
+        )
+        self.assertEqual(result.main_ts, placeholder)
+
+    def test_does_not_inject_module_type_on_impress_scripts(self):
+        """impress.min.js script must not become type=module."""
+        artifacts = self._make_artifacts()
+        result = apply_impress_js_bundle(
+            artifacts, "Vazirmatn[wght].ttf", "Vazirmatn", True, "truetype"
+        )
+        self.assertNotIn('type="module"', result.index_html)
+
+
+class TestEnsureImpressAssetCached(unittest.TestCase):
+    def test_returns_existing_asset_without_download(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_asset = Path(tmpdir) / "impress.min.js"
+            fake_asset.write_bytes(b"/* impress.js stub */")
+
+            with patch("versline.services.slides.IMPRESS_JS_ASSET_PATH", fake_asset):
+                from versline.services.slides import _ensure_impress_js_asset
+                path = _ensure_impress_js_asset()
+                self.assertEqual(path, fake_asset)
+
+
+class TestGeneratorImpressPromptLoading(unittest.TestCase):
+    def test_use_impress_loads_impress_prompt(self):
+        from versline.services.slides import MarkdownSlideDeckGenerator
+        gen = MarkdownSlideDeckGenerator(
+            provider="Google",
+            model="gemini-1.5-flash",
+            api_key="fake",
+            use_impress=True,
+        )
+        self.assertIn("Impress.js", gen.prompt_template)
+        self.assertIn("data-x", gen.prompt_template)
+
+    def test_use_impress_false_loads_standard_prompt(self):
+        from versline.services.slides import MarkdownSlideDeckGenerator
+        gen = MarkdownSlideDeckGenerator(
+            provider="Google",
+            model="gemini-1.5-flash",
+            api_key="fake",
+            use_impress=False,
+        )
+        self.assertNotIn("impress.js", gen.prompt_template.lower()[:200])
+
+    def test_use_impress_loads_impress_add_prompt(self):
+        from versline.services.slides import MarkdownSlideDeckGenerator
+        gen = MarkdownSlideDeckGenerator(
+            provider="Google",
+            model="gemini-1.5-flash",
+            api_key="fake",
+            use_impress=True,
+        )
+        self.assertIn("step slide", gen.add_prompt_template)
+        self.assertIn("data-x", gen.add_prompt_template)
 
 
 if __name__ == "__main__":
