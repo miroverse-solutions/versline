@@ -25,11 +25,17 @@ Continue placing new slides from that position, advancing by approximately 1100 
 # Output Contract (Strict)
 Return JSON only. Do not wrap the response in markdown code fences.
 Use this exact schema:
-```
 {
-  "new_slides_html": "<div class=\"slide\" data-x=\"...\" data-y=\"...\" data-scale=\"1\">...</div>"
+  "new_slides_json": [
+    {
+      "id": "slide-N",
+      "x": 0,
+      "y": 0,
+      "scale": 1,
+      "html": "<h2>Slide title</h2><p>content</p>"
+    }
+  ]
 }
-```
 
 # New Markdown Content
 {{markdown_content}}

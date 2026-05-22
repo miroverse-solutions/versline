@@ -7,33 +7,36 @@ from unittest.mock import patch
 from versline.services.slides import (
     IMPRESS_JS_ASSET_PATH,
     SlideDeckArtifacts,
+    append_slides_to_json,
     apply_impress_js_bundle,
     apply_local_font_bundle,
     apply_runtime_and_responsive_defaults,
+    ensure_impress_json_module_setup,
     ensure_impress_script_tags,
+    extract_new_slides_json,
     extract_slide_artifacts,
+    find_last_slide_position_from_json,
     write_vite_project_files,
 )
 
 
 class TestSlidesService(unittest.TestCase):
     def test_extract_slide_artifacts_from_json(self):
-        raw = """
-```json
-{
-  "spatial_mapping": "H1 hubs on x axis, H2 clustered nearby with higher z and lower scale.",
-  "index_html": "<html><body>ok</body></html>",
-  "style_css": "body { color: #eee; }",
-  "main_ts": "console.log('ok');"
-}
-```
-"""
+        slides_json_obj = {"slides": [{"id": "step-1", "x": 0, "y": 0, "html": "<h1>Title</h1>"}]}
+        raw = json.dumps({
+            "spatial_mapping": "H1 hubs on x axis, H2 clustered nearby with higher z and lower scale.",
+            "index_html": "<html><body>ok</body></html>",
+            "style_css": "body { color: #eee; }",
+            "main_ts": "console.log('ok');",
+            "slides_json": slides_json_obj,
+        })
         artifacts = extract_slide_artifacts(raw)
 
         self.assertIn("H1 hubs", artifacts.spatial_mapping)
         self.assertIn("<html>", artifacts.index_html)
         self.assertIn("color", artifacts.style_css)
         self.assertIn("console.log", artifacts.main_ts)
+        self.assertIn("step-1", artifacts.slides_json)
 
     def test_extract_slide_artifacts_from_code_fences(self):
         raw = """
@@ -127,14 +130,9 @@ body { margin: 0; }
 
         normalized = apply_runtime_and_responsive_defaults(artifacts)
 
-        self.assertIn("scale(${finalScale}) translate3d(${x}px, ${y}px, 0px)", normalized.main_ts)
-        self.assertIn("const correctionX = viewportCenterX - activeCenterX;", normalized.main_ts)
-        self.assertIn("translate3d(${correctionX}px, ${correctionY}px, 0px)", normalized.main_ts)
-        self.assertIn("const x = -current.x;", normalized.main_ts)
-        self.assertIn("const fitScale = Math.min", normalized.main_ts)
-        self.assertIn("document.getElementById('camera')", normalized.main_ts)
-        self.assertIn("document.getElementById('next')", normalized.main_ts)
-        self.assertIn("document.getElementById('prev')", normalized.main_ts)
+        self.assertIn("import slidesData from './slides.json'", normalized.main_ts)
+        self.assertIn("buildSlides()", normalized.main_ts)
+        self.assertIn("new Presentation()", normalized.main_ts)
         self.assertIn("--versline-slide-max-width", normalized.style_css)
         self.assertIn("height: 100vh !important", normalized.style_css)
         self.assertIn("top: 0 !important", normalized.style_css)
@@ -148,40 +146,40 @@ class TestEnsureImpressScriptTags(unittest.TestCase):
     def test_already_complete_unchanged(self):
         html = (
             "<html><body>"
-            '<script src="impress.min.js"></script>'
+            '<script src="impress.js"></script>'
             "<script>impress().init();</script>"
             "</body></html>"
         )
         result = ensure_impress_script_tags(html)
-        self.assertEqual(result.count('src="impress.min.js"'), 1)
+        self.assertEqual(result.count('src="impress.js"'), 1)
         self.assertEqual(result.count("impress().init()"), 1)
 
     def test_injects_both_when_missing(self):
         html = "<html><body><div id='impress'></div></body></html>"
         result = ensure_impress_script_tags(html)
-        self.assertIn('src="impress.min.js"', result)
+        self.assertIn('src="impress.js"', result)
         self.assertIn("impress().init();", result)
         self.assertIn("</body>", result)
-        impress_js_pos = result.index('src="impress.min.js"')
+        impress_js_pos = result.index('src="impress.js"')
         body_close_pos = result.index("</body>")
         self.assertLess(impress_js_pos, body_close_pos)
 
     def test_injects_only_missing_src(self):
         html = "<html><body><script>impress().init();</script></body></html>"
         result = ensure_impress_script_tags(html)
-        self.assertIn('src="impress.min.js"', result)
+        self.assertIn('src="impress.js"', result)
         self.assertEqual(result.count("impress().init()"), 1)
 
     def test_injects_only_missing_init(self):
-        html = '<html><body><script src="impress.min.js"></script></body></html>'
+        html = '<html><body><script src="impress.js"></script></body></html>'
         result = ensure_impress_script_tags(html)
         self.assertIn("impress().init();", result)
-        self.assertEqual(result.count('src="impress.min.js"'), 1)
+        self.assertEqual(result.count('src="impress.js"'), 1)
 
     def test_appends_at_end_when_no_body_tag(self):
         html = "<div id='impress'><div class='step slide' data-x='0' data-y='0'>Slide</div></div>"
         result = ensure_impress_script_tags(html)
-        self.assertIn('src="impress.min.js"', result)
+        self.assertIn('src="impress.js"', result)
         self.assertIn("impress().init();", result)
 
     def test_empty_input_returns_empty(self):
@@ -230,24 +228,35 @@ class TestApplyImpressJsBundle(unittest.TestCase):
         result = apply_impress_js_bundle(
             artifacts, "Vazirmatn[wght].ttf", "Vazirmatn", True, "truetype"
         )
-        self.assertIn('src="impress.min.js"', result.index_html)
-        self.assertIn("impress().init();", result.index_html)
+        # JSON mode: impress.js as regular script + main.ts as module; no inline init()
+        self.assertIn('src="impress.js"', result.index_html)
+        self.assertIn('type="module"', result.index_html)
+        self.assertIn('src="main.ts"', result.index_html)
+        self.assertNotIn("impress().init();", result.index_html)
 
-    def test_preserves_main_ts_placeholder(self):
-        placeholder = "// Navigation is handled by impress.js"
-        artifacts = self._make_artifacts(main_ts=placeholder)
+    def test_preserves_main_ts_json_loader(self):
+        """apply_impress_js_bundle must inject the stable JSON-loader template."""
+        artifacts = self._make_artifacts(main_ts="// Navigation is handled by impress.js")
         result = apply_impress_js_bundle(
             artifacts, "Vazirmatn[wght].ttf", "Vazirmatn", True, "truetype"
         )
-        self.assertEqual(result.main_ts, placeholder)
+        self.assertIn("import slidesData from './slides.json'", result.main_ts)
+        self.assertIn("buildSlides()", result.main_ts)
+        self.assertIn("impress().init()", result.main_ts)
 
-    def test_does_not_inject_module_type_on_impress_scripts(self):
-        """impress.min.js script must not become type=module."""
+    def test_does_not_inject_module_type_on_impress_script(self):
+        """impress.js must be a regular (non-module) script; only main.ts is module."""
         artifacts = self._make_artifacts()
         result = apply_impress_js_bundle(
             artifacts, "Vazirmatn[wght].ttf", "Vazirmatn", True, "truetype"
         )
-        self.assertNotIn('type="module"', result.index_html)
+        # main.ts should be module
+        self.assertIn('type="module" src="main.ts"', result.index_html)
+        # impress.js src must not have type="module" adjacent to it
+        import re
+        impress_tags = re.findall(r'<script[^>]*impress[^>]*>', result.index_html)
+        for tag in impress_tags:
+            self.assertNotIn('type="module"', tag)
 
 
 class TestEnsureImpressAssetCached(unittest.TestCase):
@@ -294,6 +303,96 @@ class TestGeneratorImpressPromptLoading(unittest.TestCase):
         )
         self.assertIn("step slide", gen.add_prompt_template)
         self.assertIn("data-x", gen.add_prompt_template)
+
+
+class TestEnsureImpressJsonModuleSetup(unittest.TestCase):
+    def test_removes_inline_init(self):
+        html = (
+            "<html><body>"
+            '<script src="impress.js"></script>'
+            "<script>impress().init();</script>"
+            "</body></html>"
+        )
+        result = ensure_impress_json_module_setup(html)
+        self.assertNotIn("impress().init()", result)
+        self.assertIn('src="impress.js"', result)
+        self.assertIn('src="main.ts"', result)
+
+    def test_injects_impress_and_module_scripts(self):
+        html = "<html><body><div id='impress'></div></body></html>"
+        result = ensure_impress_json_module_setup(html)
+        self.assertIn('src="impress.js"', result)
+        self.assertIn('type="module"', result)
+        self.assertIn('src="main.ts"', result)
+
+    def test_does_not_duplicate_existing_scripts(self):
+        html = (
+            "<html><body>"
+            '<script src="impress.js"></script>'
+            '<script type="module" src="main.ts"></script>'
+            "</body></html>"
+        )
+        result = ensure_impress_json_module_setup(html)
+        self.assertEqual(result.count('src="impress.js"'), 1)
+        self.assertEqual(result.count('src="main.ts"'), 1)
+
+    def test_empty_input_returns_empty(self):
+        self.assertEqual(ensure_impress_json_module_setup(""), "")
+
+
+class TestJsonSlideHelpers(unittest.TestCase):
+    def _make_slides_json(self):
+        return json.dumps({
+            "slides": [
+                {"id": "step-1", "x": 0, "y": 0, "html": "<h1>One</h1>"},
+                {"id": "step-2", "x": 1000, "y": 0, "html": "<h2>Two</h2>"},
+            ],
+            "overview": {"x": 3000, "y": 1500, "scale": 10},
+        })
+
+    def test_extract_slides_json_from_payload(self):
+        slides_obj = {"slides": [{"id": "step-1", "x": 0, "y": 0, "html": "<h1>Hi</h1>"}]}
+        raw = json.dumps({
+            "spatial_mapping": "test",
+            "index_html": "<html><body></body></html>",
+            "style_css": "body {}",
+            "main_ts": "// ok",
+            "slides_json": slides_obj,
+        })
+        artifacts = extract_slide_artifacts(raw)
+        self.assertTrue(len(artifacts.slides_json) > 0)
+        parsed = json.loads(artifacts.slides_json)
+        self.assertEqual(parsed["slides"][0]["id"], "step-1")
+
+    def test_find_last_slide_position_from_json(self):
+        sj = self._make_slides_json()
+        x, y = find_last_slide_position_from_json(sj)
+        self.assertEqual(x, 1000)
+        self.assertEqual(y, 0)
+
+    def test_find_last_slide_position_from_empty_json(self):
+        x, y = find_last_slide_position_from_json('{"slides": []}')
+        self.assertEqual(x, 0)
+        self.assertEqual(y, 0)
+
+    def test_append_slides_to_json(self):
+        sj = self._make_slides_json()
+        new_slides = [{"id": "step-3", "x": 2000, "y": 0, "html": "<h2>Three</h2>"}]
+        result = append_slides_to_json(sj, new_slides)
+        parsed = json.loads(result)
+        self.assertEqual(len(parsed["slides"]), 3)
+        self.assertEqual(parsed["slides"][2]["id"], "step-3")
+
+    def test_extract_new_slides_json_from_array_payload(self):
+        new_slides = [{"id": "step-3", "x": 2000, "y": 0, "html": "<h2>Three</h2>"}]
+        raw = json.dumps({"new_slides_json": new_slides})
+        result = extract_new_slides_json(raw)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["id"], "step-3")
+
+    def test_extract_new_slides_json_returns_empty_on_failure(self):
+        result = extract_new_slides_json("not valid json at all")
+        self.assertIsInstance(result, list)
 
 
 if __name__ == "__main__":

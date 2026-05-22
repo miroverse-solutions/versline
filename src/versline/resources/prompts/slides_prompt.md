@@ -41,11 +41,26 @@ Return JSON only.
 Do not wrap response in markdown code fences.
 Use this exact schema:
 {
-  "spatial_mapping": "short explanation of how headings were mapped to x/y/z/scale",
-  "index_html": "full content of index.html",
+  "spatial_mapping": "short explanation of how headings were mapped to x/y/scale",
+  "index_html": "full content of index.html — the slides container (#world or equivalent) must be EMPTY",
   "style_css": "full content of style.css",
-  "main_ts": "full content of main.ts"
+  "main_ts": "// slides are injected by main.ts from slides.json",
+  "slides_json": {
+    "slides": [
+      {
+        "id": "slide-1",
+        "x": 0,
+        "y": 0,
+        "scale": 1,
+        "html": "<h1>Slide title</h1><p>content</p>"
+      }
+    ]
+  }
 }
+
+**Important for `index_html`:**
+- The slides container (e.g. `#world` or `#camera`) must be completely **empty** — do NOT place any `.slide` elements inside it.
+- Slides are injected at runtime by `main.ts`, which reads `slides.json` and builds DOM elements before initialising the presentation.
 
 # Markdown Input
 {{markdown_content}}
