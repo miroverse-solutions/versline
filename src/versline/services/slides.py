@@ -1466,8 +1466,6 @@ class MarkdownSlideDeckGenerator:
         if not npm_path:
             raise RuntimeError("npm is required for --build but was not found in PATH.")
 
-        write_vite_project_files(deck_dir, single_file=single_file)
-
         if install_deps:
             self._run_command([npm_path, "install"], cwd=deck_dir)
         elif not (deck_dir / "node_modules").exists():
@@ -1637,6 +1635,8 @@ class MarkdownSlideDeckGenerator:
         main_path.write_text(artifacts.main_ts + "\n", encoding="utf-8")
         mapping_path.write_text((artifacts.spatial_mapping or "No mapping summary provided.") + "\n", encoding="utf-8")
 
+        write_vite_project_files(deck_dir, single_file=single_file)
+
         result: Dict[str, str] = {
             "deck_dir": str(deck_dir),
             "index_html": str(index_path),
@@ -1644,6 +1644,7 @@ class MarkdownSlideDeckGenerator:
             "main_ts": str(main_path),
             "spatial_mapping": str(mapping_path),
             "font_file": str(font_target_path),
+            "package_json": str(deck_dir / "package.json"),
         }
 
         if artifacts.slides_json:

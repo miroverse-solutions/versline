@@ -157,6 +157,7 @@ def generate_slides(
         logger.success(f"TypeScript: {result['main_ts']}")
         logger.success(f"Spatial mapping: {result['spatial_mapping']}")
         logger.success(f"Font file: {result['font_file']}")
+        logger.success(f"Package.json: {result['package_json']}")
 
         if result.get("impress_js"):
             logger.success(f"Impress.js: {result['impress_js']}")
