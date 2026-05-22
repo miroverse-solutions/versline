@@ -592,7 +592,7 @@ versline slides [OPTIONS] INPUT_PATH
 | `--uniform-size / --no-uniform-size` | | Make all slides the same fixed size. | `--uniform-size` |
 | `--slide-size` | | Slide size preset: `small` (720×480), `medium` (960×640), `large` (1280×800). | `medium` |
 | `--chunk-size` | | Split markdown into chunks of ~N characters for incremental generation. `0` = no chunking. | `0` |
-| `--impress / --no-impress` | | Generate slides using **Impress.js** for cinematic 3D spatial navigation with zoom, rotation, and depth transitions. Produces a standalone HTML deck; `impress.min.js` is bundled automatically. | `--no-impress` |
+| `--impress / --no-impress` | | Generate slides using **Impress.js** for cinematic 3D spatial navigation with zoom, rotation, and depth transitions. Produces a standalone HTML deck; `impress.js` is bundled automatically. | `--no-impress` |
 | `--note` | | Additional instruction appended to the prompt (inline string). | `None` |
 | `--note-file` | | Path to a `.md` or `.txt` file whose content is appended to the prompt. | `None` |
 
@@ -644,11 +644,11 @@ versline slides ./docs/long-talk.md --chunk-size 4000
 
 When `--impress` is used, `versline slides` switches to a completely different generation pipeline:
 
-- A **Impress.js-specific prompt** is sent to the LLM, instructing it to produce a spatially arranged 3D deck with `data-x`, `data-y`, `data-z`, `data-rotate`, and `data-scale` attributes on each `<div class="step slide">` element.
-- Navigation (arrow keys, space, swipe) is handled entirely by `impress.js` — no custom TypeScript runtime is generated.
-- `impress.min.js` is downloaded once from the jsDelivr CDN and cached in `src/versline/resources/assets/`. Subsequent runs use the cached copy.
-- The output deck is a fully standalone directory: `index.html`, `style.css`, `main.ts` (placeholder), `impress.min.js`, and the font file. Open `index.html` directly in a browser — no build step required.
-- `--build` works with impress mode: Vite bundles `impress.min.js` alongside `index.html` and `style.css` into `dist/`.
+- An **Impress.js v1.1.0-specific prompt** is sent to the LLM, instructing it to produce a spatially arranged 3D deck with `data-x`, `data-y`, `data-z`, `data-rel-x`, `data-rel-y`, `data-rotate`, `data-rotate-x`, `data-rotate-y`, `data-scale`, and `.substep` animated bullet reveals on each `<div class="step slide">` element.
+- Navigation (arrow keys, space, swipe, overview with `O`, help with `?`) is handled entirely by `impress.js` — no custom TypeScript runtime is generated.
+- `impress.js` (v1.1.0 full bundle with all plugins) is bundled in-package at `src/versline/resources/assets/impress.js`. If absent, it is downloaded once from unpkg and cached. Subsequent runs use the cached copy.
+- The output deck is a fully standalone directory: `index.html`, `style.css`, `main.ts` (placeholder), `impress.js`, and the font file. Open `index.html` directly in a browser — no build step required.
+- `--build` works with impress mode: Vite bundles `impress.js` alongside `index.html` and `style.css` into `dist/`.
 
 ---
 

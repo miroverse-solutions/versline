@@ -20,10 +20,20 @@ DEFAULT_SLIDES_FONT_PATH = (
     Path(__file__).resolve().parent.parent / "resources" / "assets" / "Vazirmatn[wght].ttf"
 )
 
-IMPRESS_JS_ASSET_PATH = (
-    Path(__file__).resolve().parent.parent / "resources" / "assets" / "impress.min.js"
-)
-IMPRESS_JS_CDN_URL = "https://cdn.jsdelivr.net/npm/impress.js@2.0.0/js/impress.min.js"
+_IMPRESS_JS_ASSETS_DIR = Path(__file__).resolve().parent.parent / "resources" / "assets"
+# impress.js v1.1.0 ships as impress.js (no .min). Bundled in-package; CDN
+# fallbacks are used only when the local copy is absent.
+IMPRESS_JS_ASSET_PATH = _IMPRESS_JS_ASSETS_DIR / "impress.js"
+
+# Ordered by preference — newest first, reliable fallback last.
+# unpkg and jsDelivr serve the full v1.1.0 bundle with all plugins.
+# jsDelivr may be blocked on some networks; unpkg and cdnjs are reliable fallbacks.
+_IMPRESS_JS_CDN_URLS: list[str] = [
+    "https://unpkg.com/impress.js/js/impress.js",
+    "https://cdn.jsdelivr.net/gh/impress/impress.js@1.1.0/js/impress.js",
+    "https://cdnjs.cloudflare.com/ajax/libs/impress.js/0.5.3/impress.js",
+]
+IMPRESS_JS_CDN_URL = _IMPRESS_JS_CDN_URLS[0]
 
 _SLIDE_SIZES: Dict[str, tuple] = {
     "small":  ("720px", "480px"),
@@ -33,25 +43,29 @@ _SLIDE_SIZES: Dict[str, tuple] = {
 
 
 def _ensure_impress_js_asset() -> Path:
-    """Return path to impress.min.js, downloading it from CDN if not yet cached."""
+    """Return path to impress.js, downloading it from CDN if not yet cached."""
     if IMPRESS_JS_ASSET_PATH.exists() and IMPRESS_JS_ASSET_PATH.stat().st_size > 0:
         return IMPRESS_JS_ASSET_PATH
 
     import urllib.request
 
-    logger.info(f"Downloading impress.js from {IMPRESS_JS_CDN_URL} ...")
-    try:
-        with urllib.request.urlopen(IMPRESS_JS_CDN_URL, timeout=30) as response:  # noqa: S310
-            content = response.read()
-        IMPRESS_JS_ASSET_PATH.write_bytes(content)
-        logger.info(f"impress.js cached at {IMPRESS_JS_ASSET_PATH} ({len(content):,} bytes)")
-        return IMPRESS_JS_ASSET_PATH
-    except Exception as exc:
-        raise RuntimeError(
-            f"Could not download impress.js: {exc}\n"
-            f"Please manually download impress.js from {IMPRESS_JS_CDN_URL} "
-            f"and place it at {IMPRESS_JS_ASSET_PATH}"
-        ) from exc
+    last_exc: Exception = RuntimeError("No CDN URLs configured.")
+    for cdn_url in _IMPRESS_JS_CDN_URLS:
+        logger.info(f"Downloading impress.js from {cdn_url} ...")
+        try:
+            with urllib.request.urlopen(cdn_url, timeout=30) as response:  # noqa: S310
+                content = response.read()
+            IMPRESS_JS_ASSET_PATH.write_bytes(content)
+            logger.info(f"impress.js cached at {IMPRESS_JS_ASSET_PATH} ({len(content):,} bytes)")
+            return IMPRESS_JS_ASSET_PATH
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"Failed to download from {cdn_url}: {exc}")
+            last_exc = exc
+
+    raise RuntimeError(
+        f"Could not download impress.js from any CDN: {last_exc}\n"
+        f"Please manually download impress.js and place it at {IMPRESS_JS_ASSET_PATH}"
+    ) from last_exc
 
 
 @dataclass
@@ -401,11 +415,11 @@ def apply_local_font_bundle(
 
 
 def ensure_impress_script_tags(html_content: str) -> str:
-    """Ensure `impress.min.js` script and `impress().init()` call are present before </body>."""
+    """Ensure `impress.js` script and `impress().init()` call are present before </body>."""
     if not html_content.strip():
         return html_content
 
-    has_impress_src = "impress.min.js" in html_content
+    has_impress_src = "impress.js" in html_content
     has_impress_init = "impress().init()" in html_content
 
     if has_impress_src and has_impress_init:
@@ -413,7 +427,7 @@ def ensure_impress_script_tags(html_content: str) -> str:
 
     injection = ""
     if not has_impress_src:
-        injection += '\n  <script src="impress.min.js"></script>'
+        injection += '\n  <script src="impress.js"></script>'
     if not has_impress_init:
         injection += "\n  <script>impress().init();</script>"
 
@@ -1278,7 +1292,7 @@ class MarkdownSlideDeckGenerator:
 
         if self.use_impress:
             impress_js_source = _ensure_impress_js_asset()
-            impress_js_target = deck_dir / "impress.min.js"
+            impress_js_target = deck_dir / "impress.js"
             shutil.copy2(impress_js_source, impress_js_target)
             artifacts = apply_impress_js_bundle(
                 artifacts=artifacts,
@@ -1340,7 +1354,7 @@ class MarkdownSlideDeckGenerator:
         }
 
         if self.use_impress:
-            result["impress_js"] = str(deck_dir / "impress.min.js")
+            result["impress_js"] = str(deck_dir / "impress.js")
 
         if build:
             dist_dir = self._build_with_vite(

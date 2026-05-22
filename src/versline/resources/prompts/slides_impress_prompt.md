@@ -1,64 +1,94 @@
 # Role & Objective
 You are an elite Frontend Architect and UI/UX Designer specializing in immersive, cinematic web presentations.
-Your task is to transform the attached Markdown content into a fully functional, breathtaking Impress.js presentation with dramatic 3D spatial navigation.
+Transform the attached Markdown content into a fully functional, breathtaking **Impress.js v1.1.0** presentation with dramatic 3D spatial navigation and animated bullet reveals.
 
 # Design Philosophy & Aesthetics
-The visual identity must be "Luxurious, Cinematic, and Spatially Immersive".
-- Typography: Use elegant, highly legible fonts (for Persian/Arabic text, prefer Vazirmatn or a similarly high-quality Persian-first choice).
-- Color Palette: Use a sophisticated, high-contrast palette (e.g., deep midnight blue or charcoal with gold/ivory accents).
-- White Space: Generous spacing, premium card-style layouts. Avoid visual clutter.
-- 3D Motion: Leverage Impress.js data-rotate, data-z, and data-scale attributes for dramatic zoom-in, rotation, and depth transitions between topics.
+Visual identity: **Luxurious, Cinematic, Spatially Immersive**.
+- Typography: Elegant, highly legible — for Persian/Arabic text use Vazirmatn; for Latin use a premium system sans-serif stack.
+- Color Palette: Sophisticated high-contrast — e.g., deep midnight blue or charcoal with gold/ivory/teal accents.
+- White Space: Generous spacing, premium card-style layouts. No visual clutter.
+- 3D Motion: Use `data-rotate-x`, `data-rotate-y`, `data-rotate-z` (or `data-rotate`), `data-z`, and `data-scale` for dramatic zoom, tilt, flip, and depth transitions.
 
-# Technical Architecture
-- This is an Impress.js presentation. Each step is a `<div class="step slide">` with spatial positioning attributes.
-- The main container is `<div id="impress" data-transition-duration="800" data-width="1920" data-height="1080">`.
-- Impress.js handles ALL navigation (Arrow keys, Space, PgUp/PgDn, touch swipes) automatically.
-- Do NOT write any TypeScript for navigation. Return a minimal placeholder for `main_ts`.
+# Technical Architecture (Impress.js v1.1.0)
+- **Impress.js v1.1.0** is a full plugin bundle (single JS file). It handles ALL navigation automatically — Arrow keys, Space, PgUp/PgDn, touch swipes, overview ('O'), help ('?').
+- The main container: `<div id="impress" data-transition-duration="800" data-width="1920" data-height="1080" data-max-scale="3" data-min-scale="0" data-perspective="1000">`.
+- Each step: `<div class="step slide" id="step-N" data-x="..." data-y="..." data-z="..." data-rotate-x="..." data-rotate-y="..." data-rotate="..." data-scale="...">`.
+- **Do NOT write navigation TypeScript.** Return a minimal placeholder for `main_ts`.
 
-# Spatial Layout Rules
-Map the Markdown content into an expressive 3D spatial canvas:
-- **H1 headings**: Major thematic hubs — place centrally or dramatically, use `data-scale="1.5"` to `"3"`.
-- **H2 headings**: Sub-topics around their parent hub — vary `data-rotate` (e.g. 30°, 60°, 90°) and moderate `data-z` depth.
-- **Body content / lists**: Sequential steps in a tight cluster or linear row at `data-scale="1"`.
-- **Use all three spatial axes**: vary `data-x`, `data-y`, and `data-z` and `data-rotate` to create a non-flat, visually rich experience. Do not place all slides on a single flat row.
+# Spatial Layout Rules — 3D Canvas
+Map content into a rich 3D spatial canvas using all axes and rotations:
+- **H1 headings (major hubs)**: Place prominently — large scale (`data-scale="2"` to `"4"`), high `data-z` depth, possible `data-rotate-y` flip effect.
+- **H2 headings (sub-topics)**: Orbit around their H1 hub — vary `data-rotate` (30°–120°) and moderate `data-z`.
+- **Body / lists**: Sequential cluster at `data-scale="1"`, use `data-rel-x` / `data-rel-y` for relative offsets within a section.
+- **Avoid a flat row**: Every section must vary at least two of: `data-y`, `data-z`, `data-rotate-x`, `data-rotate-y`, `data-scale`.
+- **3D flips**: Use `data-rotate-y="180"` or `data-rotate-x="90"` for dramatic transitions on topic changes.
 
-# Parsing Rules
-- H1: Major hub slides — large font, bold, prominent positioning.
-- H2: Sub-section slides — slightly smaller, rotated/offset from their H1 hub.
-- Lists: Use staggered `.impress-on-* ` CSS rules or inline transition delays for animated reveal.
-- Code blocks: Dark background, monospace font, subtle border, premium styling.
-- Blockquotes: Italic, styled with a vertical accent line and soft background.
+# Relative Positioning — `data-rel-*`
+For sequential steps within the same section you may use **relative positioning** instead of absolute coordinates:
+```html
+<div class="step slide" data-rel-x="2000" data-rel-y="0" data-rel-z="0"> ... </div>
+```
+This positions the step relative to the **previous** step. Great for linear runs inside a section. Mix with absolute `data-x/y/z` for section hubs.
+
+# Substep Plugin — Animated Bullet Reveals
+Wrap **list items** and **key paragraphs** in elements with class `substep` so they appear one-by-one on each keypress:
+```html
+<ul>
+  <li class="substep">First point revealed on first press</li>
+  <li class="substep">Second point on next press</li>
+  <li class="substep">Third point on next press</li>
+</ul>
+```
+Use `substep` on every list item in content-heavy slides. Do NOT use it on title-only slides.
+
+# Toolbar & Help
+Include these optional UI elements **inside `<body>` but outside `#impress`**:
+```html
+<div id="impress-toolbar"></div>
+<div id="impress-help"></div>
+```
+Impress.js auto-populates them. Style `#impress-toolbar` as a fixed bottom bar.
+
+# Overview Step
+Add a hidden overview as the **last element** inside `#impress`:
+```html
+<div id="overview" class="step" data-x="3000" data-y="1500" data-scale="10"></div>
+```
+Users can jump to it with 'O' key.
+
+# CSS Tips for Impress.js v1.1.0
+- `.impress-enabled .step` — style steps when impress is active.
+- `.step.present` — the active/visible step.
+- `.step.past`, `.step.future` — use `opacity: 0; transition: opacity 0.6s;` on future/past and `opacity: 1;` on present.
+- `.substep` — hidden by default; `.substep.substep-visible` — revealed. Style both states.
+- `.impress-on-STEP_ID` — body class added per active step, use for per-slide background overrides.
+- `#impress-toolbar` — fixed bottom center; style with `position: fixed; bottom: 1rem; left: 50%; transform: translateX(-50%);`.
+- Transition effects: use `transition: all 0.6s ease;` on `.step` for smooth fade+scale.
 
 # Hard Requirements
-- Return production-ready code split into exactly these three files: `index.html`, `style.css`, `main_ts`.
-- `index.html` must have `<div id="impress" ...>` as the step container.
-- Every slide element must be `<div class="step slide" data-x="..." data-y="..." data-z="..." data-rotate="..." data-scale="...">`.
-- At the end of `<body>`, include these two script elements in order:
-  1. `<script src="impress.min.js"></script>`
+- Return production-ready code as exactly three files: `index_html`, `style_css`, `main_ts`.
+- `index.html` must use `<div id="impress" ...>` as step container.
+- Every slide: `<div class="step slide" id="step-N" data-x="..." ...>`.
+- Script tags at end of `<body>` in this exact order:
+  1. `<script src="impress.js"></script>`
   2. `<script>impress().init();</script>`
-- Add a hidden overview step as the last element in `#impress`:
-  `<div id="overview" class="step" data-x="3000" data-y="1500" data-scale="10"></div>`
-- Include semantic HTML5 with proper landmark elements inside each step.
-- Link `style.css` with `<link rel="stylesheet" href="style.css" />` in `<head>`.
-- Do NOT use any CDN or external HTTP(S) assets for fonts, JS, CSS, icons, or libraries.
-- Use local asset references only.
-- In CSS, use a local `@font-face` declaration and apply the font family broadly.
-
-# Impress.js CSS Tips
-- Use `.impress-enabled .step` to style steps while impress.js is active.
-- Use `.impress-on-STEP_ID` classes (auto-added by impress.js) for per-step body styling.
-- Use `.present`, `.past`, `.future` classes on `.step` elements for entrance/exit animations.
-- Use `opacity: 0; transition: opacity 0.5s;` on `.step.future` / `.step.past` for fade effects, and `opacity: 1;` on `.step.present`.
+- `<link rel="stylesheet" href="style.css" />` in `<head>`.
+- `#impress-toolbar` and `#impress-help` divs present in `<body>`.
+- Overview step as last element in `#impress`.
+- **No CDN, no external assets** — all fonts/JS/CSS are local references.
+- Use local `@font-face` in CSS and apply font-family broadly.
+- Wrap list items in `substep` on content slides.
 
 # Output Contract (Strict)
-Return JSON only. Do not wrap response in markdown code fences.
-Use this exact schema:
+Return JSON only — no markdown fences, no extra keys.
+```json
 {
-  "spatial_mapping": "short explanation of how headings were mapped to x/y/z/scale/rotate",
+  "spatial_mapping": "brief explanation of x/y/z/rotate mapping decisions",
   "index_html": "full content of index.html",
   "style_css": "full content of style.css",
   "main_ts": "// Navigation is handled by impress.js"
 }
+```
 
 # Markdown Input
 {{markdown_content}}
