@@ -40,7 +40,19 @@ Use the `substep` class on `<li>` elements and key paragraphs for step-by-step r
 Return JSON only. Do not wrap the response in markdown code fences.
 Use this exact schema:
 {
-  "new_slides_html": "<div class=\"step slide\" data-x=\"...\" ...>...</div>"
+  "new_slides_json": [
+    {
+      "id": "step-N",
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "scale": 1,
+      "rotate": 0,
+      "rotate_x": 0,
+      "rotate_y": 0,
+      "html": "<h2>Slide title</h2><ul><li class=\"substep\">point</li></ul>"
+    }
+  ]
 }
 
 # New Markdown Content
