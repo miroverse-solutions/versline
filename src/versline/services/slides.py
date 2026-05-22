@@ -1367,13 +1367,18 @@ class MarkdownSlideDeckGenerator:
             "response_format": {"type": "json_object"},
         }
 
-        if provider == "avalai":
+        is_avalai = provider == "avalai" or (
+            hasattr(client, "base_url")
+            and ("avalai.ir" in str(client.base_url) or "avalapis.ir" in str(client.base_url))
+        )
+
+        if is_avalai:
             extra_body = self._build_avalai_extra_body()
             if extra_body:
                 create_kwargs["extra_body"] = extra_body
 
         try:
-            if provider == "avalai" and hasattr(client.chat.completions, "with_raw_response"):
+            if is_avalai and hasattr(client.chat.completions, "with_raw_response"):
                 raw = client.chat.completions.with_raw_response.create(**create_kwargs)
                 request_id = raw.headers.get("x-request-id")
                 if request_id:
