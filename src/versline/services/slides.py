@@ -329,19 +329,13 @@ def build_local_font_css(
     font_format: str,
 ) -> str:
     if variable_font:
+        # A single @font-face with font-style range covers both normal and italic,
+        # preventing the same font file from being base64-encoded twice in single-file builds.
         face_css = f"""@font-face {{
   font-family: '{font_family}';
     src: url('./{font_file_name}') format('{font_format}');
   font-weight: 100 900;
-  font-style: normal;
-  font-display: swap;
-}}
-
-@font-face {{
-  font-family: '{font_family}';
-    src: url('./{font_file_name}') format('{font_format}');
-  font-weight: 100 900;
-  font-style: italic;
+  font-style: normal italic;
   font-display: swap;
 }}
 """
@@ -1306,7 +1300,41 @@ class MarkdownSlideDeckGenerator:
             )
 
         self._run_command([npm_path, "run", "build"], cwd=deck_dir)
-        return deck_dir / "dist"
+        dist_dir = deck_dir / "dist"
+
+        if single_file and self.use_impress:
+            self._inline_impress_js_in_dist(deck_dir=deck_dir, dist_dir=dist_dir)
+
+        return dist_dir
+
+    def _inline_impress_js_in_dist(self, deck_dir: Path, dist_dir: Path) -> None:
+        """Inline impress.js into the single-file dist/index.html.
+
+        vite-plugin-singlefile only processes module-graph assets; a plain
+        ``<script src="impress.js">`` tag is left as-is. We manually replace it
+        with an inline ``<script>`` block so the output is truly self-contained.
+        """
+        dist_index = dist_dir / "index.html"
+        if not dist_index.exists():
+            return
+
+        impress_js_path = deck_dir / "impress.js"
+        if not impress_js_path.exists():
+            logger.warning("impress.js not found in deck_dir; skipping inline step.")
+            return
+
+        html = dist_index.read_text(encoding="utf-8")
+        impress_js_content = impress_js_path.read_text(encoding="utf-8")
+
+        placeholder = '<script src="impress.js"></script>'
+        if placeholder not in html:
+            logger.debug("impress.js script tag not found in dist HTML; nothing to inline.")
+            return
+
+        inline_tag = f"<script>\n{impress_js_content}\n</script>"
+        html = html.replace(placeholder, inline_tag, 1)
+        dist_index.write_text(html, encoding="utf-8")
+        logger.info(f"Inlined impress.js ({len(impress_js_content):,} bytes) into {dist_index}")
 
     def generate_from_markdown(
         self,
