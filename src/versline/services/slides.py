@@ -468,6 +468,13 @@ def ensure_impress_json_module_setup(html_content: str) -> str:
         else:
             html_content += impress_tag
 
+    # Remove any main.js module script tags — they are superseded by main.ts in Vite mode
+    html_content = re.sub(
+        r'(?is)<script[^>]*\bsrc\s*=\s*["\']main\.js["\'][^>]*>\s*</script>',
+        '',
+        html_content,
+    )
+
     # Ensure main.ts module script is present
     has_main_ts = bool(re.search(r'src=["\']main\.ts["\']', html_content))
     if not has_main_ts:
