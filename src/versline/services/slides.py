@@ -1265,7 +1265,18 @@ class MarkdownSlideDeckGenerator:
         single_file: bool = False,
         install_deps: bool = True,
         chunk_size: int = 0,
+        progress_callback=None,
     ) -> Dict[str, str]:
+        """Generate a slide deck from a markdown file.
+
+        Args:
+            progress_callback: Optional callable(message: str) invoked at key steps so
+                callers (e.g. CLI) can surface live status to the user.
+        """
+        def _progress(msg: str) -> None:
+            if progress_callback is not None:
+                progress_callback(msg)
+
         source_path = Path(input_path)
         if not source_path.exists() or not source_path.is_file():
             raise FileNotFoundError(f"Input markdown file not found: {source_path}")
@@ -1282,10 +1293,13 @@ class MarkdownSlideDeckGenerator:
         logger.info(f"Generating slide deck in {len(chunks)} chunk(s) (chunk_size={chunk_size or 'unlimited'}).")
 
         # --- First chunk: full deck generation ---
+        _progress(f"Calling LLM for chunk 1/{len(chunks)}…")
         rendered_prompt = self._render_prompt(chunks[0])
         raw_response = self._request_generation(rendered_prompt)
+        _progress("Parsing LLM response…")
         artifacts = extract_slide_artifacts(raw_response)
 
+        _progress("Copying assets…")
         font_source_path = self._resolve_font_source_path()
         font_target_path = deck_dir / font_source_path.name
         shutil.copy2(font_source_path, font_target_path)
@@ -1319,6 +1333,7 @@ class MarkdownSlideDeckGenerator:
         # --- Subsequent chunks: append slides only ---
         for chunk_idx, chunk in enumerate(chunks[1:], start=2):
             logger.info(f"Processing chunk {chunk_idx}/{len(chunks)}: adding slides...")
+            _progress(f"Calling LLM for chunk {chunk_idx}/{len(chunks)}…")
             last_x, last_y = find_last_slide_position(artifacts.index_html)
             new_slides_html = self._generate_add_slides_request(
                 markdown_chunk=chunk,
@@ -1326,6 +1341,7 @@ class MarkdownSlideDeckGenerator:
                 last_x=last_x,
                 last_y=last_y,
             )
+            _progress(f"Merging slides from chunk {chunk_idx}/{len(chunks)}…")
             updated_html = inject_slides_into_deck(artifacts.index_html, new_slides_html)
             artifacts = SlideDeckArtifacts(
                 spatial_mapping=artifacts.spatial_mapping,
@@ -1334,6 +1350,7 @@ class MarkdownSlideDeckGenerator:
                 main_ts=artifacts.main_ts,
             )
 
+        _progress("Writing output files…")
         index_path = deck_dir / "index.html"
         style_path = deck_dir / "style.css"
         main_path = deck_dir / "main.ts"
@@ -1357,6 +1374,7 @@ class MarkdownSlideDeckGenerator:
             result["impress_js"] = str(deck_dir / "impress.js")
 
         if build:
+            _progress("Running Vite build…")
             dist_dir = self._build_with_vite(
                 deck_dir=deck_dir,
                 single_file=single_file,

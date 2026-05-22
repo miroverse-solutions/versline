@@ -3,7 +3,7 @@ from typing import Optional
 
 import typer
 from loguru import logger
-from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn
+from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from versline.config import settings
 from versline.services.pricing import print_cost_report
@@ -133,11 +133,13 @@ def generate_slides(
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
             transient=False,
         ) as progress:
-            task = progress.add_task("Generating slide deck...", total=100)
+            task = progress.add_task("Calling LLM…", total=None)
+
+            def on_progress(message: str) -> None:
+                progress.update(task, description=message)
+
             result = generator.generate_from_markdown(
                 input_path=str(input_path),
                 output_dir=str(output_dir),
@@ -145,8 +147,9 @@ def generate_slides(
                 single_file=single_file,
                 install_deps=install_deps,
                 chunk_size=chunk_size,
+                progress_callback=on_progress,
             )
-            progress.update(task, completed=100, description="Slide deck generated")
+            progress.update(task, description="Slide deck generated ✓")
 
         logger.success(f"Deck directory: {result['deck_dir']}")
         logger.success(f"HTML: {result['index_html']}")
