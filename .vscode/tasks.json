@@ -1,0 +1,35 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Install versline (editable)",
+      "type": "shell",
+      "command": "/home/mirza/.venv/bin/pip install -e . --quiet",
+      "inAgents": true,
+      "runOptions": { "runOn": "worktreeCreated" },
+      "presentation": { "reveal": "silent", "panel": "shared" }
+    },
+    {
+      "label": "versline slides --impress (example)",
+      "type": "shell",
+      "command": "/home/mirza/.venv/bin/versline slides --impress ${input:markdownFile}",
+      "inAgents": true,
+      "presentation": { "reveal": "always", "panel": "shared" }
+    },
+    {
+      "label": "Run tests",
+      "type": "shell",
+      "command": "/home/mirza/.venv/bin/python -m pytest tests/ -v",
+      "inAgents": true,
+      "presentation": { "reveal": "always", "panel": "shared" }
+    }
+  ],
+  "inputs": [
+    {
+      "id": "markdownFile",
+      "type": "promptString",
+      "description": "Path to input markdown file",
+      "default": "examples/input.md"
+    }
+  ]
+}

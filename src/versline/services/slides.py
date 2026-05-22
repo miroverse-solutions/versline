@@ -436,6 +436,55 @@ def ensure_impress_script_tags(html_content: str) -> str:
     return html_content + injection
 
 
+def build_impress_overrides_css() -> str:
+    """Return safety CSS overrides appended after LLM-generated CSS in Impress.js mode.
+
+    Guarantees that non-present steps are hidden and only the active step is
+    visible, regardless of whether the LLM correctly generated these rules.
+    Using ``!important`` beats any LLM-generated specificity conflicts.
+    """
+    return """
+/* versline impress safety overrides */
+body {
+    overflow: hidden;
+}
+
+.step {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.6s ease;
+}
+
+.step.present {
+    opacity: 1 !important;
+    pointer-events: auto !important;
+}
+
+.step.past,
+.step.future {
+    opacity: 0 !important;
+    pointer-events: none !important;
+}
+
+.substep {
+    opacity: 0;
+    transition: opacity 0.5s ease;
+}
+
+.substep.substep-visible {
+    opacity: 1 !important;
+}
+
+#impress-toolbar {
+    position: fixed;
+    bottom: 1rem;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 9999;
+}
+"""
+
+
 def apply_impress_js_bundle(
     artifacts: SlideDeckArtifacts,
     font_file_name: str,
@@ -448,6 +497,7 @@ def apply_impress_js_bundle(
     - Strips external CDN links/imports (keeps local asset references intact).
     - Injects local @font-face and broad font-family rule.
     - Ensures impress.js script tags are present.
+    - Appends safety CSS overrides so non-present steps are always hidden.
     - Preserves the LLM-generated main_ts (no TypeScript runtime override).
     """
     clean_html = strip_external_links_from_html(artifacts.index_html)
@@ -455,11 +505,12 @@ def apply_impress_js_bundle(
     clean_css = strip_external_imports_from_css(artifacts.style_css)
     clean_css = strip_conflicting_vazirmatn_face_from_css(clean_css)
     font_css = build_local_font_css(font_file_name, font_family, variable_font, font_format)
+    impress_overrides = build_impress_overrides_css().strip()
 
     return SlideDeckArtifacts(
         spatial_mapping=artifacts.spatial_mapping,
         index_html=clean_html.strip(),
-        style_css=(font_css + "\n\n" + clean_css.strip()).strip(),
+        style_css=(font_css + "\n\n" + clean_css.strip() + "\n\n" + impress_overrides).strip(),
         main_ts=artifacts.main_ts,
     )
 
