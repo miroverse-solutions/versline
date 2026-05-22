@@ -85,6 +85,15 @@ def generate_slides(
             "Produces a standalone HTML deck; impress.js is bundled automatically."
         ),
     ),
+    use_revealjs: bool = typer.Option(
+        False,
+        "--revealjs/--no-revealjs",
+        help=(
+            "Generate slides using Reveal.js for professional presentations with "
+            "smooth transitions, fragment animations, and vertical slide groups. "
+            "reveal.js and theme CSS are bundled automatically."
+        ),
+    ),
     note: Optional[str] = typer.Option(None, "--note", help="Additional instruction to append to the prompt"),
     note_file: Optional[Path] = typer.Option(None, "--note-file", help="Path to a .md or .txt file with an additional instruction"),
     npm_registry: Optional[str] = typer.Option(None, "--npm-registry", help="Custom npm registry URL used during --build (e.g. https://registry.npmmirror.com)"),
@@ -100,6 +109,10 @@ def generate_slides(
     if single_file and not build:
         logger.warning("--single-file has no effect without --build. Enabling --build automatically.")
         build = True
+
+    if use_impress and use_revealjs:
+        logger.warning("--impress and --revealjs cannot be used together. --revealjs takes precedence.")
+        use_impress = False
 
     if model:
         settings.llm.model = model
@@ -129,6 +142,7 @@ def generate_slides(
         uniform_size=uniform_size,
         slide_size=slide_size,
         use_impress=use_impress,
+        use_revealjs=use_revealjs,
         user_note=resolve_user_note(note=note, note_file=str(note_file) if note_file else None),
         npm_registry=settings.slides.npm_registry,
     )
@@ -165,6 +179,11 @@ def generate_slides(
 
         if result.get("impress_js"):
             logger.success(f"Impress.js: {result['impress_js']}")
+
+        if result.get("reveal_js"):
+            logger.success(f"Reveal.js: {result['reveal_js']}")
+            logger.success(f"Reveal CSS: {result['reveal_css']}")
+            logger.success(f"Reveal theme: {result['reveal_theme_css']}")
 
         if result.get("dist_dir"):
             logger.success(f"Vite build output: {result['dist_dir']}")

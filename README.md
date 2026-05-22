@@ -593,6 +593,7 @@ versline slides [OPTIONS] INPUT_PATH
 | `--slide-size` | | Slide size preset: `small` (720×480), `medium` (960×640), `large` (1280×800). | `medium` |
 | `--chunk-size` | | Split markdown into chunks of ~N characters for incremental generation. `0` = no chunking. | `0` |
 | `--impress / --no-impress` | | Generate slides using **Impress.js** for cinematic 3D spatial navigation with zoom, rotation, and depth transitions. Produces a standalone HTML deck; `impress.js` is bundled automatically. | `--no-impress` |
+| `--revealjs / --no-revealjs` | | Generate slides using **Reveal.js** for a polished, professional presentation with fragment animations, vertical slides, and speaker notes. Assets are bundled automatically. | `--no-revealjs` |
 | `--note` | | Additional instruction appended to the prompt (inline string). | `None` |
 | `--note-file` | | Path to a `.md` or `.txt` file whose content is appended to the prompt. | `None` |
 | `--npm-registry` | | Custom npm registry URL used during `--build` (e.g. `https://registry.npmmirror.com`). Can also be set via `VERSLINE_SLIDES_NPM_REGISTRY`. | `None` |
@@ -626,6 +627,12 @@ versline slides ./docs/talk.md --impress
 # Impress.js deck with a custom font and a user instruction
 versline slides ./docs/talk.md --impress --font-file ./fonts/IRANSansXVF.woff2 --font-family IRANSansX --note "Use a dark background with gold accents."
 
+# Generate a Reveal.js deck with polished slide transitions and fragments
+versline slides ./docs/talk.md --revealjs
+
+# Reveal.js deck with a custom font and single-file build output
+versline slides ./docs/talk.md --revealjs --font-file ./fonts/IRANSansXVF.woff2 --font-family IRANSansX --build --single-file
+
 # Force-include every piece of content without omissions
 versline slides ./docs/talk.md --include-all-content
 
@@ -653,6 +660,24 @@ When `--impress` is used, `versline slides` switches to a completely different g
 - `impress.js` (v1.1.0 full bundle with all plugins) is bundled in-package at `src/versline/resources/assets/impress.js`. If absent, it is downloaded once from unpkg and cached. Subsequent runs use the cached copy.
 - The output deck is a fully standalone directory: `index.html`, `style.css`, `main.ts` (placeholder), `impress.js`, and the font file. Open `index.html` directly in a browser — no build step required.
 - `--build` works with impress mode: Vite bundles `impress.js` alongside `index.html` and `style.css` into `dist/`.
+
+#### Reveal.js mode (`--revealjs`)
+
+When `--revealjs` is used, `versline slides` switches to the Reveal.js generation pipeline:
+
+- A **Reveal.js v5.1.0-specific prompt** is sent to the LLM, instructing it to produce a deck with section-based slides, fragment animations (`.fragment`), vertical slide groups (`sub_slides`), speaker notes, and background options.
+- Layout and navigation are handled entirely by Reveal.js — left/right for horizontal slides, up/down for vertical slide groups. No custom layout TypeScript is generated.
+- Three asset files are bundled in-package at `src/versline/resources/assets/`: `reveal.js`, `reveal.css`, and `reveal-theme.css` (black theme). If absent, they are downloaded once from jsDelivr CDN and cached. Subsequent runs use the cached copies.
+- The output deck directory contains: `index.html`, `style.css`, `main.ts` (DOM builder + `Reveal.initialize()`), `reveal.js`, `reveal.css`, `reveal-theme.css`, and the font file. Open `index.html` directly in a browser — no build step required.
+- `--build` works with Reveal.js mode: Vite bundles all assets into `dist/`. `--single-file` inlines all three Reveal.js asset files.
+- `--impress` and `--revealjs` are mutually exclusive; if both are given, `--revealjs` takes precedence.
+
+> **Pre-caching assets manually:** If you have already downloaded the Reveal.js files, place them here to avoid the automatic CDN download:
+> ```
+> src/versline/resources/assets/reveal.js        ← reveal.js dist/reveal.js
+> src/versline/resources/assets/reveal.css       ← reveal.js dist/reveal.css
+> src/versline/resources/assets/reveal-theme.css ← reveal.js dist/theme/black.css
+> ```
 
 ---
 
