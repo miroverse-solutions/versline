@@ -74,6 +74,7 @@ class SlideDeckArtifacts:
     index_html: str
     style_css: str
     main_ts: str
+    slides_json: str = ""
 
 
 _JSON_FENCE_RE = re.compile(r"^```(?:json)?\\s*|\\s*```$", re.DOTALL)
@@ -161,12 +162,21 @@ def extract_slide_artifacts(raw_response: str) -> SlideDeckArtifacts:
         style_css = _pick_file_value(payload, "style_css", "style.css")
         main_ts = _pick_file_value(payload, "main_ts", "main.ts", "main_typescript")
 
+        # Extract slides_json — may be a nested object or a JSON string
+        slides_json_raw = payload.get("slides_json")
+        slides_json = ""
+        if isinstance(slides_json_raw, dict):
+            slides_json = json.dumps(slides_json_raw, ensure_ascii=False, indent=2)
+        elif isinstance(slides_json_raw, str) and slides_json_raw.strip():
+            slides_json = slides_json_raw.strip()
+
         if index_html and style_css and main_ts:
             return SlideDeckArtifacts(
                 spatial_mapping=spatial_mapping,
                 index_html=index_html.strip(),
                 style_css=style_css.strip(),
                 main_ts=main_ts.strip(),
+                slides_json=slides_json,
             )
 
     html_blocks = []
@@ -411,6 +421,7 @@ def apply_local_font_bundle(
         index_html=clean_html.strip(),
         style_css=(font_css + "\n\n" + clean_css.strip()).strip(),
         main_ts=artifacts.main_ts,
+        slides_json=artifacts.slides_json,
     )
 
 
@@ -436,6 +447,114 @@ def ensure_impress_script_tags(html_content: str) -> str:
     return html_content + injection
 
 
+def ensure_impress_json_module_setup(html_content: str) -> str:
+    """Set up HTML for JSON-based impress.js mode.
+
+    - Removes inline ``impress().init()`` (main.ts calls it after building slides from JSON).
+    - Ensures ``<script src="impress.js">`` is present as a regular (non-module) script.
+    - Ensures ``<script type="module" src="main.ts">`` is present so Vite can bundle the
+      TypeScript entry point that imports ``slides.json`` and initialises the presentation.
+    """
+    if not html_content.strip():
+        return html_content
+
+    # Remove inline impress().init() — main.ts calls it after building slides from JSON
+    html_content = re.sub(
+        r'(?is)<script[^>]*>\s*impress\(\)\.init\(\)\s*;?\s*</script>',
+        '',
+        html_content,
+    )
+
+    # Ensure impress.js regular script is present
+    has_impress_src = bool(re.search(r'src=["\']impress(?:\.min)?\.js["\']', html_content))
+    if not has_impress_src:
+        impress_tag = '\n  <script src="impress.js"></script>'
+        if "</body>" in html_content:
+            html_content = html_content.replace("</body>", f"{impress_tag}\n</body>", 1)
+        else:
+            html_content += impress_tag
+
+    # Ensure main.ts module script is present
+    has_main_ts = bool(re.search(r'src=["\']main\.ts["\']', html_content))
+    if not has_main_ts:
+        module_tag = '\n  <script type="module" src="main.ts"></script>'
+        if "</body>" in html_content:
+            html_content = html_content.replace("</body>", f"{module_tag}\n</body>", 1)
+        else:
+            html_content += module_tag
+
+    return html_content
+
+
+def build_stable_impress_main_ts_json_loader() -> str:
+    """Return a stable TypeScript entry point for the JSON-based impress.js mode.
+
+    Imports slide data from ``./slides.json``, builds ``<div class="step slide">``
+    elements dynamically, and calls ``impress().init()`` once slides are in the DOM.
+    Vite (with or without ``vite-plugin-singlefile``) handles the JSON import at build
+    time, so both dev-server and single-file production builds work correctly.
+    """
+    return """import slidesData from './slides.json';
+
+interface SlideEntry {
+  id: string;
+  x?: number;
+  y?: number;
+  z?: number;
+  scale?: number;
+  rotate?: number;
+  rotate_x?: number;
+  rotate_y?: number;
+  rotate_z?: number;
+  html: string;
+}
+
+interface SlidesData {
+  slides: SlideEntry[];
+  overview?: { x?: number; y?: number; z?: number; scale?: number };
+}
+
+function buildSlides(): void {
+  const container = document.getElementById('impress');
+  if (!container) return;
+
+  const data = slidesData as unknown as SlidesData;
+
+  data.slides.forEach((slide) => {
+    const el = document.createElement('div');
+    el.className = 'step slide';
+    el.id = slide.id;
+    if (slide.x !== undefined) el.setAttribute('data-x', String(slide.x));
+    if (slide.y !== undefined) el.setAttribute('data-y', String(slide.y));
+    if (slide.z !== undefined) el.setAttribute('data-z', String(slide.z));
+    if (slide.scale !== undefined) el.setAttribute('data-scale', String(slide.scale));
+    if (slide.rotate !== undefined) el.setAttribute('data-rotate', String(slide.rotate));
+    if (slide.rotate_x !== undefined) el.setAttribute('data-rotate-x', String(slide.rotate_x));
+    if (slide.rotate_y !== undefined) el.setAttribute('data-rotate-y', String(slide.rotate_y));
+    if (slide.rotate_z !== undefined) el.setAttribute('data-rotate-z', String(slide.rotate_z));
+    el.innerHTML = slide.html;
+    container.appendChild(el);
+  });
+
+  const overview = data.overview;
+  if (overview) {
+    const el = document.createElement('div');
+    el.id = 'overview';
+    el.className = 'step';
+    if (overview.x !== undefined) el.setAttribute('data-x', String(overview.x));
+    if (overview.y !== undefined) el.setAttribute('data-y', String(overview.y));
+    if (overview.z !== undefined) el.setAttribute('data-z', String(overview.z));
+    if (overview.scale !== undefined) el.setAttribute('data-scale', String(overview.scale));
+    container.appendChild(el);
+  }
+}
+
+// Module scripts are deferred — DOM is ready and impress.js (regular script) already executed.
+buildSlides();
+(window as any).impress().init();
+"""
+
+
 def apply_impress_js_bundle(
     artifacts: SlideDeckArtifacts,
     font_file_name: str,
@@ -447,11 +566,13 @@ def apply_impress_js_bundle(
 
     - Strips external CDN links/imports (keeps local asset references intact).
     - Injects local @font-face and broad font-family rule.
-    - Ensures impress.js script tags are present.
-    - Preserves the LLM-generated main_ts (no TypeScript runtime override).
+    - Sets up JSON-based module loading: removes inline ``impress().init()``, ensures
+      ``impress.js`` regular script and ``main.ts`` module script are present.
+    - Replaces ``main_ts`` with a stable JSON-loader template so slides are rendered
+      from ``slides.json`` rather than hardcoded in HTML.
     """
     clean_html = strip_external_links_from_html(artifacts.index_html)
-    clean_html = ensure_impress_script_tags(clean_html)
+    clean_html = ensure_impress_json_module_setup(clean_html)
     clean_css = strip_external_imports_from_css(artifacts.style_css)
     clean_css = strip_conflicting_vazirmatn_face_from_css(clean_css)
     font_css = build_local_font_css(font_file_name, font_family, variable_font, font_format)
@@ -460,12 +581,47 @@ def apply_impress_js_bundle(
         spatial_mapping=artifacts.spatial_mapping,
         index_html=clean_html.strip(),
         style_css=(font_css + "\n\n" + clean_css.strip()).strip(),
-        main_ts=artifacts.main_ts,
+        main_ts=build_stable_impress_main_ts_json_loader().strip(),
+        slides_json=artifacts.slides_json,
     )
 
 
 def build_stable_slide_main_ts() -> str:
-        return """interface SlideData {
+        return """import slidesData from './slides.json';
+
+interface SlideEntry {
+    id?: string;
+    x?: number;
+    y?: number;
+    scale?: number;
+    html: string;
+}
+
+interface SlidesData {
+    slides: SlideEntry[];
+}
+
+function buildSlides(): void {
+    const world =
+        document.getElementById('world') ??
+        document.getElementById('camera') ??
+        document.querySelector<HTMLElement>('#viewport > div');
+
+    if (!world) return;
+
+    (slidesData as unknown as SlidesData).slides.forEach((slide, idx) => {
+        const el = document.createElement('div');
+        el.className = 'slide';
+        if (slide.id) el.id = slide.id;
+        el.dataset.x = String(slide.x ?? idx * 1100);
+        el.dataset.y = String(slide.y ?? 0);
+        el.dataset.scale = String(slide.scale ?? 1);
+        el.innerHTML = slide.html;
+        world.appendChild(el);
+    });
+}
+
+interface SlideData {
     x: number;
     y: number;
     scale: number;
@@ -632,6 +788,7 @@ class Presentation {
 }
 
 window.addEventListener('DOMContentLoaded', () => {
+    buildSlides();
     new Presentation();
 });
 """
@@ -869,6 +1026,10 @@ def extract_new_slides_payload(raw_response: str) -> str:
         if isinstance(value, str) and value.strip():
             return value.strip()
 
+        # If the add prompt returned new_slides_json (JSON mode), there is no HTML to inject.
+        if payload.get("new_slides_json") is not None:
+            return ""
+
     # Fallback: extract fenced html blocks
     for lang, code in _extract_fenced_blocks(raw_response):
         if lang in {"html"} and "slide" in code.lower():
@@ -876,6 +1037,59 @@ def extract_new_slides_payload(raw_response: str) -> str:
 
     # Last resort: return the raw response as-is and let the caller handle it
     return raw_response.strip()
+
+
+def extract_new_slides_json(raw_response: str) -> list:
+    """Parse the LLM response for JSON-based chunk mode and return the new slides array."""
+    cleaned = _strip_outer_code_fence(raw_response)
+    payload = None
+    try:
+        parsed = json.loads(cleaned)
+        if isinstance(parsed, dict):
+            payload = parsed
+        elif isinstance(parsed, list):
+            return parsed
+    except json.JSONDecodeError:
+        payload = _try_parse_first_json_object(cleaned)
+
+    if payload:
+        value = payload.get("new_slides_json") or payload.get("new_slides")
+        if isinstance(value, list):
+            return value
+
+    # Fallback: try to find a bare JSON array in the response
+    try:
+        idx = cleaned.find("[")
+        if idx >= 0:
+            arr = json.loads(cleaned[idx:])
+            if isinstance(arr, list):
+                return arr
+    except Exception:  # noqa: BLE001
+        pass
+
+    return []
+
+
+def find_last_slide_position_from_json(slides_json: str) -> tuple[int, int]:
+    """Return ``(last_x, last_y)`` coordinates from a ``slides.json`` string."""
+    try:
+        data = json.loads(slides_json)
+        slides = data.get("slides", [])
+        x_vals = [int(s["x"]) for s in slides if isinstance(s.get("x"), (int, float))]
+        y_vals = [int(s["y"]) for s in slides if isinstance(s.get("y"), (int, float))]
+        return (max(x_vals) if x_vals else 0, y_vals[-1] if y_vals else 0)
+    except Exception:  # noqa: BLE001
+        return (0, 0)
+
+
+def append_slides_to_json(existing_json: str, new_slides: list) -> str:
+    """Append *new_slides* objects to the ``slides`` array in a ``slides.json`` string."""
+    try:
+        data = json.loads(existing_json)
+        data.setdefault("slides", []).extend(new_slides)
+        return json.dumps(data, ensure_ascii=False, indent=2)
+    except Exception:  # noqa: BLE001
+        return existing_json
 
 
 def apply_runtime_and_responsive_defaults(
@@ -896,6 +1110,7 @@ def apply_runtime_and_responsive_defaults(
                 index_html=artifacts.index_html,
                 style_css=style_css,
                 main_ts=build_stable_slide_main_ts().strip(),
+                slides_json=artifacts.slides_json,
         )
 
 
@@ -1226,6 +1441,18 @@ class MarkdownSlideDeckGenerator:
         raw = self._request_generation(prompt)
         return extract_new_slides_payload(raw)
 
+    def _generate_add_slides_json_request(
+        self,
+        markdown_chunk: str,
+        style_css: str,
+        last_x: int,
+        last_y: int,
+    ) -> list:
+        """Like ``_generate_add_slides_request`` but returns a list of slide dicts."""
+        prompt = self._render_add_prompt(markdown_chunk, style_css, last_x, last_y)
+        raw = self._request_generation(prompt)
+        return extract_new_slides_json(raw)
+
     def _run_command(self, command: list[str], cwd: Path) -> None:
         completed = subprocess.run(
             command,
@@ -1319,20 +1546,41 @@ class MarkdownSlideDeckGenerator:
         # --- Subsequent chunks: append slides only ---
         for chunk_idx, chunk in enumerate(chunks[1:], start=2):
             logger.info(f"Processing chunk {chunk_idx}/{len(chunks)}: adding slides...")
-            last_x, last_y = find_last_slide_position(artifacts.index_html)
-            new_slides_html = self._generate_add_slides_request(
-                markdown_chunk=chunk,
-                style_css=artifacts.style_css,
-                last_x=last_x,
-                last_y=last_y,
-            )
-            updated_html = inject_slides_into_deck(artifacts.index_html, new_slides_html)
-            artifacts = SlideDeckArtifacts(
-                spatial_mapping=artifacts.spatial_mapping,
-                index_html=updated_html,
-                style_css=artifacts.style_css,
-                main_ts=artifacts.main_ts,
-            )
+
+            if artifacts.slides_json:
+                # JSON mode: append new slides to the JSON array
+                last_x, last_y = find_last_slide_position_from_json(artifacts.slides_json)
+                new_slides = self._generate_add_slides_json_request(
+                    markdown_chunk=chunk,
+                    style_css=artifacts.style_css,
+                    last_x=last_x,
+                    last_y=last_y,
+                )
+                updated_json = append_slides_to_json(artifacts.slides_json, new_slides)
+                artifacts = SlideDeckArtifacts(
+                    spatial_mapping=artifacts.spatial_mapping,
+                    index_html=artifacts.index_html,
+                    style_css=artifacts.style_css,
+                    main_ts=artifacts.main_ts,
+                    slides_json=updated_json,
+                )
+            else:
+                # HTML injection fallback mode
+                last_x, last_y = find_last_slide_position(artifacts.index_html)
+                new_slides_html = self._generate_add_slides_request(
+                    markdown_chunk=chunk,
+                    style_css=artifacts.style_css,
+                    last_x=last_x,
+                    last_y=last_y,
+                )
+                updated_html = inject_slides_into_deck(artifacts.index_html, new_slides_html)
+                artifacts = SlideDeckArtifacts(
+                    spatial_mapping=artifacts.spatial_mapping,
+                    index_html=updated_html,
+                    style_css=artifacts.style_css,
+                    main_ts=artifacts.main_ts,
+                    slides_json=artifacts.slides_json,
+                )
 
         index_path = deck_dir / "index.html"
         style_path = deck_dir / "style.css"
@@ -1352,6 +1600,11 @@ class MarkdownSlideDeckGenerator:
             "spatial_mapping": str(mapping_path),
             "font_file": str(font_target_path),
         }
+
+        if artifacts.slides_json:
+            slides_json_path = deck_dir / "slides.json"
+            slides_json_path.write_text(artifacts.slides_json + "\n", encoding="utf-8")
+            result["slides_json"] = str(slides_json_path)
 
         if self.use_impress:
             result["impress_js"] = str(deck_dir / "impress.js")

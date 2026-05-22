@@ -84,11 +84,32 @@ Return JSON only — no markdown fences, no extra keys.
 ```json
 {
   "spatial_mapping": "brief explanation of x/y/z/rotate mapping decisions",
-  "index_html": "full content of index.html",
+  "index_html": "full content of index.html — the #impress container must be EMPTY (no hardcoded step divs)",
   "style_css": "full content of style.css",
-  "main_ts": "// Navigation is handled by impress.js"
+  "main_ts": "// Navigation is handled by impress.js",
+  "slides_json": {
+    "slides": [
+      {
+        "id": "step-1",
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "scale": 1,
+        "rotate": 0,
+        "rotate_x": 0,
+        "rotate_y": 0,
+        "html": "<h1>Slide title</h1><p>content</p>"
+      }
+    ],
+    "overview": { "x": 3000, "y": 1500, "scale": 10 }
+  }
 }
 ```
+
+**Important for `index_html`:**
+- The `#impress` container must be completely **empty** — do NOT place any `<div class="step">` elements inside it.
+- Slide elements are injected at runtime by `main.ts` (which reads `slides.json`).
+- Keep all `<script src="impress.js">` and `<script type="module" src="main.ts">` tags.
 
 # Markdown Input
 {{markdown_content}}
