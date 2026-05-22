@@ -35,6 +35,23 @@ _IMPRESS_JS_CDN_URLS: list[str] = [
 ]
 IMPRESS_JS_CDN_URL = _IMPRESS_JS_CDN_URLS[0]
 
+# ---------------------------------------------------------------------------
+# Reveal.js assets
+# ---------------------------------------------------------------------------
+_REVEALJS_ASSETS_DIR = Path(__file__).resolve().parent.parent / "resources" / "assets"
+REVEALJS_ASSET_PATH = _REVEALJS_ASSETS_DIR / "reveal.js"
+REVEALJS_CSS_ASSET_PATH = _REVEALJS_ASSETS_DIR / "reveal.css"
+REVEALJS_THEME_ASSET_PATH = _REVEALJS_ASSETS_DIR / "reveal-theme.css"
+
+_REVEALJS_VERSION = "5.1.0"
+_REVEALJS_CDN_BASE = f"https://cdn.jsdelivr.net/npm/reveal.js@{_REVEALJS_VERSION}"
+
+_REVEALJS_CDN_FILES: list[tuple[str, Path]] = [
+    (f"{_REVEALJS_CDN_BASE}/dist/reveal.js", REVEALJS_ASSET_PATH),
+    (f"{_REVEALJS_CDN_BASE}/dist/reveal.css", REVEALJS_CSS_ASSET_PATH),
+    (f"{_REVEALJS_CDN_BASE}/dist/theme/black.css", REVEALJS_THEME_ASSET_PATH),
+]
+
 _SLIDE_SIZES: Dict[str, tuple] = {
     "small":  ("720px", "480px"),
     "medium": ("960px", "640px"),
@@ -66,6 +83,35 @@ def _ensure_impress_js_asset() -> Path:
         f"Could not download impress.js from any CDN: {last_exc}\n"
         f"Please manually download impress.js and place it at {IMPRESS_JS_ASSET_PATH}"
     ) from last_exc
+
+
+def _ensure_revealjs_assets() -> tuple[Path, Path, Path]:
+    """Return paths to (reveal.js, reveal.css, reveal-theme.css), downloading from CDN if needed."""
+    import urllib.request
+
+    missing = [
+        (url, path)
+        for url, path in _REVEALJS_CDN_FILES
+        if not path.exists() or path.stat().st_size == 0
+    ]
+
+    if not missing:
+        return REVEALJS_ASSET_PATH, REVEALJS_CSS_ASSET_PATH, REVEALJS_THEME_ASSET_PATH
+
+    for cdn_url, dest_path in missing:
+        logger.info(f"Downloading Reveal.js asset: {cdn_url} …")
+        try:
+            with urllib.request.urlopen(cdn_url, timeout=30) as response:  # noqa: S310
+                content = response.read()
+            dest_path.write_bytes(content)
+            logger.info(f"Cached {dest_path.name} ({len(content):,} bytes)")
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(
+                f"Could not download Reveal.js asset from {cdn_url}: {exc}\n"
+                f"Please manually place the file at {dest_path}"
+            ) from exc
+
+    return REVEALJS_ASSET_PATH, REVEALJS_CSS_ASSET_PATH, REVEALJS_THEME_ASSET_PATH
 
 
 @dataclass
@@ -583,6 +629,199 @@ def apply_impress_js_bundle(
         index_html=clean_html.strip(),
         style_css=(font_css + "\n\n" + clean_css.strip()).strip(),
         main_ts=build_stable_impress_main_ts_json_loader().strip(),
+        slides_json=artifacts.slides_json,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Reveal.js helpers
+# ---------------------------------------------------------------------------
+
+def build_stable_revealjs_main_ts() -> str:
+    """Return a stable TypeScript entry point for the Reveal.js mode.
+
+    Imports slide data from ``./slides.json``, builds ``<section>`` elements
+    (including vertical sub-slides), then initialises Reveal.js via the
+    global ``window.Reveal`` object loaded by the non-module script tag.
+    """
+    return """import slidesData from './slides.json';
+
+interface SubSlide {
+  html: string;
+  notes?: string;
+  background_color?: string;
+}
+
+interface SlideEntry {
+  id?: string;
+  html: string;
+  notes?: string;
+  background_color?: string;
+  background_gradient?: string;
+  background_image?: string;
+  sub_slides?: SubSlide[];
+}
+
+interface SlidesData {
+  slides: SlideEntry[];
+}
+
+function createNotesEl(notes: string): HTMLElement {
+  const el = document.createElement('aside');
+  el.className = 'notes';
+  el.textContent = notes;
+  return el;
+}
+
+function createSection(entry: SlideEntry | SubSlide, id?: string): HTMLElement {
+  const section = document.createElement('section');
+  if (id) section.id = id;
+  if ('background_color' in entry && entry.background_color) {
+    section.setAttribute('data-background-color', entry.background_color);
+  }
+  if ('background_gradient' in entry && (entry as SlideEntry).background_gradient) {
+    section.setAttribute('data-background-gradient', (entry as SlideEntry).background_gradient!);
+  }
+  if ('background_image' in entry && (entry as SlideEntry).background_image) {
+    section.setAttribute('data-background-image', (entry as SlideEntry).background_image!);
+  }
+  section.innerHTML = entry.html;
+  if (entry.notes) {
+    section.appendChild(createNotesEl(entry.notes));
+  }
+  return section;
+}
+
+function buildSlides(): void {
+  const slidesContainer = document.querySelector<HTMLElement>('.reveal .slides');
+  if (!slidesContainer) return;
+
+  const data = slidesData as unknown as SlidesData;
+
+  data.slides.forEach((slide, idx) => {
+    const id = slide.id ?? `slide-${idx + 1}`;
+
+    if (slide.sub_slides && slide.sub_slides.length > 0) {
+      // Vertical slide group: wrapper section + inner sections
+      const wrapper = document.createElement('section');
+      wrapper.appendChild(createSection(slide, id));
+      slide.sub_slides.forEach((sub, subIdx) => {
+        wrapper.appendChild(createSection(sub, `${id}-${subIdx + 1}`));
+      });
+      slidesContainer.appendChild(wrapper);
+    } else {
+      slidesContainer.appendChild(createSection(slide, id));
+    }
+  });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  buildSlides();
+  (window as any).Reveal.initialize({
+    hash: true,
+    transition: 'slide',
+    transitionSpeed: 'default',
+    backgroundTransition: 'fade',
+    progress: true,
+    controls: true,
+    slideNumber: true,
+    center: true,
+    width: 960,
+    height: 700,
+    margin: 0.04,
+    minScale: 0.2,
+    maxScale: 2.0,
+  });
+});
+"""
+
+
+def ensure_revealjs_local_setup(html_content: str) -> str:
+    """Ensure the HTML is correctly wired for local Reveal.js assets.
+
+    - Removes any inline ``Reveal.initialize()`` calls (``main.ts`` handles init).
+    - Ensures ``<script src="reveal.js">`` is present as a non-module script.
+    - Ensures ``<link rel="stylesheet" href="reveal.css">`` is in ``<head>``.
+    - Ensures ``<link rel="stylesheet" href="reveal-theme.css">`` is in ``<head>``.
+    - Ensures ``<script type="module" src="main.ts">`` is present before ``</body>``.
+    """
+    if not html_content.strip():
+        return html_content
+
+    # Remove inline Reveal.initialize() calls
+    html_content = re.sub(
+        r'(?is)<script[^>]*>\s*(?:window\s*\.\s*)?Reveal\s*(?:\(.*?\))?\s*\.?\s*initialize\s*\([^)]*\)\s*;?\s*</script>',
+        '',
+        html_content,
+    )
+
+    # Ensure reveal.js script tag
+    if not re.search(r'src=["\']reveal(?:\.min)?\.js["\']', html_content):
+        reveal_tag = '\n  <script src="reveal.js"></script>'
+        if '</body>' in html_content:
+            html_content = html_content.replace('</body>', f'{reveal_tag}\n</body>', 1)
+        else:
+            html_content += reveal_tag
+
+    # Remove any stale main.js module tags
+    html_content = re.sub(
+        r'(?is)<script[^>]*\bsrc\s*=\s*["\']main\.js["\'][^>]*>\s*</script>',
+        '',
+        html_content,
+    )
+
+    # Ensure main.ts module script
+    if not re.search(r'src=["\']main\.ts["\']', html_content):
+        module_tag = '\n  <script type="module" src="main.ts"></script>'
+        if '</body>' in html_content:
+            html_content = html_content.replace('</body>', f'{module_tag}\n</body>', 1)
+        else:
+            html_content += module_tag
+
+    # Ensure reveal.css link in <head>
+    if 'reveal.css' not in html_content:
+        css_tag = '\n  <link rel="stylesheet" href="reveal.css">'
+        if '</head>' in html_content:
+            html_content = html_content.replace('</head>', f'{css_tag}\n</head>', 1)
+        elif '<head>' in html_content:
+            html_content = html_content.replace('<head>', f'<head>{css_tag}', 1)
+
+    # Ensure reveal-theme.css link in <head>
+    if 'reveal-theme.css' not in html_content:
+        theme_tag = '\n  <link rel="stylesheet" href="reveal-theme.css">'
+        if '</head>' in html_content:
+            html_content = html_content.replace('</head>', f'{theme_tag}\n</head>', 1)
+        elif '<head>' in html_content:
+            html_content = html_content.replace('<head>', f'<head>{theme_tag}', 1)
+
+    return html_content
+
+
+def apply_revealjs_bundle(
+    artifacts: SlideDeckArtifacts,
+    font_file_name: str,
+    font_family: str,
+    variable_font: bool,
+    font_format: str,
+) -> SlideDeckArtifacts:
+    """Post-process artifacts for Reveal.js mode.
+
+    - Strips external CDN links/imports.
+    - Injects local @font-face and broad font-family rule.
+    - Sets up local Reveal.js asset references and module entry point.
+    - Replaces ``main_ts`` with a stable JSON-loader that builds slides and inits Reveal.
+    """
+    clean_html = strip_external_links_from_html(artifacts.index_html)
+    clean_html = ensure_revealjs_local_setup(clean_html)
+    clean_css = strip_external_imports_from_css(artifacts.style_css)
+    clean_css = strip_conflicting_vazirmatn_face_from_css(clean_css)
+    font_css = build_local_font_css(font_file_name, font_family, variable_font, font_format)
+
+    return SlideDeckArtifacts(
+        spatial_mapping=artifacts.spatial_mapping,
+        index_html=clean_html.strip(),
+        style_css=(font_css + "\n\n" + clean_css.strip()).strip(),
+        main_ts=build_stable_revealjs_main_ts().strip(),
         slides_json=artifacts.slides_json,
     )
 
@@ -1200,6 +1439,7 @@ class MarkdownSlideDeckGenerator:
         uniform_size: bool = True,
         slide_size: str = "medium",
         use_impress: bool = False,
+        use_revealjs: bool = False,
         user_note: Optional[str] = None,
     ):
         self.provider = provider or settings.llm.provider or "Google"
@@ -1216,6 +1456,7 @@ class MarkdownSlideDeckGenerator:
         self.uniform_size = uniform_size
         self.slide_size = slide_size.lower() if slide_size.lower() in _SLIDE_SIZES else "medium"
         self.use_impress = use_impress
+        self.use_revealjs = use_revealjs
         self.user_note = user_note
         self.tracker = TokenTracker()
         self.prompt_template = self._load_prompt_template()
@@ -1226,11 +1467,15 @@ class MarkdownSlideDeckGenerator:
             if not self.prompt_path.exists():
                 raise FileNotFoundError(f"Prompt file not found: {self.prompt_path}")
             return self.prompt_path.read_text(encoding="utf-8")
+        if self.use_revealjs:
+            return load_prompt("slides_revealjs_prompt.md")
         if self.use_impress:
             return load_prompt("slides_impress_prompt.md")
         return load_prompt("slides_prompt.md")
 
     def _load_add_prompt_template(self) -> str:
+        if self.use_revealjs:
+            return load_prompt("slides_revealjs_add_prompt.md")
         if self.use_impress:
             return load_prompt("slides_impress_add_prompt.md")
         return load_prompt("slides_add_prompt.md")
@@ -1491,6 +1736,9 @@ class MarkdownSlideDeckGenerator:
         if single_file and self.use_impress:
             self._inline_impress_js_in_dist(deck_dir=deck_dir, dist_dir=dist_dir)
 
+        if single_file and self.use_revealjs:
+            self._inline_revealjs_in_dist(deck_dir=deck_dir, dist_dir=dist_dir)
+
         return dist_dir
 
     def _inline_impress_js_in_dist(self, deck_dir: Path, dist_dir: Path) -> None:
@@ -1521,6 +1769,44 @@ class MarkdownSlideDeckGenerator:
         html = html.replace(placeholder, inline_tag, 1)
         dist_index.write_text(html, encoding="utf-8")
         logger.info(f"Inlined impress.js ({len(impress_js_content):,} bytes) into {dist_index}")
+
+    def _inline_revealjs_in_dist(self, deck_dir: Path, dist_dir: Path) -> None:
+        """Inline reveal.js and reveal.css into the single-file dist/index.html.
+
+        vite-plugin-singlefile only processes module-graph assets; plain
+        ``<script src="reveal.js">`` and ``<link href="reveal.css">`` tags are
+        left as-is. We manually replace them so the output is truly self-contained.
+        """
+        dist_index = dist_dir / "index.html"
+        if not dist_index.exists():
+            return
+
+        html = dist_index.read_text(encoding="utf-8")
+
+        for filename, inline_wrapper in [
+            ("reveal.js", lambda content: f"<script>\n{content}\n</script>"),
+            ("reveal.css", lambda content: f"<style>\n{content}\n</style>"),
+            ("reveal-theme.css", lambda content: f"<style>\n{content}\n</style>"),
+        ]:
+            asset_path = deck_dir / filename
+            if not asset_path.exists():
+                logger.warning(f"{filename} not found in deck_dir; skipping inline step.")
+                continue
+
+            if filename.endswith(".js"):
+                placeholder = f'<script src="{filename}"></script>'
+            else:
+                placeholder = f'<link rel="stylesheet" href="{filename}">'
+
+            if placeholder not in html:
+                logger.debug(f"{filename} tag not found in dist HTML; nothing to inline.")
+                continue
+
+            content = asset_path.read_text(encoding="utf-8")
+            html = html.replace(placeholder, inline_wrapper(content), 1)
+            logger.info(f"Inlined {filename} ({len(content):,} bytes) into {dist_index}")
+
+        dist_index.write_text(html, encoding="utf-8")
 
     def generate_from_markdown(
         self,
@@ -1574,6 +1860,18 @@ class MarkdownSlideDeckGenerator:
             impress_js_target = deck_dir / "impress.js"
             shutil.copy2(impress_js_source, impress_js_target)
             artifacts = apply_impress_js_bundle(
+                artifacts=artifacts,
+                font_file_name=font_target_path.name,
+                font_family=self.font_family,
+                variable_font=_is_variable_font(font_source_path),
+                font_format=_css_font_format(font_source_path),
+            )
+        elif self.use_revealjs:
+            revealjs_js, revealjs_css, revealjs_theme = _ensure_revealjs_assets()
+            shutil.copy2(revealjs_js, deck_dir / "reveal.js")
+            shutil.copy2(revealjs_css, deck_dir / "reveal.css")
+            shutil.copy2(revealjs_theme, deck_dir / "reveal-theme.css")
+            artifacts = apply_revealjs_bundle(
                 artifacts=artifacts,
                 font_file_name=font_target_path.name,
                 font_family=self.font_family,
@@ -1666,6 +1964,11 @@ class MarkdownSlideDeckGenerator:
 
         if self.use_impress:
             result["impress_js"] = str(deck_dir / "impress.js")
+
+        if self.use_revealjs:
+            result["reveal_js"] = str(deck_dir / "reveal.js")
+            result["reveal_css"] = str(deck_dir / "reveal.css")
+            result["reveal_theme_css"] = str(deck_dir / "reveal-theme.css")
 
         if build:
             _progress("Running Vite build…")
