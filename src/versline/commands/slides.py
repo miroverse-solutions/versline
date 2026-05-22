@@ -87,6 +87,7 @@ def generate_slides(
     ),
     note: Optional[str] = typer.Option(None, "--note", help="Additional instruction to append to the prompt"),
     note_file: Optional[Path] = typer.Option(None, "--note-file", help="Path to a .md or .txt file with an additional instruction"),
+    npm_registry: Optional[str] = typer.Option(None, "--npm-registry", help="Custom npm registry URL used during --build (e.g. https://registry.npmmirror.com)"),
 ):
     """Generate a premium slide deck from markdown using LLM-guided code generation."""
     if ctx.invoked_subcommand is not None:
@@ -110,6 +111,8 @@ def generate_slides(
         settings.llm.api_endpoint = api_endpoint
     if proxy:
         settings.llm.proxy = proxy
+    if npm_registry:
+        settings.slides.npm_registry = npm_registry
 
     generator = MarkdownSlideDeckGenerator(
         provider=settings.llm.provider,
@@ -127,6 +130,7 @@ def generate_slides(
         slide_size=slide_size,
         use_impress=use_impress,
         user_note=resolve_user_note(note=note, note_file=str(note_file) if note_file else None),
+        npm_registry=settings.slides.npm_registry,
     )
 
     try:

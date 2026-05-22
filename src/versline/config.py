@@ -175,11 +175,21 @@ class ResourceSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix='VERSLINE_RESOURCE_', env_file='.env', extra='ignore')
 
 
+class SlidesSettings(BaseSettings):
+    npm_registry: Optional[str] = Field(
+        default=None,
+        description="Custom npm registry URL used during slide deck build (e.g. https://registry.npmmirror.com)",
+    )
+
+    model_config = SettingsConfigDict(env_prefix='VERSLINE_SLIDES_', env_file='.env', extra='ignore')
+
+
 class Settings(BaseSettings):
     llm: LLMSettings = Field(default_factory=LLMSettings)
     ffmpeg: FFmpegSettings = Field(default_factory=FFmpegSettings)
     rag: RAGSettings = Field(default_factory=RAGSettings)
     resource: ResourceSettings = Field(default_factory=ResourceSettings)
+    slides: SlidesSettings = Field(default_factory=SlidesSettings)
 
     # Common settings
     output_directory: Path = Field(default=Path("output"), description="Default output directory")
@@ -227,6 +237,7 @@ def reload_settings(env_file: Optional[Path] = None, *, override_env: bool = Tru
     settings.ffmpeg = refreshed_settings.ffmpeg
     settings.rag = refreshed_settings.rag
     settings.resource = refreshed_settings.resource
+    settings.slides = refreshed_settings.slides
     settings.output_directory = refreshed_settings.output_directory
     settings.temp_directory = refreshed_settings.temp_directory
     return settings

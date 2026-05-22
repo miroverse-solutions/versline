@@ -1201,6 +1201,7 @@ class MarkdownSlideDeckGenerator:
         slide_size: str = "medium",
         use_impress: bool = False,
         user_note: Optional[str] = None,
+        npm_registry: Optional[str] = None,
     ):
         self.provider = provider or settings.llm.provider or "Google"
         self.model = model or settings.llm.model
@@ -1217,6 +1218,7 @@ class MarkdownSlideDeckGenerator:
         self.slide_size = slide_size.lower() if slide_size.lower() in _SLIDE_SIZES else "medium"
         self.use_impress = use_impress
         self.user_note = user_note
+        self.npm_registry = npm_registry or settings.slides.npm_registry
         self.tracker = TokenTracker()
         self.prompt_template = self._load_prompt_template()
         self.add_prompt_template = self._load_add_prompt_template()
@@ -1477,6 +1479,11 @@ class MarkdownSlideDeckGenerator:
         npm_path = shutil.which("npm")
         if not npm_path:
             raise RuntimeError("npm is required for --build but was not found in PATH.")
+
+        if self.npm_registry:
+            npmrc_path = deck_dir / ".npmrc"
+            npmrc_path.write_text(f"registry={self.npm_registry}\n", encoding="utf-8")
+            logger.debug(f"npm registry set to {self.npm_registry} via .npmrc")
 
         if install_deps:
             self._run_command([npm_path, "install"], cwd=deck_dir)
