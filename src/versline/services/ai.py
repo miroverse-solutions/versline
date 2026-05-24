@@ -7,6 +7,10 @@ from loguru import logger
 import openai
 from pydantic import BaseModel
 
+
+class AIResponseParseError(RuntimeError):
+    """Raised when an LLM response cannot be parsed as the expected JSON payload."""
+
 try:
     from .pricing import TokenTracker
 except ImportError:
@@ -330,9 +334,9 @@ class AIClient:
             else:
                 questions = []
             return questions, 0.0
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as error:
             logger.error(f"Failed to parse JSON response for {batch_info}")
-            return [], 0.0
+            raise AIResponseParseError(f"Failed to parse JSON response for {batch_info}") from error
 
     def _send_gemini(self, full_prompt: str, batch_info: str):
         if not self.client:
