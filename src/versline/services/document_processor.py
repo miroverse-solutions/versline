@@ -1,6 +1,8 @@
 """Document processors for different file formats."""
 
 import os
+import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -12,6 +14,46 @@ def convert_to_markdown(file_path: str) -> str:
     md = MarkItDown()
     result = md.convert(file_path)
     return result.text_content
+
+
+def convert_ppt_to_pptx(ppt_path: str) -> str:
+    """Convert legacy .ppt files to .pptx using LibreOffice CLI."""
+    office_cmd = shutil.which("soffice") or shutil.which("libreoffice")
+    if not office_cmd:
+        raise RuntimeError(
+            "Legacy .ppt requires LibreOffice (soffice) for conversion to .pptx"
+        )
+
+    output_dir = tempfile.mkdtemp(prefix="versline_ppt_convert_")
+    cmd = [
+        office_cmd,
+        "--headless",
+        "--convert-to",
+        "pptx",
+        "--outdir",
+        output_dir,
+        ppt_path,
+    ]
+
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError as exc:
+        shutil.rmtree(output_dir, ignore_errors=True)
+        stderr = (exc.stderr or "").strip()
+        raise RuntimeError(
+            f"Failed to convert .ppt to .pptx via LibreOffice: {stderr or exc}"
+        ) from exc
+
+    expected_path = Path(output_dir) / f"{Path(ppt_path).stem}.pptx"
+    if expected_path.exists():
+        return str(expected_path)
+
+    generated = list(Path(output_dir).glob("*.pptx"))
+    if generated:
+        return str(generated[0])
+
+    shutil.rmtree(output_dir, ignore_errors=True)
+    raise RuntimeError("LibreOffice conversion did not produce a .pptx file")
 
 
 # ============================================================================
@@ -332,6 +374,24 @@ class PDFProcessor(FileProcessor):
 
 class PPTXProcessor(FileProcessor):
     def extract_text(self, file_path: str, **kwargs) -> List[Dict[str, Any]]:
+        ext = Path(file_path).suffix.lower()
+        if ext == ".ppt":
+            converted_pptx = convert_ppt_to_pptx(file_path)
+            converted_dir = str(Path(converted_pptx).parent)
+            slides_per_batch = kwargs.get('slides_per_batch', 10)
+
+            try:
+                batches, temp_files = process_pptx(converted_pptx, slides_per_batch=slides_per_batch)
+                for t in temp_files:
+                    try:
+                        os.remove(t)
+                    except OSError:
+                        pass
+                return [{"text": b[0], "page": b[1]} for b in batches]
+            finally:
+                if os.path.isdir(converted_dir):
+                    shutil.rmtree(converted_dir, ignore_errors=True)
+
         slides_per_batch = kwargs.get('slides_per_batch', 10)
         batches, temp_files = process_pptx(file_path, slides_per_batch=slides_per_batch)
         for t in temp_files:
@@ -357,7 +417,7 @@ def get_file_processor(file_path: str) -> Union[FileProcessor, None]:
     ext = Path(file_path).suffix.lower()
     if ext == ".pdf":
         return PDFProcessor()
-    elif ext == ".pptx":
+    elif ext in [".pptx", ".ppt"]:
         return PPTXProcessor()
     elif ext == ".docx":
         return DOCXProcessor()

@@ -172,7 +172,7 @@ class QuestionDesigner:
             input_files = [self.input_path]
         elif self.input_path.is_dir():
             # Recursively find supported files
-            for ext in ['.pptx', '.pdf', '.docx', '.md', '.txt']:
+            for ext in ['.pptx', '.ppt', '.pdf', '.docx', '.md', '.txt']:
                 input_files.extend(self.input_path.rglob(f"*{ext}"))
         
         if not input_files:
@@ -307,7 +307,7 @@ class QuestionDesigner:
         if self.input_path.is_file():
             input_files = [self.input_path]
         elif self.input_path.is_dir():
-            for ext in ['.pptx', '.pdf', '.docx', '.md', '.txt']:
+            for ext in ['.pptx', '.ppt', '.pdf', '.docx', '.md', '.txt']:
                 input_files.extend(self.input_path.rglob(f"*{ext}"))
                 
         all_questions = []

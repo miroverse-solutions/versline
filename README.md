@@ -477,7 +477,7 @@ versline qude [OPTIONS] INPUT_PATH
 ```
 
 **Arguments:**
-- `INPUT_PATH`: Path to a file (PDF, PPTX, DOCX, MD) or directory. [Required]
+- `INPUT_PATH`: Path to a file (PDF, PPT/PPTX, DOCX, MD) or directory. [Required]
 
 **Options:**
 | Option | Short | Description | Default |
@@ -488,7 +488,7 @@ versline qude [OPTIONS] INPUT_PATH
 | `--formats` | | Output formats: `csv`, `anki`, `html`, or `all`. | `"all"` |
 | `--style` | | Path to custom CSS file for Anki/HTML styling. | `None` |
 | `--prompt` | | Path to a custom prompt file to override default system prompt. | `None` |
-| `--slides-per-batch` | | Number of slides per batch (PPTX). | `5` |
+| `--slides-per-batch` | | Number of slides per batch (PPTX; legacy PPT is converted directly). | `5` |
 | `--pages-per-batch` | | Number of pages per batch (PDF/DOCX). | `5` |
 | `--words-per-batch` | | Number of words per batch (Text/MD). | `2000` |
 | `--lang` | `-l` | Language for the questions. | `"en"` |
