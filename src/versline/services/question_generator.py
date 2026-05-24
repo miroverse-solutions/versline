@@ -56,6 +56,7 @@ class QuestionDesigner:
         debug: bool = False,
         no_cache: bool = False,
         user_note: Optional[str] = None,
+        answer_length: Optional[str] = None,
     ):
         self.input_path = Path(input_path)
         self.output_dir = Path(output_dir)
@@ -84,6 +85,7 @@ class QuestionDesigner:
         self.debug = debug
         self.no_cache = no_cache
         self.user_note = user_note
+        self.answer_length = answer_length
         
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
@@ -102,6 +104,32 @@ class QuestionDesigner:
         # Load Prompts
         self._load_prompts()
     
+    def _build_answer_length_instruction(self) -> str:
+        """Build the answer length instruction text for descriptive prompts."""
+        if not self.answer_length or self.question_type != QuestionType.DESCRIPTIVE:
+            return ""
+
+        val = self.answer_length.strip().lower()
+
+        presets = {
+            "short": " Design answers to be brief, approximately 50–100 words each.",
+            "medium": " Design answers to be moderate length, approximately 150–200 words each.",
+            "long": " Design answers to be detailed and comprehensive, approximately 300–400 words each.",
+            "mixed": (
+                " Include a mix of answer lengths: some brief (50–100 words),"
+                " some moderate (150–200 words), and some detailed (300+ words)."
+            ),
+        }
+
+        if val in presets:
+            return presets[val]
+
+        try:
+            word_count = int(val)
+            return f" Design answers to be approximately {word_count} words each."
+        except ValueError:
+            return f" {self.answer_length}"
+
     def _load_prompts(self):
         """Load system prompts from files."""
         try:
@@ -124,6 +152,9 @@ class QuestionDesigner:
                 qty_text = "Generate as many questions as possible to cover all key details and concepts found in the text."
                 
             self.system_prompt = self.system_prompt.replace("{{num_questions}}", qty_text)
+            self.system_prompt = self.system_prompt.replace(
+                "{{answer_length}}", self._build_answer_length_instruction()
+            )
 
             if self.user_note:
                 self.system_prompt += f"\n\n---\n\n**Additional instructions from user:**\n{self.user_note}"

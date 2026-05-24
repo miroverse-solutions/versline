@@ -43,6 +43,14 @@ def main(
     regenerate: bool = typer.Option(False, "--regenerate", "-r", help="Regenerate outputs from cache only"),
     note: Optional[str] = typer.Option(None, "--note", help="Additional instruction to append to the prompt"),
     note_file: Optional[Path] = typer.Option(None, "--note-file", help="Path to a .md or .txt file with additional instructions"),
+    answer_length: Optional[str] = typer.Option(
+        None,
+        "--answer-length",
+        help=(
+            "Target answer length for descriptive questions. "
+            "Use a word count (e.g. '200'), a preset ('short', 'medium', 'long'), or 'mixed' for varied lengths."
+        ),
+    ),
 ):
     """
     Generate questions (Flashcards, MCQs) from documents (PDF, PPTX, DOCX, etc.).
@@ -76,6 +84,7 @@ def main(
         debug=debug,
         no_cache=no_cache,
         user_note=resolve_user_note(note, str(note_file) if note_file else None),
+        answer_length=answer_length,
     )
 
     if regenerate:

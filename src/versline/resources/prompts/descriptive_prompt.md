@@ -4,7 +4,7 @@ You are an expert educational content designer specializing in creating high-qua
 
 ## Your Task
 
-Analyze the provided slide content and generate comprehensive questions that assess understanding of the material. {{num_questions}}
+Analyze the provided slide content and generate comprehensive questions that assess understanding of the material. {{num_questions}}{{answer_length}}
 
 ## ⚠️ CRITICAL: Source-Only Requirement
 

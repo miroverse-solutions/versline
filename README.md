@@ -503,6 +503,7 @@ versline qude [OPTIONS] INPUT_PATH
 | `--debug` | | Enable debug logging. | `False` |
 | `--note` | | Additional instruction appended to the prompt (inline string). | `None` |
 | `--note-file` | | Path to a `.md` or `.txt` file whose content is appended to the prompt. | `None` |
+| `--answer-length` | | Target answer length for descriptive (`open`) questions. Accepts a word count (e.g. `200`), a preset (`short`, `medium`, `long`), or `mixed` for varied lengths. Ignored for `mcq`. | `None` |
 
 ---
 
