@@ -79,5 +79,35 @@ class TestResolveUserNoteIntegration(unittest.TestCase):
         self.assertEqual(resolved, "Inline note")
 
 
+class TestQuestionTypeAliases(unittest.TestCase):
+    def test_open_alias_maps_to_descriptive(self):
+        from versline.core.types import QuestionType
+
+        self.assertEqual(QuestionType("open"), QuestionType.DESCRIPTIVE)
+
+    def test_mixed_case_alias_is_supported(self):
+        from versline.core.types import QuestionType
+
+        self.assertEqual(QuestionType("Open"), QuestionType.DESCRIPTIVE)
+
+
+class TestQuestionDesignerProviderPassing(unittest.TestCase):
+    def test_provider_passed_to_ai_client_as_string(self):
+        from versline.services.question_generator import QuestionDesigner
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("versline.services.question_generator.CacheManager"), \
+                 patch("versline.services.question_generator.AIClient") as mock_ai:
+                QuestionDesigner(
+                    input_path=tmpdir,
+                    output_dir=tmpdir,
+                    provider="openai",
+                )
+
+            self.assertEqual(mock_ai.call_count, 1)
+            call_kwargs = mock_ai.call_args.kwargs
+            self.assertEqual(call_kwargs["provider"], "openai")
+
+
 if __name__ == "__main__":
     unittest.main()

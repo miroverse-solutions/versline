@@ -289,16 +289,30 @@ class AIClient:
     def _send_openai(self, full_prompt: str, batch_info: str):
         if not self.client:
             raise ValueError("OpenAI Client not initialized")
-            
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant that generates questions in JSON format."},
-                {"role": "user", "content": full_prompt}
-            ],
-            response_format={"type": "json_object"},
-            temperature=0.7
-        )
+
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant that generates questions in JSON format."},
+            {"role": "user", "content": full_prompt}
+        ]
+
+        if self.provider == "avalai" and hasattr(self.client.chat.completions, "with_raw_response"):
+            raw = self.client.chat.completions.with_raw_response.create(
+                model=self.model,
+                messages=messages,
+                response_format={"type": "json_object"},
+                temperature=0.7
+            )
+            request_id = raw.headers.get("x-request-id")
+            if request_id:
+                self.tracker.add_avalai_request(request_id)
+            response = raw.parse()
+        else:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                response_format={"type": "json_object"},
+                temperature=0.7
+            )
         
         content = response.choices[0].message.content
         usage = response.usage

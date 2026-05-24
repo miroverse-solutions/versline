@@ -2,7 +2,6 @@
 
 import time
 import os
-import uuid
 import httpx
 from loguru import logger
 from typing import Optional, List, Dict
@@ -41,12 +40,9 @@ class TokenTracker:
     
     def add_avalai_request(self, request_id: str):
         """Track AvalAI request ID for cost lookup."""
-        if request_id:
-            try:
-                uuid.UUID(request_id)
-                self.avalai_request_ids.append(request_id)
-            except ValueError:
-                logger.debug(f"AvalAI x-request-id {request_id!r} is not a UUID, skipping cost tracking")
+        normalized = str(request_id).strip() if request_id is not None else ""
+        if normalized and normalized not in self.avalai_request_ids:
+            self.avalai_request_ids.append(normalized)
 
 def get_http_client(proxy_url: Optional[str] = None, timeout_seconds: float = 30.0) -> httpx.Client:
     """Create HTTP client with optional proxy support."""

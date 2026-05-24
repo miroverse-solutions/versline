@@ -92,7 +92,7 @@ class QuestionDesigner:
         
         # Initialize AI Client
         self.client = AIClient(
-            provider=self.provider,
+            provider=self.provider.value,
             model=self.model,
             api_key=self.api_key,
             base_url=self.base_url,
