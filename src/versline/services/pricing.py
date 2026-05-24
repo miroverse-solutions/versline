@@ -2,6 +2,8 @@
 
 import time
 import os
+import re
+import uuid
 import httpx
 from loguru import logger
 from typing import Optional, List, Dict
@@ -40,9 +42,27 @@ class TokenTracker:
     
     def add_avalai_request(self, request_id: str):
         """Track AvalAI request ID for cost lookup."""
-        normalized = str(request_id).strip() if request_id is not None else ""
-        if normalized and normalized not in self.avalai_request_ids:
-            self.avalai_request_ids.append(normalized)
+        if request_id is None:
+            return
+
+        raw = str(request_id).strip()
+        if not raw:
+            return
+
+        # Some gateways return a comma-separated list in x-request-id.
+        # Extract UUID-like tokens and canonicalize them for lookup API.
+        candidates = [part.strip() for part in raw.split(",") if part.strip()]
+        parsed_any = False
+
+        for candidate in candidates:
+            maybe_uuid = _to_uuid_string(candidate)
+            if maybe_uuid:
+                parsed_any = True
+                if maybe_uuid not in self.avalai_request_ids:
+                    self.avalai_request_ids.append(maybe_uuid)
+
+        if not parsed_any and raw not in self.avalai_request_ids:
+            self.avalai_request_ids.append(raw)
 
 def get_http_client(proxy_url: Optional[str] = None, timeout_seconds: float = 30.0) -> httpx.Client:
     """Create HTTP client with optional proxy support."""
@@ -52,6 +72,57 @@ def get_http_client(proxy_url: Optional[str] = None, timeout_seconds: float = 30
 
 
 _AVALAI_DEFAULT_LOOKUP_URL = "https://api.avalai.ir/user/v1/transactions/lookup"
+
+
+_UUID_TOKEN_PATTERN = re.compile(
+    r"\b(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9a-fA-F]{32})\b"
+)
+
+
+def _to_uuid_string(value: str) -> Optional[str]:
+    """Return canonical UUID string if parseable, otherwise None."""
+    try:
+        return str(uuid.UUID(value))
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
+def _is_uuid(value: str) -> bool:
+    return _to_uuid_string(value) is not None
+
+
+def _filter_valid_uuid_ids(request_ids: List[str]) -> List[str]:
+    return [rid for rid in request_ids if _is_uuid(rid)]
+
+
+def _split_uuid_ids(request_ids: List[str]) -> tuple[List[str], List[str]]:
+    valid_ids: List[str] = []
+    invalid_ids: List[str] = []
+    for rid in request_ids:
+        canonical = _to_uuid_string(rid)
+        if canonical:
+            if canonical not in valid_ids:
+                valid_ids.append(canonical)
+        else:
+            fragments = _UUID_TOKEN_PATTERN.findall(str(rid))
+            if fragments:
+                for fragment in fragments:
+                    canonical_fragment = _to_uuid_string(fragment)
+                    if canonical_fragment and canonical_fragment not in valid_ids:
+                        valid_ids.append(canonical_fragment)
+            else:
+                invalid_ids.append(rid)
+    return valid_ids, invalid_ids
+
+
+def _format_invalid_ids(invalid_ids: List[str], limit: int = 3) -> str:
+    if not invalid_ids:
+        return ""
+    shown = ", ".join(invalid_ids[:limit])
+    if len(invalid_ids) > limit:
+        remaining = len(invalid_ids) - limit
+        return f"{shown}, ... (+{remaining} more)"
+    return shown
 
 
 def _derive_avalai_lookup_url(api_endpoint: Optional[str] = None) -> str:
@@ -81,7 +152,9 @@ def lookup_avalai_cost(
     lookup_url: Optional[str] = None,
 ) -> CostReport:
     """Lookup exact cost for AvalAI requests."""
-    if not request_ids:
+    valid_request_ids = _filter_valid_uuid_ids(request_ids)
+
+    if not valid_request_ids:
         return CostReport(total_cost_usd=0.0, total_cost_irt=0.0)
     
     if not api_key:
@@ -103,7 +176,7 @@ def lookup_avalai_cost(
                         "Authorization": f"Bearer {api_key}",
                         "Content-Type": "application/json",
                     },
-                    json={"transaction_ids": request_ids},
+                    json={"transaction_ids": valid_request_ids},
                 )
             
                 if response.status_code == 200:
@@ -175,10 +248,12 @@ def print_cost_report(
     lookup_api_key = api_key or settings.llm.api_key
     lookup_proxy = proxy or settings.llm.proxy or os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY")
 
-    if tracker.avalai_request_ids and lookup_api_key:
+    valid_request_ids, invalid_request_ids = _split_uuid_ids(tracker.avalai_request_ids)
+
+    if valid_request_ids and lookup_api_key:
         with console.status("[bold green]Fetching exact AvalAI costs..."):
             report = lookup_avalai_cost(
-                tracker.avalai_request_ids,
+                valid_request_ids,
                 lookup_api_key,
                 proxy=lookup_proxy,
                 lookup_url=_derive_avalai_lookup_url(settings.llm.api_endpoint),
@@ -190,6 +265,11 @@ def print_cost_report(
             else:
                 if report.error != "No API key":
                     table.add_row("AvalAI Cost Error", str(report.error))
+    elif tracker.avalai_request_ids and not valid_request_ids:
+        table.add_row("AvalAI Cost", "Unavailable (no valid UUID request ID)")
+
+    if invalid_request_ids:
+        table.add_row("AvalAI Invalid IDs", _format_invalid_ids(invalid_request_ids))
     
     # Generic USD Cost (OpenRouter/OpenAI)
     if tracker.total_cost_usd > 0:

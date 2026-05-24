@@ -130,6 +130,22 @@ class QuestionDesigner:
         except ValueError:
             return f" {self.answer_length}"
 
+    def _build_language_instruction(self) -> str:
+        """Build a strict output-language instruction from language code."""
+        lang = (self.language or "en").strip().lower()
+        names = {
+            "fa": "Persian (Farsi)",
+            "en": "English",
+            "ar": "Arabic",
+        }
+        language_name = names.get(lang, self.language)
+        return (
+            "\n\n## Output Language Constraint\n"
+            f"You MUST write ALL user-facing fields in {language_name}. "
+            "This includes question, answer/explanation, options, and topic. "
+            "Do not keep the source language if it differs; translate faithfully into the target language while preserving meaning."
+        )
+
     def _load_prompts(self):
         """Load system prompts from files."""
         try:
@@ -155,6 +171,7 @@ class QuestionDesigner:
             self.system_prompt = self.system_prompt.replace(
                 "{{answer_length}}", self._build_answer_length_instruction()
             )
+            self.system_prompt += self._build_language_instruction()
 
             if self.user_note:
                 self.system_prompt += f"\n\n---\n\n**Additional instructions from user:**\n{self.user_note}"

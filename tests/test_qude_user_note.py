@@ -109,5 +109,23 @@ class TestQuestionDesignerProviderPassing(unittest.TestCase):
             self.assertEqual(call_kwargs["provider"], "openai")
 
 
+class TestQuestionDesignerLanguageEnforcement(unittest.TestCase):
+    def test_system_prompt_enforces_target_language(self):
+        from versline.services.question_generator import QuestionDesigner
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("versline.services.question_generator.CacheManager"), \
+                 patch("versline.services.question_generator.AIClient"):
+                designer = QuestionDesigner(
+                    input_path=tmpdir,
+                    output_dir=tmpdir,
+                    language="fa",
+                    question_type="open",
+                )
+
+        self.assertIn("Output Language Constraint", designer.system_prompt)
+        self.assertIn("Persian (Farsi)", designer.system_prompt)
+
+
 if __name__ == "__main__":
     unittest.main()
