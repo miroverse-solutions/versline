@@ -1,7 +1,12 @@
 import unittest
 from unittest.mock import patch
 
-from versline.services.document_processor import PPTXProcessor, get_file_processor
+from versline.services.document_processor import (
+    PPTXProcessor,
+    _import_pymupdf,
+    get_file_processor,
+    process_pdf,
+)
 
 
 class TestDocumentProcessorPptSupport(unittest.TestCase):
@@ -35,6 +40,52 @@ class TestDocumentProcessorPptSupport(unittest.TestCase):
         )
         self.assertEqual(chunks, [{"text": "slide content", "page": "Batch 1"}])
         rmtree_mock.assert_called_once_with("/tmp/versline_ppt_convert_x", ignore_errors=True)
+
+
+class TestPyMuPDFImport(unittest.TestCase):
+    @patch("versline.services.document_processor.importlib.import_module", autospec=True)
+    def test_prefers_pymupdf_module(self, import_module_mock):
+        pymupdf_module = object()
+        import_module_mock.return_value = pymupdf_module
+
+        result = _import_pymupdf()
+
+        self.assertIs(result, pymupdf_module)
+        import_module_mock.assert_called_once_with("pymupdf")
+
+    @patch("versline.services.document_processor.importlib.import_module", autospec=True)
+    def test_raises_clear_error_for_conflicting_fitz(self, import_module_mock):
+        class BadFitz:
+            pass
+
+        import_module_mock.side_effect = [ModuleNotFoundError("no pymupdf"), BadFitz()]
+
+        with self.assertRaises(RuntimeError) as exc_info:
+            _import_pymupdf()
+
+        self.assertIn("incompatible 'fitz'", str(exc_info.exception))
+
+
+class TestPdfFallback(unittest.TestCase):
+    @patch("versline.services.document_processor.convert_to_markdown", autospec=True)
+    @patch("versline.services.document_processor.split_pdf_to_batches", autospec=True)
+    def test_process_pdf_falls_back_to_full_document_when_pymupdf_unavailable(
+        self,
+        split_pdf_to_batches_mock,
+        convert_to_markdown_mock,
+    ):
+        split_pdf_to_batches_mock.side_effect = RuntimeError(
+            "Failed to import PyMuPDF. A conflicting 'fitz' package may be installed."
+        )
+        convert_to_markdown_mock.return_value = "full document text"
+
+        batches, temp_files = process_pdf("file.pdf", pages_per_batch=5)
+
+        self.assertEqual(temp_files, [])
+        self.assertEqual(len(batches), 1)
+        self.assertEqual(batches[0][0], "full document text")
+        self.assertEqual(batches[0][1], "Batch 1 of 1 (Full document fallback)")
+        self.assertEqual(batches[0][3], "full")
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 """Document processors for different file formats."""
 
+import importlib
 import os
 import shutil
 import subprocess
@@ -7,6 +8,34 @@ import tempfile
 from pathlib import Path
 
 from markitdown import MarkItDown
+
+
+def _import_pymupdf():
+    """Import PyMuPDF in a way that avoids conflicts with the unrelated `fitz` package."""
+    try:
+        return importlib.import_module("pymupdf")
+    except ModuleNotFoundError:
+        pass
+
+    try:
+        fitz_module = importlib.import_module("fitz")
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "PyMuPDF is required for PDF batching. Install it with 'pip install pymupdf'."
+        ) from exc
+    except Exception as exc:
+        raise RuntimeError(
+            "Failed to import PyMuPDF. A conflicting 'fitz' package may be installed. "
+            "Try uninstalling 'fitz' and installing 'pymupdf'."
+        ) from exc
+
+    if not hasattr(fitz_module, "open"):
+        raise RuntimeError(
+            "Detected an incompatible 'fitz' package (not PyMuPDF). "
+            "Uninstall 'fitz' and install 'pymupdf'."
+        )
+
+    return fitz_module
 
 
 def convert_to_markdown(file_path: str) -> str:
@@ -156,7 +185,7 @@ def split_pdf_to_batches(pdf_path: str, pages_per_batch: int) -> list[tuple[str,
     
     Returns list of (temp_file_path, start_page, end_page).
     """
-    import fitz  # PyMuPDF
+    fitz = _import_pymupdf()
     
     doc = fitz.open(pdf_path)
     total_pages = len(doc)
@@ -189,7 +218,25 @@ def process_pdf(pdf_path: str, pages_per_batch: int) -> tuple[list[tuple], list[
         where batches is list of (markdown, batch_info, batch_num, page_range)
     """
     print(f"\n📂 Splitting PDF into batches of {pages_per_batch} pages...")
-    pdf_batches = split_pdf_to_batches(pdf_path, pages_per_batch)
+    try:
+        pdf_batches = split_pdf_to_batches(pdf_path, pages_per_batch)
+    except RuntimeError as exc:
+        # Continue with a single-pass extraction when page batching is unavailable
+        # (e.g., conflicting `fitz` package instead of PyMuPDF).
+        if "pymupdf" not in str(exc).lower() and "fitz" not in str(exc).lower():
+            raise
+
+        print("   Warning: PDF page batching unavailable, using full-document fallback.")
+        markdown = convert_to_markdown(pdf_path)
+        return [
+            (
+                markdown,
+                "Batch 1 of 1 (Full document fallback)",
+                1,
+                "full",
+            )
+        ], []
+
     total_batches = len(pdf_batches)
     print(f"   Created {total_batches} batch(es)\n")
     

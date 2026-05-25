@@ -60,6 +60,9 @@ Return a JSON object with a "questions" array. Each question must have:
 - Include questions that connect multiple concepts when possible
 - Answers should be comprehensive enough to serve as study material
 - For descriptive questions, provide detailed multi-paragraph answers
+- When `mixed` answer length is requested, do not let short answers dominate. Produce a real spread of short, medium, and long answers.
+- If the correct answer is inherently a single term, short phrase, number, or name, keep the answer concise instead of inflating it into a sentence.
+- Never pad a short answer by restating the wording of the question.
 
 ## Example Output
 

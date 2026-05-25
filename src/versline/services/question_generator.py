@@ -3,6 +3,7 @@
 import os
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
@@ -32,6 +33,16 @@ from versline.resources.assets import load_css
 PROMPTS_DIR = Path(__file__).parent.parent / "resources" / "prompts"
 
 console = Console()
+
+_SHORT_ANSWER_MAX_WORDS = 12
+_MIXED_SHORT_MAX_WORDS = 110
+_MIXED_MEDIUM_MAX_WORDS = 240
+_FILLER_TOKENS = {
+    "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in", "into", "is",
+    "it", "of", "on", "or", "that", "the", "their", "there", "these", "this", "those", "to",
+    "was", "were", "with", "است", "این", "آن", "از", "به", "با", "برای", "در", "را", "و",
+    "که", "می", "شود", "شد", "هست", "هستند",
+}
 
 class QuestionDesigner:
     def __init__(
@@ -116,8 +127,13 @@ class QuestionDesigner:
             "medium": " Design answers to be moderate length, approximately 150–200 words each.",
             "long": " Design answers to be detailed and comprehensive, approximately 300–400 words each.",
             "mixed": (
-                " Include a mix of answer lengths: some brief (50–100 words),"
+                " Include a deliberate mix of answer lengths: some brief (50–100 words),"
                 " some moderate (150–200 words), and some detailed (300+ words)."
+                " Short answers must not dominate the set. When generating 4 or more questions,"
+                " keep short answers to at most one-third of the total and ensure there are multiple"
+                " medium and long answers. If the correct answer is inherently a term, name, number,"
+                " or short phrase, classify it as short_answer and write only that term or phrase."
+                " Do not pad a short answer into a full sentence by repeating the question."
             ),
         }
 
@@ -129,6 +145,104 @@ class QuestionDesigner:
             return f" Design answers to be approximately {word_count} words each."
         except ValueError:
             return f" {self.answer_length}"
+
+    def _uses_mixed_answer_length(self) -> bool:
+        return (
+            self.question_type == QuestionType.DESCRIPTIVE
+            and isinstance(self.answer_length, str)
+            and self.answer_length.strip().lower() == "mixed"
+        )
+
+    def _count_words(self, text: str) -> int:
+        return len(re.findall(r"\S+", text or ""))
+
+    def _normalized_tokens(self, text: str) -> List[str]:
+        return [token.lower() for token in re.findall(r"\w+", text or "", flags=re.UNICODE)]
+
+    def _extract_concise_answer(self, question: str, answer: str) -> Optional[str]:
+        answer_tokens = re.findall(r"\w+", answer or "", flags=re.UNICODE)
+        if not answer_tokens:
+            return None
+
+        question_tokens = set(self._normalized_tokens(question))
+        concise_tokens = [
+            token
+            for token in answer_tokens
+            if token.lower() not in question_tokens and token.lower() not in _FILLER_TOKENS
+        ]
+        if 1 <= len(concise_tokens) <= 4 and len(concise_tokens) < len(answer_tokens):
+            return " ".join(concise_tokens)
+        return None
+
+    def _looks_like_padded_short_answer(self, question: str, answer: str) -> bool:
+        answer_words = self._count_words(answer)
+        if answer_words == 0 or answer_words > 18:
+            return False
+
+        answer_tokens = self._normalized_tokens(answer)
+        if not answer_tokens:
+            return False
+
+        question_tokens = set(self._normalized_tokens(question))
+        shared_tokens = [token for token in answer_tokens if token in question_tokens]
+        overlap_ratio = len(shared_tokens) / len(answer_tokens)
+        unique_meaningful_tokens = [
+            token for token in answer_tokens if token not in question_tokens and token not in _FILLER_TOKENS
+        ]
+        return overlap_ratio >= 0.5 and len(unique_meaningful_tokens) <= 2
+
+    def _normalize_question_record(self, question: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        normalized = dict(question)
+        normalized["question"] = str(normalized.get("question", "")).strip()
+        normalized["answer"] = str(normalized.get("answer", "")).strip()
+        normalized["type"] = str(normalized.get("type", "")).strip().lower() or "descriptive"
+
+        if not normalized["question"] or not normalized["answer"]:
+            return None
+
+        concise_answer = self._extract_concise_answer(normalized["question"], normalized["answer"])
+        if self._looks_like_padded_short_answer(normalized["question"], normalized["answer"]):
+            if concise_answer:
+                normalized["answer"] = concise_answer
+                normalized["type"] = "short_answer"
+            else:
+                return None
+
+        if normalized["type"] != "short_answer" and self._count_words(normalized["answer"]) <= _SHORT_ANSWER_MAX_WORDS:
+            normalized["type"] = "short_answer"
+
+        return normalized
+
+    def _rebalance_mixed_answer_lengths(self, questions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        if not self._uses_mixed_answer_length() or len(questions) < 4:
+            return questions
+
+        short_indexes = [
+            index
+            for index, question in enumerate(questions)
+            if question.get("type") == "short_answer" or self._count_words(str(question.get("answer", ""))) <= _MIXED_SHORT_MAX_WORDS
+        ]
+        if not short_indexes:
+            return questions
+
+        non_short_count = len(questions) - len(short_indexes)
+        if non_short_count == 0:
+            return questions
+
+        max_short = max(1, len(questions) // 3)
+        if len(short_indexes) <= max_short:
+            return questions
+
+        short_indexes_to_drop = set(short_indexes[max_short:])
+        return [question for index, question in enumerate(questions) if index not in short_indexes_to_drop]
+
+    def _post_process_questions(self, batch_questions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        normalized_questions = []
+        for question in batch_questions:
+            normalized = self._normalize_question_record(question)
+            if normalized is not None:
+                normalized_questions.append(normalized)
+        return normalized_questions
 
     def _build_language_instruction(self) -> str:
         """Build a strict output-language instruction from language code."""
@@ -275,7 +389,7 @@ class QuestionDesigner:
                 )
                 
                 # Post-process questions
-                for q in batch_questions:
+                for q in self._post_process_questions(batch_questions):
                     q['source_file'] = filename
                     q['source_page'] = chunk.get('page', i+1)
                     q['tags'] = [filename]
@@ -283,7 +397,7 @@ class QuestionDesigner:
                 
                 progress.advance(task)
                 
-        return questions
+        return self._rebalance_mixed_answer_lengths(questions)
 
     def _save_outputs(self, questions: List[Dict[str, Any]]):
         """Save questions to various formats."""

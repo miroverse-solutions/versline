@@ -45,6 +45,8 @@ class TestAnswerLengthInstruction(unittest.TestCase):
             self.assertIn("mix", d.system_prompt.lower())
             self.assertIn("50", d.system_prompt)
             self.assertIn("300", d.system_prompt)
+            self.assertIn("must not dominate", d.system_prompt)
+            self.assertIn("Do not pad", d.system_prompt)
 
     # --- Numeric word count ---
 
@@ -114,6 +116,51 @@ class TestAnswerLengthInstruction(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             d = self._make_designer(tmpdir)
             self.assertIsNone(d.answer_length)
+
+    def test_padded_short_answer_is_collapsed_to_short_answer(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            d = self._make_designer(tmpdir, answer_length="mixed")
+            normalized = d._normalize_question_record(
+                {
+                    "question": "What is the capital of France?",
+                    "answer": "The capital of France is Paris.",
+                    "type": "descriptive",
+                }
+            )
+            self.assertIsNotNone(normalized)
+            self.assertEqual(normalized["answer"], "Paris")
+            self.assertEqual(normalized["type"], "short_answer")
+
+    def test_mixed_rebalance_limits_short_answer_dominance(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            d = self._make_designer(tmpdir, answer_length="mixed")
+            medium_answer = " ".join(["medium"] * 140)
+            long_answer = " ".join(["long"] * 260)
+            questions = [
+                {"question": "Q1", "answer": "short item", "type": "short_answer"},
+                {"question": "Q2", "answer": "another short item", "type": "short_answer"},
+                {"question": "Q3", "answer": "third short item", "type": "short_answer"},
+                {"question": "Q4", "answer": medium_answer, "type": "descriptive"},
+                {"question": "Q5", "answer": long_answer, "type": "descriptive"},
+            ]
+            rebalanced = d._rebalance_mixed_answer_lengths(questions)
+
+            self.assertEqual(len(rebalanced), 3)
+            short_count = sum(1 for item in rebalanced if item["type"] == "short_answer")
+            self.assertEqual(short_count, 1)
+
+    def test_empty_questions_are_removed_in_post_processing(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            d = self._make_designer(tmpdir, answer_length="mixed")
+            processed = d._post_process_questions(
+                [
+                    {"question": "", "answer": "x", "type": "descriptive"},
+                    {"question": "Valid?", "answer": "Yes", "type": "descriptive"},
+                ]
+            )
+
+            self.assertEqual(len(processed), 1)
+            self.assertEqual(processed[0]["type"], "short_answer")
 
 
 if __name__ == "__main__":
