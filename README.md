@@ -117,6 +117,12 @@ VERSLINE_LLM_API_ENDPOINT=
 # Useful when model id alone is ambiguous for AvalAI routing.
 VERSLINE_LLM_AVALAI_PROVIDER=
 
+# --- Transcription ---
+# Model used for timestamp annotation (STT endpoint preferred)
+VERSLINE_TRANSCRIPTION_TIMESTAMP_MODEL=gpt-4o-mini-transcribe
+# Chunk duration in minutes for chunk-based timestamp fallback
+VERSLINE_TRANSCRIPTION_TIMESTAMP_CHUNK_MINUTES=3
+
 # --- RAG configuration ---
 VERSLINE_RAG_VECTOR_BACKEND=qdrant
 VERSLINE_RAG_COLLECTION_NAME=versline_docs
@@ -345,6 +351,9 @@ versline transcribe [OPTIONS] FILE_PATH
 | `--force` | `-f` | Force re-transcription (ignore cache/progress). | `False` |
 | `--note` | | Additional instruction appended to the prompt (inline string). | `None` |
 | `--note-file` | | Path to a `.md` or `.txt` file whose content is appended to the prompt. | `None` |
+| `--timestamped` | | Enable timestamp-aligned segments (dual strategy: native API → chunk-based). | `False` |
+| `--timestamp-model` | | Model for timestamp annotation (`gpt-4o-mini-transcribe`, `whisper-1`, etc.). | `gpt-4o-mini-transcribe` |
+| `--chunk-minutes` | | Chunk duration in minutes for chunk-based timestamp fallback. | `3` |
 
 AvalAI-specific env options (applies to all commands that use LLM settings):
 - `VERSLINE_LLM_AVALAI_PROVIDER`: Upstream provider hint for AvalAI routing (for example `google`, `openai`, `anthropic`).
@@ -973,13 +982,24 @@ When using AvalAI with Gemini model IDs (for example `gemini-3-flash-preview`), 
 ```python
 transcriber = AudioTranscriber()
 
-# Process file with specific chunking configuration
-full_text = transcriber.process_file(
-    "interview.mp3",
-    chunk_length=600,  # 10 minutes
-    overlap=60         # 1 minute overlap
-)
+# Basic transcription
+full_text = transcriber.process_file("interview.mp3")
 print(full_text)
+
+# Timestamp-aligned transcription (dual strategy)
+# - First tries native segmentation via STT API (verbose_json + timestamps)
+# - Falls back to chunk-based method if provider doesn't support timestamps
+result = transcriber.process_file(
+    "lecture.mp3",
+    timestamped=True,                   # Enable timestamp mode
+    timestamp_model="gpt-4o-mini-transcribe",  # STT model for timestamps
+    chunk_minutes=3                     # Chunk size for fallback method
+)
+print(result["text"])                   # Full high-quality transcription
+for seg in result["segments"]:          # Time-aligned segments
+    m = int(seg["start"] // 60)
+    s = int(seg["start"] % 60)
+    print(f"{m}:{s:02d} — {seg['text'][:100]}")
 ```
 
 **2. Translate Text:**
