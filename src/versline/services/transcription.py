@@ -258,6 +258,54 @@ class AudioTranscriber:
             logger.error(f"Gemini Error: {e}")
             raise
 
+    def transcribe_chunk_via_stt_api(self, model_name: str, audio_path: str, max_retries: int = 2, with_timestamps: bool = False):
+        """Transcribe using the /v1/audio/transcriptions endpoint (STT API).
+        If with_timestamps=True, tries native timestamps first, falls back to chunk-based."""
+        import requests
+        api_key = settings.llm.api_key
+        endpoint = (settings.llm.api_endpoint or "https://api.avalai.ir/v1").rstrip("/")
+        url = f"{endpoint}/audio/transcriptions"
+        data_params = {"model": model_name, "language": "fa"}
+        if with_timestamps:
+            data_params["response_format"] = "verbose_json"
+            data_params["timestamp_granularities[]"] = "segment"
+
+        for attempt in range(max_retries):
+            try:
+                with open(audio_path, "rb") as f:
+                    resp = requests.post(
+                        url,
+                        headers={"Authorization": f"Bearer {api_key}"},
+                        files={"file": (Path(audio_path).name, f, "audio/mpeg")},
+                        data=data_params,
+                        timeout=120,
+                    )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if with_timestamps:
+                        segments = data.get("segments")
+                        if segments and len(segments) > 0:
+                            logger.info(f"\u2705 Native timestamps: {len(segments)} segments, duration={data.get('duration')}s")
+                            return {
+                                "text": data.get("text", "").strip(),
+                                "segments": segments,
+                                "duration": data.get("duration"),
+                                "language": data.get("language"),
+                                "source": "api_native",
+                            }
+                        else:
+                            logger.info("\u26a0\ufe0f No native timestamps, will use chunk-based")
+                            return {"text": data.get("text", "").strip(), "segments": None, "source": "api_text_only"}
+                    return data.get("text", "").strip()
+                else:
+                    raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:200]}")
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    time.sleep((attempt + 1) * 3)
+                else:
+                    raise
+        return ""
+
     def transcribe_audio_chunk_by_openaicompatible(self, client, model_name, audio_path, prompt, provider="openai", mode="input_audio"):
         # Implementation of OpenAI Audio/Multimodal
         # ... (Refer to old code logic)
@@ -400,6 +448,183 @@ class AudioTranscriber:
             
         
         # Merge results
+        full_text = self.merge_transcriptions(final_text_blocks, overlap)
+        return full_text
+
+    def process_file(self, file_path: str, chunk_length=900, overlap=180, progress_callback=None, force=False, timestamped: bool = False, timestamp_model: str | None = None, chunk_minutes: int | None = None):
+        """Transcribe audio file. If timestamped=True, also produce timestamp-aligned segments.
+        
+        Returns:
+            If timestamped=False: str (the full transcription text)
+            If timestamped=True: dict with {text, segments} where segments is list of {start, end, text}
+        """
+        # --- Phase 1: Primary transcription with main model ---
+        full_text = self._process_file_internal(file_path, chunk_length, overlap, progress_callback, force)
+        
+        if not timestamped:
+            return full_text
+        
+        # --- Phase 2: Timestamp strategy (native API first, chunk-based fallback) ---
+        tm = timestamp_model or settings.transcription.timestamp_model
+        ts_chunk_sec = 30
+        ts_overlap = 3
+        
+        use_stt = any(k in tm.lower() for k in ('whisper', 'transcribe', 'groq'))
+        logger.info(f"⏱️ Timestamped: model={tm}, method={'STT' if use_stt else 'LLM'}")
+        if progress_callback:
+            progress_callback(0, 1, "⏱️ Timestamp annotation...")
+        
+        from versline.utils.common import align_cheap_to_good_text
+        ts_dir = Path("work_dir") / Path(file_path).stem / "timestamp_chunks"
+        ts_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Strategy 1: Try native segmentation via STT API with verbose_json
+        if use_stt:
+            logger.info("🔍 Trying native timestamp API (verbose_json + timestamp_granularities)...")
+            try:
+                native_result = self.transcribe_chunk_via_stt_api(
+                    tm, file_path, max_retries=1, with_timestamps=True
+                )
+                if isinstance(native_result, dict) and native_result.get("source") == "api_native":
+                    # Native timestamps available — use them directly
+                    api_segments = native_result["segments"]
+                    logger.info(f"✅ Using native segments: {len(api_segments)} segments")
+                    # Align good text with native segments
+                    api_chunks = [(s["start"], s["end"], s["text"]) for s in api_segments]
+                    segments = align_cheap_to_good_text(full_text, api_chunks)
+                    result = {
+                        "text": full_text,
+                        "segments": segments,
+                        "segments_count": len(segments),
+                        "timestamp_method": "api_native",
+                        "native_duration": native_result.get("duration"),
+                        "native_language": native_result.get("language"),
+                    }
+                    if progress_callback:
+                        progress_callback(1, 1, f"✅ Native timestamp: {len(segments)} segments")
+                    return result
+                else:
+                    logger.info("⚠️ Native timestamps not available, using chunk-based fallback")
+            except Exception as e:
+                logger.warning(f"Native timestamp attempt failed: {e}, using chunk-based fallback")
+        
+        # Strategy 2: Chunk-based timestamping (fallback)
+        chunks = media.split_audio_with_ffmpeg(file_path, ts_chunk_sec, ts_overlap, str(ts_dir))
+        logger.info(f"📦 {len(chunks)} timestamp chunks created (chunk-based)")
+        
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import threading
+        
+        results = {}
+        lock = threading.Lock()
+        completed = 0
+        
+        def transcribe_one(i, chunk_path):
+            nonlocal completed
+            start_sec = i * ts_chunk_sec
+            end_sec = start_sec + ts_chunk_sec
+            try:
+                if use_stt:
+                    text = self.transcribe_chunk_via_stt_api(tm, chunk_path, max_retries=2)
+                else:
+                    prompt = "Transcribe this short audio clip literally in Persian. Only output spoken words."
+                    text = self.transcribe_chunk_with_retry(tm, chunk_path, prompt, max_retries=2)
+                text = (text or "").strip()
+                with lock:
+                    completed += 1
+                    if progress_callback and completed % 10 == 0:
+                        progress_callback(completed, len(chunks), f"⏱️ {completed}/{len(chunks)}")
+                return i, start_sec, end_sec, text
+            except Exception as e:
+                logger.error(f"Timestamp chunk {i} failed: {e}")
+                with lock:
+                    completed += 1
+                return i, start_sec, end_sec, ""
+        
+        max_w = min(len(chunks), 16)
+        with ThreadPoolExecutor(max_workers=max_w) as ex:
+            futures = {ex.submit(transcribe_one, i, p): i for i, p in enumerate(chunks)}
+            for future in as_completed(futures):
+                i, start_sec, end_sec, text = future.result()
+                if text:
+                    results[i] = (start_sec, end_sec, text)
+        
+        logger.info(f"✅ {len(results)}/{len(chunks)} timestamp chunks transcribed")
+        
+        sorted_chunks = [(start, end, text) for i, (start, end, text) in sorted(results.items())]
+        segments = align_cheap_to_good_text(full_text, sorted_chunks)
+    def _process_file_internal(self, file_path, chunk_length, overlap, progress_callback, force):
+        """Internal: the original process_file logic, returning plain text."""
+        import shutil
+        file_path = str(Path(file_path).resolve())
+        work_dir = Path("work_dir") / Path(file_path).stem
+        work_dir.mkdir(parents=True, exist_ok=True)
+        temp_dir = work_dir / "temp_chunks"
+        progress_file = work_dir / "progress.json"
+        
+        if force:
+            if progress_file.exists():
+                logger.warning("Force mode enabled: Deleting previous progress.")
+                try:
+                    progress_file.unlink()
+                except OSError as e:
+                    logger.warning(f"Failed to delete progress file: {e}")
+            if temp_dir.exists():
+                logger.warning("Force mode enabled: Deleting cached audio chunks.")
+                try:
+                    shutil.rmtree(str(temp_dir))
+                except OSError as e:
+                    logger.warning(f"Failed to delete temp chunks: {e}")
+        
+        last_index, transcriptions, _, speaker_samples = self.load_progress(str(progress_file))
+        if speaker_samples is None:
+            speaker_samples = {}
+
+        existing_chunks = sorted(temp_dir.glob("chunk_*.mp3")) if temp_dir.exists() else []
+        if existing_chunks:
+            logger.info(f"📂 Using {len(existing_chunks)} cached audio chunks (skipping re-split).")
+            chunks = [str(p) for p in existing_chunks]
+        else:
+            chunks = media.split_audio_with_ffmpeg(
+                file_path, chunk_length, overlap, str(temp_dir)
+            )
+        
+        total_chunks = len(chunks)
+        if progress_callback:
+            progress_callback(0, total_chunks, "Starting transcription...")
+        
+        if last_index > 0:
+            logger.info(f"▶ Resuming from chunk {last_index + 1}/{total_chunks} ({last_index} already done).")
+            if progress_callback:
+                progress_callback(last_index, total_chunks, f"Resuming from chunk {last_index+1}/{total_chunks}…")
+            
+        final_text_blocks = transcriptions[:]
+        
+        for i, chunk_path in enumerate(chunks):
+            if i < last_index:
+                continue
+                
+            chunk_name = Path(chunk_path).name
+            logger.info(f"[{i+1}/{total_chunks}] Transcribing {chunk_name}…")
+            if progress_callback:
+                progress_callback(i, total_chunks, f"Transcribing chunk {i+1}/{total_chunks}...")
+            
+            current_prompt = self.build_prompt_with_context(
+                self.transcription_prompt, i, speaker_samples
+            )
+            
+            model = settings.llm.model
+            text = self.transcribe_chunk_with_retry(model, chunk_path, current_prompt)
+            
+            new_speakers = self.extract_speaker_samples(text)
+            speaker_samples.update(new_speakers)
+            
+            final_text_blocks.append(text)
+            
+            self.save_progress(str(progress_file), i + 1, final_text_blocks, speaker_samples=speaker_samples)
+            if progress_callback:
+                progress_callback(i + 1, total_chunks, f"Completed chunk {i+1}")
+            
         full_text = self.merge_transcriptions(final_text_blocks, overlap)
         return full_text
 

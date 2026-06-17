@@ -63,8 +63,7 @@ def split_audio_with_ffmpeg(file_path: str, chunk_length_sec: int, chunk_overlap
             # Use ffmpeg to cut the file
             cmd = [
                 ffmpeg_path, '-i', file_path, '-ss', str(current_time), 
-                '-t', str(chunk_duration), '-acodec', 'libmp3lame', 
-                '-b:a', '128k', '-y', chunk_path
+                '-t', str(chunk_duration), '-c', 'copy', '-y', chunk_path
             ]
             subprocess.run(
                 cmd,

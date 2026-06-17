@@ -21,7 +21,7 @@ from mcp.server.fastmcp import FastMCP
 mcp = FastMCP('versline')
 
 from typing import Optional
-import tempfile, os
+import tempfile, os, json
 
 def _save_temp_file(content: str, suffix: str = '.md') -> str:
     tmp = tempfile.NamedTemporaryFile(mode='w', suffix=suffix, delete=False, encoding='utf-8')
@@ -29,12 +29,15 @@ def _save_temp_file(content: str, suffix: str = '.md') -> str:
     tmp.close()
     return tmp.name
 
-@mcp.tool(name='transcribe', description='Transcribe an audio/video file to text using LLMs.')
-def transcribe(file_path: str, *, model: Optional[str] = None, provider: Optional[str] = None, json_output: bool = False, note: Optional[str] = None) -> str:
+@mcp.tool(name='transcribe', description='Transcribe an audio/video file to text using LLMs. Set timestamped=true for timestamp-aligned segments.')
+def transcribe(file_path: str, *, model: Optional[str] = None, provider: Optional[str] = None, json_output: bool = False, note: Optional[str] = None, timestamped: bool = False, timestamp_model: Optional[str] = None, chunk_minutes: Optional[int] = None) -> str:
     if model: settings.llm.model = model
     if provider: settings.llm.provider = provider
     transcriber = AudioTranscriber(user_note=note)
-    return transcriber.process_file(file_path)
+    result = transcriber.process_file(file_path, timestamped=timestamped, timestamp_model=timestamp_model, chunk_minutes=chunk_minutes)
+    if timestamped and isinstance(result, dict):
+        return json.dumps(result, ensure_ascii=False, indent=2)
+    return result
 
 @mcp.tool(name='translate', description='Translate a text/markdown file to another language.')
 def translate(file_path: str, target_lang: str = 'Persian', *, model: Optional[str] = None, provider: Optional[str] = None, note: Optional[str] = None) -> str:

@@ -9,6 +9,23 @@ from dotenv import load_dotenv
 
 ENV_FILE_ENV_VAR = "VERSLINE_ENV_FILE"
 
+class TranscriptionSettings(BaseSettings):
+    timestamp_model: str = Field(
+        default="gpt-4o-mini-transcribe",
+        description="Cheap/fast model for timestamp chunk transcription (must support audio input)",
+    )
+    timestamp_chunk_minutes: int = Field(
+        default=3,
+        description="Chunk duration in minutes for timestamped mode",
+    )
+    timestamp_prompt_file: str = Field(
+        default="timestamp_chunk_prompt.md",
+        description="Prompt file used for timestamp chunk transcription",
+    )
+
+    model_config = SettingsConfigDict(env_prefix='VERSLINE_TRANSCRIPTION_', env_file='.env', extra='ignore')
+
+
 class LLMSettings(BaseSettings):
     provider: str = Field(default="Google", description="LLM Provider (Google, OpenAI, OpenRouter, AvalAI, OpenAICompatible)")
     api_key: Optional[str] = Field(default=None, description="API Key for LLM")
@@ -186,6 +203,7 @@ class SlidesSettings(BaseSettings):
 
 class Settings(BaseSettings):
     llm: LLMSettings = Field(default_factory=LLMSettings)
+    transcription: TranscriptionSettings = Field(default_factory=TranscriptionSettings)
     ffmpeg: FFmpegSettings = Field(default_factory=FFmpegSettings)
     rag: RAGSettings = Field(default_factory=RAGSettings)
     resource: ResourceSettings = Field(default_factory=ResourceSettings)
