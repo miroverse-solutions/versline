@@ -553,6 +553,17 @@ class AudioTranscriber:
         
         sorted_chunks = [(start, end, text) for i, (start, end, text) in sorted(results.items())]
         segments = align_cheap_to_good_text(full_text, sorted_chunks)
+        
+        result = {
+            "text": full_text,
+            "segments": segments,
+            "segments_count": len(segments),
+            "timestamp_method": "chunk_based",
+        }
+        if progress_callback:
+            progress_callback(1, 1, f"✅ Chunk-based timestamp: {len(segments)} segments")
+        return result
+
     def _process_file_internal(self, file_path, chunk_length, overlap, progress_callback, force):
         """Internal: the original process_file logic, returning plain text."""
         import shutil
