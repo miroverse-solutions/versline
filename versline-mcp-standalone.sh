@@ -30,11 +30,11 @@ def _save_temp_file(content: str, suffix: str = '.md') -> str:
     return tmp.name
 
 @mcp.tool(name='transcribe', description='Transcribe an audio/video file to text using LLMs. Set timestamped=true for timestamp-aligned segments.')
-def transcribe(file_path: str, *, model: Optional[str] = None, provider: Optional[str] = None, json_output: bool = False, note: Optional[str] = None, timestamped: bool = False, timestamp_model: Optional[str] = None, chunk_minutes: Optional[int] = None) -> str:
+def transcribe(file_path: str, *, model: Optional[str] = None, provider: Optional[str] = None, json_output: bool = False, note: Optional[str] = None, timestamped: bool = False, timestamp_model: Optional[str] = None, chunk_minutes: Optional[int] = None, native_timestamps_only: bool = False) -> str:
     if model: settings.llm.model = model
     if provider: settings.llm.provider = provider
     transcriber = AudioTranscriber(user_note=note)
-    result = transcriber.process_file(file_path, timestamped=timestamped, timestamp_model=timestamp_model, chunk_minutes=chunk_minutes)
+    result = transcriber.process_file(file_path, timestamped=timestamped, timestamp_model=timestamp_model, chunk_minutes=chunk_minutes, native_timestamps_only=native_timestamps_only)
     if timestamped and isinstance(result, dict):
         return json.dumps(result, ensure_ascii=False, indent=2)
     return result

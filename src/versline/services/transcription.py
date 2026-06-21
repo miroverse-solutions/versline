@@ -451,12 +451,15 @@ class AudioTranscriber:
         full_text = self.merge_transcriptions(final_text_blocks, overlap)
         return full_text
 
-    def process_file(self, file_path: str, chunk_length=900, overlap=180, progress_callback=None, force=False, timestamped: bool = False, timestamp_model: str | None = None, chunk_minutes: int | None = None):
+    def process_file(self, file_path: str, chunk_length=900, overlap=180, progress_callback=None, force=False, timestamped: bool = False, timestamp_model: str | None = None, chunk_minutes: int | None = None, native_timestamps_only: bool = False):
         """Transcribe audio file. If timestamped=True, also produce timestamp-aligned segments.
         
         Returns:
             If timestamped=False: str (the full transcription text)
             If timestamped=True: dict with {text, segments} where segments is list of {start, end, text}
+        
+        If native_timestamps_only=True, only the native STT API (verbose_json) is used;
+        chunk-based fallback is skipped entirely and an error is raised on failure.
         """
         # --- Phase 1: Primary transcription with main model ---
         full_text = self._process_file_internal(file_path, chunk_length, overlap, progress_callback, force)
@@ -504,11 +507,17 @@ class AudioTranscriber:
                         progress_callback(1, 1, f"✅ Native timestamp: {len(segments)} segments")
                     return result
                 else:
+                    if native_timestamps_only:
+                        raise RuntimeError("Native timestamps not available and native_timestamps_only is set")
                     logger.info("⚠️ Native timestamps not available, using chunk-based fallback")
             except Exception as e:
+                if native_timestamps_only:
+                    raise RuntimeError(f"Native timestamp API failed: {e}") from e
                 logger.warning(f"Native timestamp attempt failed: {e}, using chunk-based fallback")
         
         # Strategy 2: Chunk-based timestamping (fallback)
+        if native_timestamps_only:
+            raise RuntimeError("native_timestamps_only is set but chunk-based fallback was reached (model not recognized as STT)")
         chunks = media.split_audio_with_ffmpeg(file_path, ts_chunk_sec, ts_overlap, str(ts_dir))
         logger.info(f"📦 {len(chunks)} timestamp chunks created (chunk-based)")
         

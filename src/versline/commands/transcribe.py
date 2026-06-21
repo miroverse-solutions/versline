@@ -1,3 +1,4 @@
+import json
 import typer
 from typing import Optional
 from pathlib import Path
@@ -31,6 +32,11 @@ def transcribe_file(
     force: bool = typer.Option(False, "--force", "-f", help="Force re-transcription (ignore cache)"),
     note: Optional[str] = typer.Option(None, "--note", help="Additional instruction to append to the prompt"),
     note_file: Optional[Path] = typer.Option(None, "--note-file", help="Path to a .md or .txt file with an additional instruction"),
+    # Timestamp options
+    timestamped: bool = typer.Option(False, "--timestamped", help="Produce timestamp-aligned segments along with the full text"),
+    timestamp_model: Optional[str] = typer.Option(None, "--timestamp-model", help="Model to use for timestamp annotation (e.g. gpt-4o-transcribe)"),
+    chunk_minutes: Optional[int] = typer.Option(None, "--chunk-minutes", help="Minutes per chunk for the primary transcription phase"),
+    native_timestamps_only: bool = typer.Option(False, "--native-timestamps-only", help="Only use native STT API for timestamps; fail instead of falling back to chunk-based"),
 ):
     """
     Transcribe a single file (or URL).
@@ -122,19 +128,24 @@ def transcribe_file(
                 overlap=overlap,
                 progress_callback=progress_handler,
                 force=force,
+                timestamped=timestamped,
+                timestamp_model=timestamp_model,
+                chunk_minutes=chunk_minutes,
+                native_timestamps_only=native_timestamps_only,
             )
         
         if output:
             output_path = output
         else:
             # If URL, resolved_path is temp file, make output in current dir based on original/temp filename
-            ext = ".json" if json_output else ".md"
+            ext = ".json" if (json_output or (timestamped and isinstance(full_text, dict))) else ".md"
             out_name = Path(resolved_path).with_suffix(ext).name
             output_path = Path("output") / out_name
             output_path.parent.mkdir(parents=True, exist_ok=True)
             
+        content = json.dumps(full_text, ensure_ascii=False, indent=2) if isinstance(full_text, dict) else full_text
         with open(output_path, "w", encoding="utf-8") as f:
-            f.write(full_text)
+            f.write(content)
             
         logger.success(f"Transcription saved to: {output_path}")
 
