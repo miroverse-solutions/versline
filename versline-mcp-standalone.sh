@@ -1,6 +1,6 @@
 #!/bin/bash
 # versline MCP server — standalone (direct imports, no subprocess)
-# This avoids loading heavy RAG/CLI dependencies.
+# This avoids loading heavy CLI dependencies.
 export VERSLINE_ENV_FILE="$(dirname "$0")/.env"
 export PYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}$(pwd)/src"
 cd "$(dirname "$0")"
@@ -8,7 +8,7 @@ exec python3 -c "
 import sys
 sys.path.insert(0, 'src')
 
-# Only import what we need (no CLI, no RAG)
+# Only import what we need (no CLI)
 from versline.services.transcription import AudioTranscriber
 from versline.services.translation import TextTranslator
 from versline.services.summarizer import TextSummarizer, MODES

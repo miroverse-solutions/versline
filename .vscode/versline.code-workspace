@@ -1,0 +1,15 @@
+{
+  "folders": [
+    {
+      "path": "../",
+      "name": "Versline"
+    },
+  ],
+  "settings": {
+    "postman.settings.dotenv-detection-notification-visibility": false,
+    "search.exclude": {
+      "**/node_modules": true,
+      "**/venv": true
+    }
+  },
+}

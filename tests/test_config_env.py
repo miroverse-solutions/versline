@@ -25,7 +25,7 @@ class TestConfigEnv(unittest.TestCase):
                     [
                         "VERSLINE_LLM_PROVIDER=OpenAI",
                         "VERSLINE_LLM_MODEL=gpt-4o-mini",
-                        "VERSLINE_RAG_MCP_ENABLED=true",
+                        "VERSLINE_SLIDES_NPM_REGISTRY=https://registry.example.com",
                     ]
                 ),
                 encoding="utf-8",
@@ -35,7 +35,7 @@ class TestConfigEnv(unittest.TestCase):
 
             self.assertEqual(settings.llm.provider, "OpenAI")
             self.assertEqual(settings.llm.model, "gpt-4o-mini")
-            self.assertTrue(settings.rag.mcp_enabled)
+            self.assertEqual(settings.slides.npm_registry, "https://registry.example.com")
 
     def test_reload_settings_uses_env_file_fallback(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
