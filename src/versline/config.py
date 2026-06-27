@@ -22,6 +22,10 @@ class TranscriptionSettings(BaseSettings):
         default="timestamp_chunk_prompt.md",
         description="Prompt file used for timestamp chunk transcription",
     )
+    stt_timeout_seconds: int = Field(
+        default=120,
+        description="HTTP timeout in seconds for /audio/transcriptions STT requests",
+    )
 
     model_config = SettingsConfigDict(env_prefix='VERSLINE_TRANSCRIPTION_', env_file='.env', extra='ignore')
 

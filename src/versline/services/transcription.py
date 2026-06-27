@@ -258,47 +258,158 @@ class AudioTranscriber:
             logger.error(f"Gemini Error: {e}")
             raise
 
+    def _normalize_native_segments(self, segments):
+        normalized = []
+        for seg in segments or []:
+            try:
+                start = float(seg.get("start"))
+                end = float(seg.get("end"))
+            except Exception:
+                continue
+            text = str(seg.get("text", "")).strip()
+            if not text:
+                continue
+            normalized.append({"start": start, "end": end, "text": text})
+        return normalized
+
+    def _srt_timestamp_to_seconds(self, value: str) -> float:
+        value = value.strip().replace(",", ".")
+        hh, mm, ss = value.split(":")
+        return int(hh) * 3600 + int(mm) * 60 + float(ss)
+
+    def _parse_srt_segments(self, srt_text: str):
+        segments = []
+        blocks = re.split(r"\r?\n\r?\n+", (srt_text or "").strip())
+        for block in blocks:
+            lines = [ln.strip().lstrip("\ufeff") for ln in block.splitlines() if ln.strip()]
+            if not lines:
+                continue
+
+            # Optional cue index line.
+            if re.fullmatch(r"\d+", lines[0]):
+                lines = lines[1:]
+            if not lines or "-->" not in lines[0]:
+                continue
+
+            timing = lines[0]
+            left, right = timing.split("-->", 1)
+            start_token = left.strip().split()[0]
+            end_token = right.strip().split()[0]
+            try:
+                start = self._srt_timestamp_to_seconds(start_token)
+                end = self._srt_timestamp_to_seconds(end_token)
+            except Exception:
+                continue
+
+            text = " ".join(lines[1:]).strip()
+            if not text:
+                continue
+            segments.append({"start": start, "end": end, "text": text})
+        return segments
+
+    def _post_stt_request(self, url: str, api_key: str | None, audio_path: str, data_params: dict, timeout_seconds: int):
+        import requests
+        mime = mimetypes.guess_type(audio_path)[0] or "audio/mpeg"
+        with open(audio_path, "rb") as f:
+            return requests.post(
+                url,
+                headers={"Authorization": f"Bearer {api_key}"},
+                files={"file": (Path(audio_path).name, f, mime)},
+                data=data_params,
+                timeout=timeout_seconds,
+            )
+
     def transcribe_chunk_via_stt_api(self, model_name: str, audio_path: str, max_retries: int = 2, with_timestamps: bool = False):
         """Transcribe using the /v1/audio/transcriptions endpoint (STT API).
         If with_timestamps=True, tries native timestamps first, falls back to chunk-based."""
-        import requests
         api_key = settings.llm.api_key
         endpoint = (settings.llm.api_endpoint or "https://api.avalai.ir/v1").rstrip("/")
         url = f"{endpoint}/audio/transcriptions"
-        data_params = {"model": model_name, "language": "fa"}
-        if with_timestamps:
-            data_params["response_format"] = "verbose_json"
-            data_params["timestamp_granularities[]"] = "segment"
+        timeout_seconds = max(10, int(getattr(settings.transcription, "stt_timeout_seconds", 120) or 120))
 
         for attempt in range(max_retries):
             try:
-                with open(audio_path, "rb") as f:
-                    resp = requests.post(
-                        url,
-                        headers={"Authorization": f"Bearer {api_key}"},
-                        files={"file": (Path(audio_path).name, f, "audio/mpeg")},
-                        data=data_params,
-                        timeout=120,
-                    )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    if with_timestamps:
-                        segments = data.get("segments")
-                        if segments and len(segments) > 0:
-                            logger.info(f"\u2705 Native timestamps: {len(segments)} segments, duration={data.get('duration')}s")
-                            return {
-                                "text": data.get("text", "").strip(),
-                                "segments": segments,
-                                "duration": data.get("duration"),
-                                "language": data.get("language"),
-                                "source": "api_native",
-                            }
+                if with_timestamps:
+                    verbose_error = None
+                    try:
+                        verbose_params = {
+                            "model": model_name,
+                            "language": "fa",
+                            "response_format": "verbose_json",
+                            "timestamp_granularities[]": "segment",
+                        }
+                        verbose_resp = self._post_stt_request(
+                            url, api_key, audio_path, verbose_params, timeout_seconds
+                        )
+                        if verbose_resp.status_code == 200:
+                            data = verbose_resp.json()
+                            segments = self._normalize_native_segments(data.get("segments"))
+                            if segments:
+                                logger.info(
+                                    f"✅ Native timestamps (verbose_json): {len(segments)} segments, duration={data.get('duration')}s"
+                                )
+                                return {
+                                    "text": str(data.get("text", "")).strip(),
+                                    "segments": segments,
+                                    "duration": data.get("duration"),
+                                    "language": data.get("language"),
+                                    "source": "api_native_verbose_json",
+                                }
+                            logger.info("⚠️ verbose_json returned no usable segments, trying srt fallback")
                         else:
-                            logger.info("\u26a0\ufe0f No native timestamps, will use chunk-based")
-                            return {"text": data.get("text", "").strip(), "segments": None, "source": "api_text_only"}
-                    return data.get("text", "").strip()
-                else:
+                            verbose_error = RuntimeError(
+                                f"verbose_json HTTP {verbose_resp.status_code}: {verbose_resp.text[:200]}"
+                            )
+                            logger.warning(f"{verbose_error}; trying srt fallback")
+                    except Exception as e:
+                        verbose_error = e
+                        logger.warning(f"verbose_json request failed: {e}; trying srt fallback")
+
+                    srt_params = {
+                        "model": model_name,
+                        "language": "fa",
+                        "response_format": "srt",
+                    }
+                    try:
+                        srt_resp = self._post_stt_request(
+                            url, api_key, audio_path, srt_params, timeout_seconds
+                        )
+                    except Exception as srt_error:
+                        if verbose_error is not None:
+                            raise RuntimeError(
+                                f"verbose_json failed: {verbose_error}; srt fallback failed: {srt_error}"
+                            ) from srt_error
+                        raise
+
+                    if srt_resp.status_code != 200:
+                        raise RuntimeError(f"srt HTTP {srt_resp.status_code}: {srt_resp.text[:200]}")
+
+                    srt_segments = self._parse_srt_segments(srt_resp.text)
+                    if srt_segments:
+                        logger.info(f"✅ Native timestamps (srt): {len(srt_segments)} segments")
+                        return {
+                            "text": " ".join(seg["text"] for seg in srt_segments).strip(),
+                            "segments": srt_segments,
+                            "duration": srt_segments[-1]["end"],
+                            "language": "fa",
+                            "source": "api_native_srt",
+                        }
+
+                    logger.info("⚠️ srt fallback returned no parseable segments")
+                    return {"text": (srt_resp.text or "").strip(), "segments": None, "source": "api_text_only"}
+
+                data_params = {"model": model_name, "language": "fa"}
+                resp = self._post_stt_request(
+                    url, api_key, audio_path, data_params, timeout_seconds
+                )
+                if resp.status_code != 200:
                     raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:200]}")
+
+                content_type = (resp.headers.get("content-type") or "").lower()
+                if "application/json" in content_type:
+                    data = resp.json()
+                    return str(data.get("text", "")).strip()
+                return (resp.text or "").strip()
             except Exception as e:
                 if attempt < max_retries - 1:
                     time.sleep((attempt + 1) * 3)
@@ -488,7 +599,8 @@ class AudioTranscriber:
                 native_result = self.transcribe_chunk_via_stt_api(
                     tm, file_path, max_retries=1, with_timestamps=True
                 )
-                if isinstance(native_result, dict) and native_result.get("source") == "api_native":
+                source = str(native_result.get("source", "")) if isinstance(native_result, dict) else ""
+                if isinstance(native_result, dict) and source.startswith("api_native"):
                     # Native timestamps available — use them directly
                     api_segments = native_result["segments"]
                     logger.info(f"✅ Using native segments: {len(api_segments)} segments")
@@ -499,7 +611,7 @@ class AudioTranscriber:
                         "text": full_text,
                         "segments": segments,
                         "segments_count": len(segments),
-                        "timestamp_method": "api_native",
+                        "timestamp_method": source or "api_native",
                         "native_duration": native_result.get("duration"),
                         "native_language": native_result.get("language"),
                     }
