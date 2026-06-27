@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 from versline.config import settings, reload_settings
-from versline.commands import transcribe, translate, qude, qualcode, slides, summarize
+from versline.commands import transcribe, translate, qude, qualcode, slides, summarize, research
 
 
 app = typer.Typer(
@@ -21,6 +21,7 @@ app.add_typer(qude.app, name="qude", help="[cyan]Generate questions[/cyan] from 
 app.add_typer(qualcode.app, name="qualcode", help="[cyan]Run qualitative coding[/cyan] on markdown files.")
 app.add_typer(slides.app, name="slides", help="[cyan]Generate immersive HTML/TS slides[/cyan] from markdown files.")
 app.add_typer(summarize.app, name="summarize", help="[cyan]Summarize files[/cyan] (outline, detailed, or slides mode).")
+app.add_typer(research.app, name="research", help="[cyan]Write research sections[/cyan] with a staged outline-to-full pipeline.")
 
 @app.callback()
 def main(

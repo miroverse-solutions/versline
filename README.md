@@ -457,6 +457,153 @@ versline qualcode interview.md --central-concepts central-concepts-example.md --
 
 ---
 
+### 🧾 `research`
+Write research sections with a **staged academic pipeline**:
+
+1. Generate an outline for the selected section/method.
+2. Review and approve the outline.
+3. Generate the full submission-ready text from the approved outline.
+
+Current implementation scope:
+- Section: `findings` (chapter 4)
+- Method profile: `thematic-colaizzi`
+
+The architecture is registry-based in code, so additional section/method profiles can be added later without changing the CLI shape.
+
+**Usage:**
+```bash
+versline research [OPTIONS]
+```
+
+**Primary input option:**
+- `--input-json` / `-i`: Path to a research input JSON file with study metadata/materials. [Optional]
+
+**Options:**
+| Option | Short | Description | Default |
+| :--- | :--- | :--- | :--- |
+| `--stage` | `-s` | Pipeline stage: `outline` or `full`. | `outline` |
+| `--section` | | Research section key. | `findings` |
+| `--method` | `-m` | Method profile key. (`thematic-colaizzi` currently supported; `colaizzi` alias accepted) | `thematic-colaizzi` |
+| `--output-lang` | `-l` | Output language (`auto` keeps source language). | `auto` |
+| `--approved-outline-file` | | Approved outline file (`.md/.txt/.docx/...` extractable) required for `--stage full`. | `None` |
+| `--approve-outline` | | Explicit confirmation flag required for `--stage full`. | `False` |
+| `--demographics-file` | | Demographics material file (`csv/xlsx/md/txt/docx/pdf/...`). | `None` |
+| `--themes-table-file` | | Themes/sub-themes table file (`csv/xlsx/md/txt/docx/pdf/...`). | `None` |
+| `--central-concepts-file` | | Themes/central concepts material file. | `None` |
+| `--coded-segments-file` | | Coded segments/codes file (repeatable; for example MAXQDA analysis export). | `[]` |
+| `--coded-segments-dir` | | Directory containing coded segments/code files. | `None` |
+| `--writing-guide-file` | | A writing-instructions file (`md/docx/txt/...`) that defines required chapter structure/style. | `None` |
+| `--sample-output-file` | | A sample target output file (`md/docx/txt/...`) used as style/flow exemplar. | `None` |
+| `--interviews-dir` | | Directory of interview files to ingest as evidence context. | `None` |
+| `--interview-file` | | Repeatable single interview file option. | `[]` |
+| `--output` | `-o` | Output markdown path. | `output/[stem]_[section]_[stage].md` |
+| `--model` | | LLM model override. | Config |
+| `--provider` | | LLM provider override. | Config |
+| `--api-key` | | API key override. | Config |
+| `--api-endpoint` | | API endpoint override. | Config |
+| `--proxy` | | Proxy override. | Config |
+| `--note` | | Inline additional instruction appended to prompt. | `None` |
+| `--note-file` | | File-based additional instruction (`.md/.txt`). | `None` |
+
+#### Stage Contract (Important)
+
+- `--stage outline` produces only the chapter structure plan.
+- `--stage full` is blocked unless both of these are provided:
+    - `--approved-outline-file`
+    - `--approve-outline`
+
+This enforces the human-in-the-loop approval checkpoint before long-form generation.
+
+#### Writing Guide and Sample Output Inputs
+
+You can provide two extra inputs for precise academic control:
+
+- `--writing-guide-file`: includes mandatory formatting/structure instructions (for example your exact section template and narrative rules).
+- `--sample-output-file`: includes a target style exemplar. The model mirrors rhetorical flow, paragraph rhythm, and table presentation style without copying unrelated content.
+
+These are injected into research context as:
+- `materials.writing_guide`
+- `materials.sample_output`
+
+#### Coded Segments vs Interviews
+
+- Use `--coded-segments-file` / `--coded-segments-dir` for analysis artifacts (codes, coded segments, theme matrices, MAXQDA exports).
+- Use `--interview-file` / `--interviews-dir` only for raw/full interview transcripts.
+- If your files are analysis outputs (not raw transcripts), pass them as coded segments.
+
+#### Research Input JSON Template
+
+Use this as a starting point for `INPUT_JSON`:
+
+```json
+{
+    "study": {
+        "title": "Thesis title",
+        "domain": "Psychology",
+        "section_goal": "Chapter 4 findings",
+        "method": "thematic-colaizzi",
+        "research_questions": [
+            "Question 1",
+            "Question 2"
+        ]
+    },
+    "materials": {
+        "demographics_table": "Optional inline demographics table",
+        "themes_table": "Optional inline themes/sub-themes table",
+        "central_concepts": "Optional inline themes/sub-themes",
+        "coded_segments": "Optional inline coded evidence",
+        "interviews": [
+            {
+                "name": "interview_01.md",
+                "content": "Optional inline transcript content"
+            }
+        ]
+    }
+}
+```
+
+You may keep `materials` minimal in JSON and provide most artifacts through CLI file options.
+
+> **Prerequisite note:** Research files with `.docx` content are converted through MarkItDown. This project now installs `markitdown[docx]` so DOCX-based research inputs work out of the box.
+
+#### Suggested Workflow
+
+```bash
+# 1) Generate outline
+versline research \
+    --input-json ./research_input.json \
+    --stage outline \
+    --section findings \
+    --method thematic-colaizzi \
+    --demographics-file ./data/demographics.xlsx \
+    --themes-table-file ./data/themes-table.xlsx \
+    --central-concepts-file ./data/central-concepts.md \
+    --coded-segments-dir ./data/coded-segments \
+    --writing-guide-file ./templates/ch4-guide.md \
+    --sample-output-file ./templates/ch4-sample.docx \
+    --output ./output/ch4_outline.md
+
+# 2) After your manual approval, generate full text
+versline research \
+    --input-json ./research_input.json \
+    --stage full \
+    --section findings \
+    --method thematic-colaizzi \
+    --approved-outline-file ./output/ch4_outline_approved.md \
+    --approve-outline \
+    --writing-guide-file ./templates/ch4-guide.md \
+    --sample-output-file ./templates/ch4-sample.docx \
+    --output ./output/ch4_full.md
+```
+
+#### Notes and Limits
+
+- The findings profile is constrained to **descriptive chapter-4 writing** (no chapter-5 interpretation/conclusion).
+- If required data is missing, the generator inserts explicit placeholders like `[NEEDS DATA: ...]`.
+- Quotes/frequencies should come from provided materials; fabricated evidence is explicitly disallowed by prompts.
+
+---
+
 ### 🎬 `slides`
 Generate luxurious, spatially navigable HTML/CSS/TypeScript slide decks from Markdown.
 
