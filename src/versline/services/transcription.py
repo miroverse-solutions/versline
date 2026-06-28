@@ -508,7 +508,7 @@ class AudioTranscriber:
         if speaker_samples is None:
             speaker_samples = {}
 
-        existing_chunks = sorted(temp_dir.glob("chunk_*.mp3")) if temp_dir.exists() else []
+        existing_chunks = sorted(temp_dir.glob("chunk_*.*")) if temp_dir.exists() else []
         if existing_chunks:
             logger.info(f"📂 Using {len(existing_chunks)} cached audio chunks (skipping re-split).")
             chunks = [str(p) for p in existing_chunks]
@@ -712,7 +712,7 @@ class AudioTranscriber:
         if speaker_samples is None:
             speaker_samples = {}
 
-        existing_chunks = sorted(temp_dir.glob("chunk_*.mp3")) if temp_dir.exists() else []
+        existing_chunks = sorted(temp_dir.glob("chunk_*.*")) if temp_dir.exists() else []
         if existing_chunks:
             logger.info(f"📂 Using {len(existing_chunks)} cached audio chunks (skipping re-split).")
             chunks = [str(p) for p in existing_chunks]

@@ -28,7 +28,11 @@ def get_audio_duration(file_path: str) -> float:
         return None
 
 def split_audio_with_ffmpeg(file_path: str, chunk_length_sec: int, chunk_overlap_sec: int, temp_dir: str) -> list[str]:
-    """Split audio file into specified chunks with overlap using ffmpeg."""
+    """Split audio file into specified chunks with overlap using ffmpeg.
+    
+    Chunks are written in the same container format as the source file
+    to avoid codec/container mismatches (e.g., AAC-in-M4A copied into .mp3).
+    """
     ffmpeg_path = settings.ffmpeg.ffmpeg_path or "ffmpeg"
     
     if not os.path.exists(temp_dir):
@@ -42,13 +46,18 @@ def split_audio_with_ffmpeg(file_path: str, chunk_length_sec: int, chunk_overlap
 
     logger.info(f"Total file duration: {duration/60:.2f} minutes")
     
+    # Match chunk container to source file so -c copy always works
+    src_ext = os.path.splitext(file_path)[1]  # e.g. ".m4a", ".mp3", ".wav"
+    if src_ext.lower() not in (".mp3", ".m4a", ".wav", ".ogg", ".opus", ".aac", ".flac", ".wma", ".m4b"):
+        src_ext = ".mp3"  # fallback for unknown formats
+    
     chunk_paths = []
     step_size_sec = chunk_length_sec - chunk_overlap_sec
     current_time = 0
     chunk_index = 0
     
     while current_time < duration:
-        chunk_name = f"chunk_{chunk_index:03d}.mp3"
+        chunk_name = f"chunk_{chunk_index:03d}{src_ext}"
         chunk_path = os.path.join(temp_dir, chunk_name)
         
         # Calculate this chunk's duration
