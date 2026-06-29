@@ -1,18 +1,22 @@
 __version__ = "0.1.3"
 
-from versline.services.transcription import AudioTranscriber
-from versline.services.translation import TextTranslator
-from versline.services.network import download_file
-from versline.services.qualitative_coding import QualitativeCoder
-from versline.services.slides import MarkdownSlideDeckGenerator
-from versline.config import settings, reload_settings
+_LAZY_EXPORTS = {
+    "AudioTranscriber": ("versline.services.transcription", "AudioTranscriber"),
+    "TextTranslator": ("versline.services.translation", "TextTranslator"),
+    "download_file": ("versline.services.network", "download_file"),
+    "QualitativeCoder": ("versline.services.qualitative_coding", "QualitativeCoder"),
+    "MarkdownSlideDeckGenerator": ("versline.services.slides", "MarkdownSlideDeckGenerator"),
+    "settings": ("versline.config", "settings"),
+    "reload_settings": ("versline.config", "reload_settings"),
+}
 
-__all__ = [
-	"AudioTranscriber",
-	"TextTranslator",
-	"download_file",
-	"QualitativeCoder",
-	"MarkdownSlideDeckGenerator",
-	"settings",
-	"reload_settings",
-]
+__all__ = list(_LAZY_EXPORTS)
+
+
+def __getattr__(name):
+    if name not in _LAZY_EXPORTS:
+        raise AttributeError(f"module 'versline' has no attribute {name!r}")
+
+    module_name, attr_name = _LAZY_EXPORTS[name]
+    module = __import__(module_name, fromlist=[attr_name])
+    return getattr(module, attr_name)

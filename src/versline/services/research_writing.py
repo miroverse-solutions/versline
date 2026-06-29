@@ -27,8 +27,14 @@ def load_research_input(input_path: str) -> Dict[str, Any]:
 
 
 class BaseResearchSectionWriter:
-    def __init__(self, user_note: Optional[str] = None, output_lang: str = "auto"):
+    def __init__(
+        self,
+        user_note: Optional[str] = None,
+        revision_note: Optional[str] = None,
+        output_lang: str = "auto",
+    ):
         self.user_note = user_note
+        self.revision_note = revision_note
         self.output_lang = (output_lang or "auto").strip()
         self.tracker = TokenTracker()
 
@@ -122,11 +128,25 @@ class BaseResearchSectionWriter:
 class FindingsThematicColaizziWriter(BaseResearchSectionWriter):
     OUTLINE_PROMPT = "research_findings_colaizzi_outline_prompt.md"
     FULL_PROMPT = "research_findings_colaizzi_full_prompt.md"
+    REVISION_PROMPT = "research_findings_revision_prompt.md"
 
-    def __init__(self, user_note: Optional[str] = None, output_lang: str = "auto"):
-        super().__init__(user_note=user_note, output_lang=output_lang)
+    def __init__(
+        self,
+        user_note: Optional[str] = None,
+        revision_note: Optional[str] = None,
+        output_lang: str = "auto",
+    ):
+        super().__init__(user_note=user_note, revision_note=revision_note, output_lang=output_lang)
         self.outline_template = load_prompt(self.OUTLINE_PROMPT)
         self.full_template = load_prompt(self.FULL_PROMPT)
+        self.revision_template = load_prompt(self.REVISION_PROMPT)
+
+    def _append_revision_block(self, prompt: str) -> str:
+        if not self.revision_note:
+            return prompt
+
+        revision_block = self.revision_template.format(revision_instructions=self.revision_note)
+        return f"{prompt}\n\n---\n\n{revision_block}"
 
     def generate_outline(self, research_inputs: Dict[str, Any]) -> str:
         context_json = json.dumps(research_inputs, ensure_ascii=False, indent=2)
@@ -134,6 +154,7 @@ class FindingsThematicColaizziWriter(BaseResearchSectionWriter):
             research_context_json=context_json,
             language_instruction=self._language_instruction(),
         )
+        prompt = self._append_revision_block(prompt)
         if self.user_note:
             prompt = prompt + f"\n\n---\n\nAdditional user instructions:\n{self.user_note}"
 
@@ -149,6 +170,7 @@ class FindingsThematicColaizziWriter(BaseResearchSectionWriter):
             approved_outline=approved_outline,
             language_instruction=self._language_instruction(),
         )
+        prompt = self._append_revision_block(prompt)
         if self.user_note:
             prompt = prompt + f"\n\n---\n\nAdditional user instructions:\n{self.user_note}"
 
@@ -174,6 +196,7 @@ class ResearchWritingService:
         section: str,
         method: str,
         user_note: Optional[str] = None,
+        revision_note: Optional[str] = None,
         output_lang: str = "auto",
     ):
         key = _normalize_key(section, method)
@@ -185,7 +208,7 @@ class ResearchWritingService:
             )
 
         self.section, self.method = key
-        self.writer = writer_cls(user_note=user_note, output_lang=output_lang)
+        self.writer = writer_cls(user_note=user_note, revision_note=revision_note, output_lang=output_lang)
         self.tracker = self.writer.tracker
 
     def generate_outline(self, research_inputs: Dict[str, Any]) -> str:

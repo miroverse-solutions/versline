@@ -7,7 +7,7 @@ from loguru import logger
 from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn
 
 from versline.config import settings
-from versline.core.prompts import resolve_user_note
+from versline.core.prompts import resolve_text_input, resolve_user_note
 from versline.services.document_processor import convert_to_markdown
 from versline.services.pricing import print_cost_report
 from versline.services.research_writing import ResearchWritingService, load_research_input
@@ -250,6 +250,12 @@ def write_research_section(
     proxy: Optional[str] = typer.Option(None, "--proxy", help="Proxy URL"),
     note: Optional[str] = typer.Option(None, "--note", help="Additional instruction"),
     note_file: Optional[Path] = typer.Option(None, "--note-file", help="Path to note file (.md/.txt)"),
+    revision_file: Optional[Path] = typer.Option(
+        None,
+        "--revision-file",
+        help="Path to a .md/.txt revision brief used to re-run the chapter with corrections.",
+        exists=True,
+    ),
 ):
     if ctx.invoked_subcommand is not None:
         return
@@ -296,6 +302,11 @@ def write_research_section(
             section=section,
             method=method,
             user_note=resolve_user_note(note=note, note_file=str(note_file) if note_file else None),
+            revision_note=resolve_text_input(
+                text_file=str(revision_file) if revision_file else None,
+                label="Revision",
+                allowed_suffixes=(".md", ".txt"),
+            ),
             output_lang=output_lang,
         )
 

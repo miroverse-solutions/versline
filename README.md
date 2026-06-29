@@ -440,16 +440,16 @@ versline qualcode [OPTIONS] INPUT_PATH
 | `--note-file` | | Path to a `.md` or `.txt` file whose content is appended to the prompt. | `None` |
 
 **Codebook Templates:**
-- JSON template: `examples/qualcode/codebook.sample.json`
-- TXT template: `examples/qualcode/codebook.sample.txt`
+- JSON template: `samples/qualcode/codebook.sample.json`
+- TXT template: `samples/qualcode/codebook.sample.txt`
 
 **Examples:**
 ```bash
 # Strict: only codebook codes
-versline qualcode interview.md --codebook examples/qualcode/codebook.sample.json --code-mode strict
+versline qualcode interview.md --codebook samples/qualcode/codebook.sample.json --code-mode strict
 
 # Guided: codebook codes + new codes when needed
-versline qualcode interview.md --codebook examples/qualcode/codebook.sample.txt --code-mode guided
+versline qualcode interview.md --codebook samples/qualcode/codebook.sample.txt --code-mode guided
 
 # Guided coding with central concepts baseline and updated central concepts output
 versline qualcode interview.md --central-concepts central-concepts-example.md --method thematic --method grounded
@@ -504,6 +504,7 @@ versline research [OPTIONS]
 | `--proxy` | | Proxy override. | Config |
 | `--note` | | Inline additional instruction appended to prompt. | `None` |
 | `--note-file` | | File-based additional instruction (`.md/.txt`). | `None` |
+| `--revision-file` | | File-based correction brief for reruns (`.md/.txt`). | `None` |
 
 #### Stage Contract (Important)
 
@@ -520,10 +521,13 @@ You can provide two extra inputs for precise academic control:
 
 - `--writing-guide-file`: includes mandatory formatting/structure instructions (for example your exact section template and narrative rules).
 - `--sample-output-file`: includes a target style exemplar. The model mirrors rhetorical flow, paragraph rhythm, and table presentation style without copying unrelated content.
+- `--revision-file`: includes a correction brief for back-and-forth edits. Use it to keep the base prompts unchanged while iterating toward the approved chapter text.
+- For outline revisions, include the previous outline inside `--revision-file` under a "Reference outline" section so the model can revise it instead of starting from scratch.
 
 These are injected into research context as:
 - `materials.writing_guide`
 - `materials.sample_output`
+- `revision brief` appended to the research prompt (when provided)
 
 #### Coded Segments vs Interviews
 
@@ -593,6 +597,7 @@ versline research \
     --approve-outline \
     --writing-guide-file ./templates/ch4-guide.md \
     --sample-output-file ./templates/ch4-sample.docx \
+    --revision-file ./templates/ch4-revisions.md \
     --output ./output/ch4_full.md
 ```
 
@@ -600,7 +605,13 @@ versline research \
 
 - The findings profile is constrained to **descriptive chapter-4 writing** (no chapter-5 interpretation/conclusion).
 - If required data is missing, the generator inserts explicit placeholders like `[NEEDS DATA: ...]`.
+- If a reviewer asks for "leave blank for now", put that instruction in `--revision-file`; the command will re-run with the same cached base prompts and only the revision brief changes.
+- If you are revising a new outline, paste the previous outline into `--revision-file` as a reference block.
 - Quotes/frequencies should come from provided materials; fabricated evidence is explicitly disallowed by prompts.
+- Revision briefs are ideal for iterative changes like:
+  - leaving the demographics section blank until the table arrives,
+  - enforcing code + direct-quote style for every theme,
+  - splitting a single theme matrix into theme-by-theme narrative blocks.
 
 ---
 
@@ -1152,5 +1163,3 @@ result = generator.generate_from_markdown(
 print(result["deck_dir"])
 print(result.get("dist_dir"))
 ```
-
-
