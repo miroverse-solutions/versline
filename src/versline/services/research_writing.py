@@ -1,7 +1,7 @@
 import json
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple, Type
+from typing import Any, Dict, List, Optional, Tuple, Type
 
 from loguru import logger
 
@@ -31,10 +31,17 @@ class BaseResearchSectionWriter:
         self,
         user_note: Optional[str] = None,
         revision_note: Optional[str] = None,
+        revision_notes: Optional[List[str]] = None,
         output_lang: str = "auto",
     ):
         self.user_note = user_note
-        self.revision_note = revision_note
+        self.revision_notes = []
+        if revision_notes:
+            self.revision_notes.extend(note.strip() for note in revision_notes if note and note.strip())
+        if revision_note and revision_note.strip():
+            self.revision_notes.append(revision_note.strip())
+        # Keep history order while avoiding duplicate instruction blocks.
+        self.revision_notes = list(dict.fromkeys(self.revision_notes))
         self.output_lang = (output_lang or "auto").strip()
         self.tracker = TokenTracker()
 
@@ -134,18 +141,31 @@ class FindingsThematicColaizziWriter(BaseResearchSectionWriter):
         self,
         user_note: Optional[str] = None,
         revision_note: Optional[str] = None,
+        revision_notes: Optional[List[str]] = None,
         output_lang: str = "auto",
     ):
-        super().__init__(user_note=user_note, revision_note=revision_note, output_lang=output_lang)
+        super().__init__(
+            user_note=user_note,
+            revision_note=revision_note,
+            revision_notes=revision_notes,
+            output_lang=output_lang,
+        )
         self.outline_template = load_prompt(self.OUTLINE_PROMPT)
         self.full_template = load_prompt(self.FULL_PROMPT)
         self.revision_template = load_prompt(self.REVISION_PROMPT)
 
     def _append_revision_block(self, prompt: str) -> str:
-        if not self.revision_note:
+        if not self.revision_notes:
             return prompt
 
-        revision_block = self.revision_template.format(revision_instructions=self.revision_note)
+        if len(self.revision_notes) == 1:
+            revision_instructions = self.revision_notes[0]
+        else:
+            revision_instructions = "\n\n".join(
+                f"[Revision {index}]\n{note}"
+                for index, note in enumerate(self.revision_notes, start=1)
+            )
+        revision_block = self.revision_template.format(revision_instructions=revision_instructions)
         return f"{prompt}\n\n---\n\n{revision_block}"
 
     def generate_outline(self, research_inputs: Dict[str, Any]) -> str:
@@ -197,6 +217,7 @@ class ResearchWritingService:
         method: str,
         user_note: Optional[str] = None,
         revision_note: Optional[str] = None,
+        revision_notes: Optional[List[str]] = None,
         output_lang: str = "auto",
     ):
         key = _normalize_key(section, method)
@@ -208,7 +229,12 @@ class ResearchWritingService:
             )
 
         self.section, self.method = key
-        self.writer = writer_cls(user_note=user_note, revision_note=revision_note, output_lang=output_lang)
+        self.writer = writer_cls(
+            user_note=user_note,
+            revision_note=revision_note,
+            revision_notes=revision_notes,
+            output_lang=output_lang,
+        )
         self.tracker = self.writer.tracker
 
     def generate_outline(self, research_inputs: Dict[str, Any]) -> str:

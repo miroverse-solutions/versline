@@ -2,8 +2,16 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 import tempfile
+import json
 
-from versline.commands.research import _collect_coded_segments, _enrich_inputs
+from versline.commands.research import (
+    _collect_coded_segments,
+    _enrich_inputs,
+    _load_revision_history,
+    _merge_revision_notes,
+    _revision_history_path,
+    _save_revision_history,
+)
 
 
 class TestResearchCommandInputEnrichment(unittest.TestCase):
@@ -53,6 +61,30 @@ class TestResearchCommandInputEnrichment(unittest.TestCase):
             names = {item["name"] for item in result}
             self.assertIn("analysis1.docx", names)
             self.assertIn("analysis2.md", names)
+
+    def test_revision_history_roundtrip_and_merge(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            outline_path = Path(tmp) / "ch4_outline.md"
+            history_path = _revision_history_path(outline_path)
+            self.assertEqual(history_path.name, "ch4_outline.revision-history.json")
+
+            _save_revision_history(history_path, ["First revision", "Second revision"])
+            loaded = _load_revision_history(history_path)
+            self.assertEqual(loaded, ["First revision", "Second revision"])
+
+            merged = _merge_revision_notes(loaded, "Third revision")
+            self.assertEqual(
+                merged,
+                ["First revision", "Second revision", "Third revision"],
+            )
+
+    def test_load_revision_history_rejects_non_array_json(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            history_path = Path(tmp) / "bad.revision-history.json"
+            history_path.write_text(json.dumps({"bad": True}), encoding="utf-8")
+
+            with self.assertRaises(ValueError):
+                _load_revision_history(history_path)
 
 
 if __name__ == "__main__":

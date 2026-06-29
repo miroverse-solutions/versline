@@ -127,6 +127,41 @@ def _resolve_output_path(
     return Path("output") / f"{stem}_{section}_{stage}.md"
 
 
+def _revision_history_path(reference_path: Path) -> Path:
+    base = reference_path.with_suffix("") if reference_path.suffix else reference_path
+    return base.parent / f"{base.name}.revision-history.json"
+
+
+def _load_revision_history(path: Path) -> List[str]:
+    if not path.exists():
+        return []
+
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, list):
+        raise ValueError(f"Revision history file must contain a JSON array: {path}")
+
+    notes: List[str] = []
+    for item in raw:
+        if not isinstance(item, str):
+            raise ValueError(f"Revision history entries must be strings: {path}")
+        note = item.strip()
+        if note and note not in notes:
+            notes.append(note)
+    return notes
+
+
+def _merge_revision_notes(existing_notes: List[str], new_note: Optional[str]) -> List[str]:
+    merged = [note.strip() for note in existing_notes if note and note.strip()]
+    if new_note and new_note.strip():
+        merged.append(new_note.strip())
+    return list(dict.fromkeys(merged))
+
+
+def _save_revision_history(path: Path, notes: List[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(notes, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 @app.callback(invoke_without_command=True)
 def write_research_section(
     ctx: typer.Context,
@@ -256,6 +291,14 @@ def write_research_section(
         help="Path to a .md/.txt revision brief used to re-run the chapter with corrections.",
         exists=True,
     ),
+    revision_history_file: Optional[Path] = typer.Option(
+        None,
+        "--revision-history-file",
+        help=(
+            "Path to cumulative revision history JSON. If omitted, an automatic sidecar "
+            "file is used: [outline_stem].revision-history.json."
+        ),
+    ),
 ):
     if ctx.invoked_subcommand is not None:
         return
@@ -268,6 +311,8 @@ def write_research_section(
             raise typer.BadParameter("--approved-outline-file is required for --stage full")
         if not approve_outline:
             raise typer.BadParameter("Pass --approve-outline to confirm user approval before full generation")
+        if revision_history_file and not revision_history_file.exists():
+            raise typer.BadParameter("--revision-history-file does not exist")
 
     if model:
         settings.llm.model = model
@@ -281,6 +326,7 @@ def write_research_section(
         settings.llm.proxy = proxy
 
     try:
+        out_path = _resolve_output_path(output=output, input_json=input_json, section=section, stage=stage)
         base_input = load_research_input(str(input_json)) if input_json else {}
         interviews = _collect_interviews(interviews_dir=interviews_dir, interview_files=interview_file)
         coded_segments = _collect_coded_segments(
@@ -297,16 +343,25 @@ def write_research_section(
             sample_output_file=sample_output_file,
             interviews=interviews,
         )
+        revision_note = resolve_text_input(
+            text_file=str(revision_file) if revision_file else None,
+            label="Revision",
+            allowed_suffixes=(".md", ".txt"),
+        )
+        if revision_history_file:
+            history_path = revision_history_file
+        elif stage == "outline":
+            history_path = _revision_history_path(out_path)
+        else:
+            history_path = _revision_history_path(approved_outline_file) if approved_outline_file else None
+        history_notes = _load_revision_history(history_path) if history_path else []
+        revision_notes = _merge_revision_notes(history_notes, revision_note)
 
         service = ResearchWritingService(
             section=section,
             method=method,
             user_note=resolve_user_note(note=note, note_file=str(note_file) if note_file else None),
-            revision_note=resolve_text_input(
-                text_file=str(revision_file) if revision_file else None,
-                label="Revision",
-                allowed_suffixes=(".md", ".txt"),
-            ),
+            revision_notes=revision_notes,
             output_lang=output_lang,
         )
 
@@ -331,9 +386,11 @@ def write_research_section(
 
             progress.update(task, completed=100, description=f"{stage.title()} generated")
 
-        out_path = _resolve_output_path(output=output, input_json=input_json, section=section, stage=stage)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(result, encoding="utf-8")
+        if stage == "outline" and history_path and revision_notes:
+            _save_revision_history(history_path, revision_notes)
+            logger.info(f"Saved revision history to: {history_path}")
 
         logger.success(f"Saved {stage} output to: {out_path}")
         print_cost_report(service.tracker, api_key=settings.llm.api_key)

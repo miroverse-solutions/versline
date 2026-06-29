@@ -124,6 +124,50 @@ class TestResearchWritingService(unittest.TestCase):
         self.assertIn("REVISION::Use direct quotes", prompt)
         self.assertIn("FULL::", prompt)
 
+    @patch("versline.services.research_writing.settings")
+    @patch("versline.services.research_writing.ai")
+    @patch("versline.services.research_writing.load_prompt")
+    def test_full_generation_includes_all_revision_history(self, mock_load_prompt, mock_ai, mock_settings):
+        mock_settings.llm.provider = "openai"
+        mock_settings.llm.model = "gpt-4o-mini"
+        mock_settings.llm.api_key = "fake"
+        mock_settings.llm.api_endpoint = None
+        mock_settings.llm.proxy = None
+
+        prompt_map = {
+            "research_findings_colaizzi_outline_prompt.md": "OUTLINE::{research_context_json}::{language_instruction}",
+            "research_findings_colaizzi_full_prompt.md": "FULL::{research_context_json}::{approved_outline}::{language_instruction}",
+            "research_findings_revision_prompt.md": "REVISION::{revision_instructions}",
+        }
+        mock_load_prompt.side_effect = lambda filename: prompt_map[filename]
+
+        completion = MagicMock()
+        completion.usage = MagicMock(prompt_tokens=12, completion_tokens=18)
+        completion.choices = [MagicMock(message=MagicMock(content="# Full Chapter"))]
+
+        client = MagicMock()
+        client.chat.completions.create.return_value = completion
+        mock_ai.configure_openai.return_value = client
+
+        service = ResearchWritingService(
+            section="findings",
+            method="thematic-colaizzi",
+            revision_notes=[
+                "Keep demographics pending.",
+                "Use direct quotes for each sub-theme.",
+            ],
+        )
+        service.generate_full_text(
+            research_inputs={"materials": {"themes_table": "x"}},
+            approved_outline="# Approved outline",
+        )
+
+        prompt = client.chat.completions.create.call_args.kwargs["messages"][0]["content"]
+        self.assertIn("[Revision 1]", prompt)
+        self.assertIn("Keep demographics pending.", prompt)
+        self.assertIn("[Revision 2]", prompt)
+        self.assertIn("Use direct quotes for each sub-theme.", prompt)
+
     def test_full_generation_requires_approved_outline(self):
         service = ResearchWritingService(section="findings", method="colaizzi")
         with self.assertRaises(ValueError):

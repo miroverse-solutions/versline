@@ -505,6 +505,7 @@ versline research [OPTIONS]
 | `--note` | | Inline additional instruction appended to prompt. | `None` |
 | `--note-file` | | File-based additional instruction (`.md/.txt`). | `None` |
 | `--revision-file` | | File-based correction brief for reruns (`.md/.txt`). | `None` |
+| `--revision-history-file` | | Path to cumulative revision history JSON. If omitted, auto sidecar is used. | Auto |
 
 #### Stage Contract (Important)
 
@@ -521,13 +522,14 @@ You can provide two extra inputs for precise academic control:
 
 - `--writing-guide-file`: includes mandatory formatting/structure instructions (for example your exact section template and narrative rules).
 - `--sample-output-file`: includes a target style exemplar. The model mirrors rhetorical flow, paragraph rhythm, and table presentation style without copying unrelated content.
-- `--revision-file`: includes a correction brief for back-and-forth edits. Use it to keep the base prompts unchanged while iterating toward the approved chapter text.
-- For outline revisions, include the previous outline inside `--revision-file` under a "Reference outline" section so the model can revise it instead of starting from scratch.
+- `--revision-file`: adds one revision brief for the current run.
+- All revision briefs are accumulated into a history file and injected together in later runs, so full-text generation keeps older reviewer requirements too.
+- Default history sidecar path is: `[outline_stem].revision-history.json` (same folder as outline output). You can override it with `--revision-history-file`.
 
 These are injected into research context as:
 - `materials.writing_guide`
 - `materials.sample_output`
-- `revision brief` appended to the research prompt (when provided)
+- cumulative `revision history` appended to the research prompt (when provided)
 
 #### Coded Segments vs Interviews
 
@@ -606,7 +608,7 @@ versline research \
 - The findings profile is constrained to **descriptive chapter-4 writing** (no chapter-5 interpretation/conclusion).
 - If required data is missing, the generator inserts explicit placeholders like `[NEEDS DATA: ...]`.
 - If a reviewer asks for "leave blank for now", put that instruction in `--revision-file`; the command will re-run with the same cached base prompts and only the revision brief changes.
-- If you are revising a new outline, paste the previous outline into `--revision-file` as a reference block.
+- If you iterate on the same outline path, previous revision briefs are remembered automatically and reused during `--stage full`.
 - Quotes/frequencies should come from provided materials; fabricated evidence is explicitly disallowed by prompts.
 - Revision briefs are ideal for iterative changes like:
   - leaving the demographics section blank until the table arrives,
