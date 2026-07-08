@@ -217,6 +217,19 @@ def configure_openai(llm_settings):
         logger.error(f"❌ Error configuring OpenAI client: {e}")
         return None
 
+
+def configure_openrouter(llm_settings):
+    """Configure an OpenAI-compatible client for OpenRouter."""
+    endpoint = llm_settings.api_endpoint or "https://openrouter.ai/api/v1"
+    openrouter_settings = LLMSettings(
+        provider=getattr(llm_settings, "provider", None),
+        model=getattr(llm_settings, "model", None),
+        api_key=llm_settings.api_key,
+        api_endpoint=endpoint,
+        proxy=llm_settings.proxy,
+    )
+    return configure_openai(openrouter_settings)
+
 class AIClient:
     def __init__(
         self,
