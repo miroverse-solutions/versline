@@ -188,18 +188,27 @@ class FindingsThematicColaizziWriter(BaseResearchSectionWriter):
 
     @staticmethod
     def _split_outline_into_chunks(outline: str) -> List[Tuple[str, str]]:
-        """Split outline into (label, content) chunks at ### and #### heading levels.
+        """Split outline into (label, content) chunks.
 
-        - Splits at exactly ### (3 hashes) and #### (4 hashes) — not at ##### or deeper.
-        - This keeps each main-theme's sub-themes (#####) together with their parent (####).
-        - Pre-heading content (e.g. the chapter # title) is merged into the first section.
-        - Marker-only sections like [پایان فصل] are skipped.
+        Strategy:
+        - All preamble content (# chapter title + ### level sections like intro,
+          demographics, analysis process) is collected into a SINGLE 'preamble' chunk.
+          This prevents the model from overwriting other sections when asked to write
+          only a brief intro paragraph — it gets all preamble at once as its task.
+        - Each ##### level sub-theme becomes its own chunk. The parent #### heading
+          and its intro paragraph are prepended to the FIRST sub-theme of that theme,
+          so the model has full context for the opening paragraph.
+        - #### sections with NO ##### sub-themes become a single chunk.
+        - Marker-only sections like [پایان فصل] are dropped (at both ### and #### level).
         """
-        parts = re.split(r"(?=^#{3}(?!#)|^#{4}(?!#))", outline, flags=re.MULTILINE)
+        # Strip any trailing marker block (e.g. "### [پایان فصل...]") before splitting
+        outline = re.sub(r"\n+#{1,3}\s*\[.+?\][^\n]*(?:\n>.*)*\s*$", "", outline, flags=re.DOTALL).strip()
+
+        parts = re.split(r"(?=^#{4}(?!#))", outline, flags=re.MULTILINE)
         skip_pattern = re.compile(r"^\[.+\]")
 
-        chunks: List[Tuple[str, str]] = []
-        pending_prefix = ""
+        preamble_parts: List[str] = []
+        theme_chunks: List[Tuple[str, str]] = []
 
         for part in parts:
             part = part.strip()
@@ -209,23 +218,92 @@ class FindingsThematicColaizziWriter(BaseResearchSectionWriter):
             first_line = part.splitlines()[0]
             label = re.sub(r"^#+\s*", "", first_line).strip()
 
-            # Skip pure marker/boundary annotations like [پایان فصل چهارم]
             if skip_pattern.match(label):
                 continue
 
-            # Content before the first ### heading (e.g. chapter # title) is
-            # prepended to the next real section instead of becoming its own call.
-            if not re.match(r"^#{3,4}(?!#)", first_line):
-                pending_prefix = part + "\n\n"
+            if not part.startswith("####"):
+                # Preamble: chapter title + ### level sections
+                preamble_parts.append(part)
                 continue
 
-            if pending_prefix:
-                part = pending_prefix + part
-                pending_prefix = ""
+            # Split #### section into ##### sub-chunks
+            # Separate the #### header block (before first #####) from sub-themes
+            sub_parts = re.split(r"(?=^#{5}(?!#))", part, flags=re.MULTILINE)
+            theme_header = sub_parts[0].strip()  # #### heading + intro text
+            sub_themes = [s.strip() for s in sub_parts[1:] if s.strip()]
 
-            chunks.append((label, part))
+            if not sub_themes:
+                # No ##### sub-themes → treat the whole #### as one chunk
+                theme_chunks.append((label, part))
+            else:
+                # The #### header is prepended to the FIRST sub-theme only.
+                # This gives the model context for writing the theme intro sentence,
+                # while keeping the scope tight (trim stops at the next ##### or ####).
+                # Subsequent sub-themes start cleanly with their own ##### heading.
+                for i, sub in enumerate(sub_themes):
+                    sub_first_line = sub.splitlines()[0]
+                    sub_label = re.sub(r"^#+\s*", "", sub_first_line).strip()
+                    if i == 0:
+                        sub_content = theme_header + "\n\n" + sub
+                    else:
+                        sub_content = sub
+                    theme_chunks.append((sub_label, sub_content))
 
+        chunks: List[Tuple[str, str]] = []
+        if preamble_parts:
+            chunks.append(("preamble", "\n\n".join(preamble_parts)))
+        chunks.extend(theme_chunks)
         return chunks
+
+    @staticmethod
+    def _trim_output_to_scope(output: str, section_outline: str) -> str:
+        """Post-process LLM output to remove content beyond the section's scope.
+
+        The model tends to "complete" the chapter even when told to write one section.
+        This deterministic post-processor truncates the output at any heading that
+        was NOT present in section_outline:
+
+        - Preamble: truncate before the 1st #### (no #### in outline)
+        - #### theme w/ ##### sub-themes: truncate before any ##### not in outline,
+          and before any #### not in outline
+        - ##### sub-theme chunk: truncate before any ##### or #### not in outline
+        """
+        valid_l4: set = set()
+        valid_l5: set = set()
+        for line in section_outline.splitlines():
+            stripped = line.strip()
+            if re.match(r"^#{4}(?!#)\s", stripped):
+                valid_l4.add(stripped)
+            elif re.match(r"^#{5}(?!#)\s", stripped):
+                valid_l5.add(stripped)
+
+        lines = output.splitlines(keepends=True)
+        result: List[str] = []
+        for line in lines:
+            stripped = line.strip()
+            # Stop at any out-of-scope #### heading
+            if re.match(r"^#{4}(?!#)\s", stripped) and stripped not in valid_l4:
+                break
+            # Stop at any out-of-scope ##### heading
+            if re.match(r"^#{5}(?!#)\s", stripped) and stripped not in valid_l5:
+                break
+            result.append(line)
+
+        return "".join(result).strip()
+
+    @staticmethod
+    def _extract_toc(outline: str) -> str:
+        """Extract only the heading lines from the outline as a table of contents.
+
+        This gives the LLM structural awareness without exposing the full outline
+        content, which would tempt it to write ahead into other sections.
+        """
+        toc_lines = []
+        for line in outline.splitlines():
+            stripped = line.strip()
+            if re.match(r"^#{1,5}\s", stripped):
+                toc_lines.append(stripped)
+        return "\n".join(toc_lines)
 
     def generate_full_text(
         self,
@@ -245,10 +323,15 @@ class FindingsThematicColaizziWriter(BaseResearchSectionWriter):
             logger.info("No #### sections found in outline; generating full text in one call.")
             return self._generate_full_single_call(context_json, approved_outline)
 
+        # Build a condensed TOC so each section call knows the overall structure
+        # without seeing the full content (which causes the LLM to write ahead).
+        chapter_toc = self._extract_toc(approved_outline)
+
         total_chunks = len(chunks)
         logger.info(f"Generating full text in {total_chunks} section(s): {[label for label, _ in chunks]}")
 
         written_sections: List[str] = []
+        separator_before: List[str] = []  # separator to use before each section when joining
 
         for idx, (label, section_outline) in enumerate(chunks):
             section_num = idx + 1
@@ -267,7 +350,7 @@ class FindingsThematicColaizziWriter(BaseResearchSectionWriter):
 
             prompt = self.section_template.format(
                 research_context_json=context_json,
-                approved_outline=approved_outline,
+                chapter_toc=chapter_toc,
                 section_outline=section_outline,
                 previous_sections_note=previous_note,
                 language_instruction=self._language_instruction(),
@@ -277,10 +360,37 @@ class FindingsThematicColaizziWriter(BaseResearchSectionWriter):
                 prompt = prompt + f"\n\n---\n\nAdditional user instructions:\n{self.user_note}"
 
             section_text = self._call_llm(prompt=prompt, model_name=settings.llm.model)
+            section_text = self._trim_output_to_scope(section_text, section_outline)
+
+            # Retry once if the section came back empty (model skipped it).
+            # This can happen when the LLM mistakenly believes the section was
+            # already written in a prior response.
+            if not section_text.strip():
+                logger.warning(f"Section {section_num} came back empty — retrying once.")
+                retry_prompt = (
+                    prompt
+                    + "\n\n[IMPORTANT: The section above has NOT been written yet. "
+                    "Write it now in full — do NOT skip it.]"
+                )
+                section_text = self._call_llm(prompt=retry_prompt, model_name=settings.llm.model)
+                section_text = self._trim_output_to_scope(section_text, section_outline)
+
             written_sections.append(section_text)
+            # Use ---  before sections that start a new theme (#### boundary)
+            # and \n\n for sub-theme continuations (##### within the same theme).
+            first_content_line = section_outline.lstrip().splitlines()[0] if section_outline.strip() else ""
+            is_new_theme = bool(re.match(r"^#{4}(?!#)", first_content_line))
+            separator_before.append("\n\n---\n\n" if is_new_theme else "\n\n")
             logger.success(f"Section {section_num}/{total_chunks} generated ({len(section_text)} chars).")
 
-        return "\n\n---\n\n".join(written_sections)
+        # Join sections: first section has no preceding separator
+        parts = []
+        for i, text in enumerate(written_sections):
+            if i == 0:
+                parts.append(text)
+            else:
+                parts.append(separator_before[i] + text)
+        return "".join(parts)
 
     def _generate_full_single_call(self, context_json: str, approved_outline: str) -> str:
         """Fallback: generate the full chapter in one LLM call (original behavior)."""
