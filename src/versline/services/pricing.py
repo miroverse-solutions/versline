@@ -271,8 +271,8 @@ def print_cost_report(
     if invalid_request_ids:
         table.add_row("AvalAI Invalid IDs", _format_invalid_ids(invalid_request_ids))
     
-    # Generic USD Cost (OpenRouter/OpenAI)
+    # USD cost reported by OpenAI-compatible providers (e.g., OpenRouter)
     if tracker.total_cost_usd > 0:
-        table.add_row("Est. Cost (non-AvalAI)", f"${tracker.total_cost_usd:.4f}")
+        table.add_row("Cost (USD)", f"${tracker.total_cost_usd:.6f}")
 
     console.print(table)

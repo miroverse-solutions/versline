@@ -4,6 +4,7 @@ from pathlib import Path
 from loguru import logger
 from versline.config import settings
 from versline.services import ai
+from versline.services.ai import track_openai_usage
 from versline.core.prompts import load_prompt
 from versline.services.pricing import TokenTracker
 from versline.services.document_processor import convert_to_markdown
@@ -137,10 +138,7 @@ class TextTranslator:
                         )
 
                     if completion.usage:
-                        self.tracker.add_usage(
-                            completion.usage.prompt_tokens,
-                            completion.usage.completion_tokens
-                        )
+                        track_openai_usage(self.tracker, completion.usage)
 
                     result = completion.choices[0].message.content
                 else:

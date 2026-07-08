@@ -12,6 +12,7 @@ from loguru import logger
 from versline.config import settings
 from versline.core.prompts import load_prompt
 from versline.services import ai
+from versline.services.ai import track_openai_usage
 from versline.services.pricing import TokenTracker
 
 
@@ -1645,10 +1646,7 @@ class MarkdownSlideDeckGenerator:
             completion = client.chat.completions.create(**create_kwargs)
 
         if completion.usage:
-            self.tracker.add_usage(
-                int(completion.usage.prompt_tokens or 0),
-                int(completion.usage.completion_tokens or 0),
-            )
+            track_openai_usage(self.tracker, completion.usage)
 
         return str(completion.choices[0].message.content or "")
 

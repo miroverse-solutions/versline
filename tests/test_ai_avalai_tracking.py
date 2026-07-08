@@ -2,7 +2,8 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from versline.services.ai import AIClient
+from versline.services.ai import AIClient, extract_openai_usage_cost_usd, track_openai_usage
+from versline.services.pricing import TokenTracker
 
 
 class _FakeRawResponse:
@@ -83,6 +84,28 @@ class TestAIAvalaiTracking(unittest.TestCase):
 
         self.assertEqual(fake_client.calls, 3)
         self.assertEqual(questions, [])
+
+    def test_extract_openai_usage_cost_usd_reads_direct_cost(self):
+        usage = SimpleNamespace(cost=0.000321)
+        self.assertAlmostEqual(extract_openai_usage_cost_usd(usage), 0.000321)
+
+    def test_extract_openai_usage_cost_usd_reads_model_extra_cost(self):
+        usage = SimpleNamespace(model_extra={"cost": "0.001234"})
+        self.assertAlmostEqual(extract_openai_usage_cost_usd(usage), 0.001234)
+
+    def test_track_openai_usage_adds_cost_to_tracker(self):
+        tracker = TokenTracker()
+        usage = SimpleNamespace(
+            prompt_tokens=12,
+            completion_tokens=8,
+            model_extra={"cost": "0.000500"},
+        )
+
+        track_openai_usage(tracker, usage)
+
+        self.assertEqual(tracker.total_input_tokens, 12)
+        self.assertEqual(tracker.total_output_tokens, 8)
+        self.assertAlmostEqual(tracker.total_cost_usd, 0.0005)
 
 
 if __name__ == "__main__":

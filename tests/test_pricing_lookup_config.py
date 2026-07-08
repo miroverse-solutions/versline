@@ -109,6 +109,23 @@ class TestPricingLookupConfig(unittest.TestCase):
         table.add_row.assert_any_call("AvalAI Cost", "Unavailable (no valid UUID request ID)")
         table.add_row.assert_any_call("AvalAI Invalid IDs", "req_123, req_456")
 
+    def test_usd_cost_row_is_shown_with_precision(self):
+        tracker = TokenTracker()
+        tracker.add_usage(10, 5, cost=0.0001234)
+
+        with (
+            patch("versline.services.pricing.Table") as table_cls,
+            patch("versline.services.pricing.Console") as console_cls,
+        ):
+            table = MagicMock()
+            table_cls.return_value = table
+            console = MagicMock()
+            console_cls.return_value = console
+
+            print_cost_report(tracker)
+
+        table.add_row.assert_any_call("Cost (USD)", "$0.000123")
+
     def test_composite_request_id_is_parsed_into_valid_ids(self):
         from versline.services.pricing import _split_uuid_ids
 

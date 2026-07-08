@@ -21,7 +21,7 @@ except ImportError:
             self.total_output_tokens = 0
             self.total_cost_usd = 0.0
             self.avalai_request_ids = []
-        def add_usage(self, i, o, c=0.0): 
+        def add_usage(self, i, o, c=0.0, cached_tokens=0): 
             self.total_input_tokens += i
             self.total_output_tokens += o
             self.total_cost_usd += c
@@ -133,6 +133,88 @@ def call_gemini_with_cache(
     return response.text
 
 
+def _coerce_cost_usd(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        parsed = float(value)
+    elif isinstance(value, str):
+        normalized = value.strip().replace("$", "")
+        if not normalized:
+            return None
+        try:
+            parsed = float(normalized)
+        except ValueError:
+            return None
+    else:
+        return None
+
+    if parsed < 0:
+        return None
+    return parsed
+
+
+def extract_openai_usage_cost_usd(usage: Any) -> float:
+    if not usage:
+        return 0.0
+
+    direct_keys = ("cost", "total_cost", "total_cost_usd", "usd", "usd_cost")
+    nested_keys = ("cost_details", "cost_breakdown")
+
+    candidates: List[Any] = []
+
+    for key in direct_keys:
+        candidates.append(getattr(usage, key, None))
+
+    usage_as_dict: Dict[str, Any] = usage if isinstance(usage, dict) else {}
+    for key in direct_keys:
+        candidates.append(usage_as_dict.get(key))
+
+    model_extra = getattr(usage, "model_extra", None)
+    if isinstance(model_extra, dict):
+        for key in direct_keys:
+            candidates.append(model_extra.get(key))
+        for nested_key in nested_keys:
+            nested = model_extra.get(nested_key)
+            if isinstance(nested, dict):
+                for key in direct_keys:
+                    candidates.append(nested.get(key))
+
+    for nested_key in nested_keys:
+        nested = getattr(usage, nested_key, None)
+        if isinstance(nested, dict):
+            for key in direct_keys:
+                candidates.append(nested.get(key))
+
+    for candidate in candidates:
+        parsed = _coerce_cost_usd(candidate)
+        if parsed is not None:
+            return parsed
+
+    return 0.0
+
+
+def track_openai_usage(tracker: TokenTracker, usage: Any) -> None:
+    if not usage:
+        return
+
+    cached = (
+        getattr(
+            getattr(usage, "prompt_tokens_details", None),
+            "cached_tokens",
+            None,
+        )
+        or 0
+    )
+
+    tracker.add_usage(
+        int(getattr(usage, "prompt_tokens", 0) or 0),
+        int(getattr(usage, "completion_tokens", 0) or 0),
+        cost=extract_openai_usage_cost_usd(usage),
+        cached_tokens=int(cached or 0),
+    )
+
+
 def call_openai_with_document_prefix(
     client,
     model: str,
@@ -171,19 +253,7 @@ def call_openai_with_document_prefix(
         )
 
     if completion.usage:
-        cached = (
-            getattr(
-                getattr(completion.usage, "prompt_tokens_details", None),
-                "cached_tokens",
-                None,
-            )
-            or 0
-        )
-        tracker.add_usage(
-            completion.usage.prompt_tokens,
-            completion.usage.completion_tokens,
-            cached_tokens=cached,
-        )
+        track_openai_usage(tracker, completion.usage)
     return completion.choices[0].message.content
 
 def configure_openai(llm_settings):
@@ -322,7 +392,7 @@ class AIClient:
         usage = response.usage
         
         if usage:
-            self.tracker.add_usage(usage.prompt_tokens, usage.completion_tokens)
+            track_openai_usage(self.tracker, usage)
         
         try:
             data = json.loads(content)
