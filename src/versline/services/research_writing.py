@@ -188,27 +188,42 @@ class FindingsThematicColaizziWriter(BaseResearchSectionWriter):
 
     @staticmethod
     def _split_outline_into_chunks(outline: str) -> List[Tuple[str, str]]:
-        """Split outline into (label, content) chunks at #### heading level.
+        """Split outline into (label, content) chunks at ### and #### heading levels.
 
-        Returns a list of (label, section_text) tuples.
-        The preamble (everything before the first ####) is returned as the
-        first chunk with label 'preamble'.
+        - Splits at exactly ### (3 hashes) and #### (4 hashes) — not at ##### or deeper.
+        - This keeps each main-theme's sub-themes (#####) together with their parent (####).
+        - Pre-heading content (e.g. the chapter # title) is merged into the first section.
+        - Marker-only sections like [پایان فصل] are skipped.
         """
-        # Split at #### boundaries (main theme headings)
-        parts = re.split(r"(?=^####)", outline, flags=re.MULTILINE)
+        parts = re.split(r"(?=^#{3}(?!#)|^#{4}(?!#))", outline, flags=re.MULTILINE)
+        skip_pattern = re.compile(r"^\[.+\]")
 
         chunks: List[Tuple[str, str]] = []
+        pending_prefix = ""
+
         for part in parts:
             part = part.strip()
             if not part:
                 continue
-            if part.startswith("####"):
-                # Extract the heading line as the label
-                first_line = part.splitlines()[0].strip("# ").strip()
-                chunks.append((first_line, part))
-            else:
-                # Preamble content (intro, demographics, analysis process)
-                chunks.append(("preamble", part))
+
+            first_line = part.splitlines()[0]
+            label = re.sub(r"^#+\s*", "", first_line).strip()
+
+            # Skip pure marker/boundary annotations like [پایان فصل چهارم]
+            if skip_pattern.match(label):
+                continue
+
+            # Content before the first ### heading (e.g. chapter # title) is
+            # prepended to the next real section instead of becoming its own call.
+            if not re.match(r"^#{3,4}(?!#)", first_line):
+                pending_prefix = part + "\n\n"
+                continue
+
+            if pending_prefix:
+                part = pending_prefix + part
+                pending_prefix = ""
+
+            chunks.append((label, part))
 
         return chunks
 
@@ -224,8 +239,8 @@ class FindingsThematicColaizziWriter(BaseResearchSectionWriter):
         context_json = json.dumps(research_inputs, ensure_ascii=False, indent=2)
         chunks = self._split_outline_into_chunks(approved_outline)
 
-        # If the outline has no #### sections, fall back to single-call generation
-        has_theme_sections = any(label != "preamble" for label, _ in chunks)
+        # If the outline has no ### or #### sections, fall back to single-call generation
+        has_theme_sections = len(chunks) > 1
         if not has_theme_sections:
             logger.info("No #### sections found in outline; generating full text in one call.")
             return self._generate_full_single_call(context_json, approved_outline)
