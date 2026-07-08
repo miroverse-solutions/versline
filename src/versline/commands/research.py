@@ -372,19 +372,29 @@ def write_research_section(
             TaskProgressColumn(),
             transient=False,
         ) as progress:
-            task = progress.add_task("Preparing research writing...", total=100)
-            progress.update(task, completed=20, description=f"Generating {stage} for {section}...")
-
             if stage == "outline":
+                task = progress.add_task("Preparing research writing...", total=100)
+                progress.update(task, completed=20, description=f"Generating {stage} for {section}...")
                 result = service.generate_outline(research_inputs=research_inputs)
+                progress.update(task, completed=100, description="Outline generated")
             else:
+                task = progress.add_task("Preparing full text generation...", total=None)
+
+                def _progress_callback(section_num: int, total: int, label: str) -> None:
+                    progress.update(
+                        task,
+                        total=total,
+                        completed=section_num - 1,
+                        description=f"Writing section {section_num}/{total}: {label[:60]}",
+                    )
+
                 approved_outline = approved_outline_file.read_text(encoding="utf-8")
                 result = service.generate_full_text(
                     research_inputs=research_inputs,
                     approved_outline=approved_outline,
+                    progress_callback=_progress_callback,
                 )
-
-            progress.update(task, completed=100, description=f"{stage.title()} generated")
+                progress.update(task, completed=progress.tasks[task].total, description="Full text generated")
 
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(result, encoding="utf-8")
