@@ -1,7 +1,8 @@
 import json
+import re
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Type
+from typing import Any, Callable, Dict, List, Optional, Tuple, Type
 
 from loguru import logger
 
@@ -49,7 +50,12 @@ class BaseResearchSectionWriter:
     def generate_outline(self, research_inputs: Dict[str, Any]) -> str:
         raise NotImplementedError
 
-    def generate_full_text(self, research_inputs: Dict[str, Any], approved_outline: str) -> str:
+    def generate_full_text(
+        self,
+        research_inputs: Dict[str, Any],
+        approved_outline: str,
+        progress_callback: Optional[Callable[[int, int, str], None]] = None,
+    ) -> str:
         raise NotImplementedError
 
     def _call_llm(self, prompt: str, model_name: str, max_retries: int = 3) -> str:
@@ -133,6 +139,7 @@ class BaseResearchSectionWriter:
 class FindingsThematicColaizziWriter(BaseResearchSectionWriter):
     OUTLINE_PROMPT = "research_findings_colaizzi_outline_prompt.md"
     FULL_PROMPT = "research_findings_colaizzi_full_prompt.md"
+    SECTION_PROMPT = "research_findings_colaizzi_full_section_prompt.md"
     REVISION_PROMPT = "research_findings_revision_prompt.md"
 
     def __init__(
@@ -150,6 +157,7 @@ class FindingsThematicColaizziWriter(BaseResearchSectionWriter):
         )
         self.outline_template = load_prompt(self.OUTLINE_PROMPT)
         self.full_template = load_prompt(self.FULL_PROMPT)
+        self.section_template = load_prompt(self.SECTION_PROMPT)
         self.revision_template = load_prompt(self.REVISION_PROMPT)
 
     def _append_revision_block(self, prompt: str) -> str:
@@ -178,11 +186,89 @@ class FindingsThematicColaizziWriter(BaseResearchSectionWriter):
 
         return self._call_llm(prompt=prompt, model_name=settings.llm.model)
 
-    def generate_full_text(self, research_inputs: Dict[str, Any], approved_outline: str) -> str:
+    @staticmethod
+    def _split_outline_into_chunks(outline: str) -> List[Tuple[str, str]]:
+        """Split outline into (label, content) chunks at #### heading level.
+
+        Returns a list of (label, section_text) tuples.
+        The preamble (everything before the first ####) is returned as the
+        first chunk with label 'preamble'.
+        """
+        # Split at #### boundaries (main theme headings)
+        parts = re.split(r"(?=^####)", outline, flags=re.MULTILINE)
+
+        chunks: List[Tuple[str, str]] = []
+        for part in parts:
+            part = part.strip()
+            if not part:
+                continue
+            if part.startswith("####"):
+                # Extract the heading line as the label
+                first_line = part.splitlines()[0].strip("# ").strip()
+                chunks.append((first_line, part))
+            else:
+                # Preamble content (intro, demographics, analysis process)
+                chunks.append(("preamble", part))
+
+        return chunks
+
+    def generate_full_text(
+        self,
+        research_inputs: Dict[str, Any],
+        approved_outline: str,
+        progress_callback: Optional[Callable[[int, int, str], None]] = None,
+    ) -> str:
         if not approved_outline or not approved_outline.strip():
             raise ValueError("Approved outline is required for full-text generation.")
 
         context_json = json.dumps(research_inputs, ensure_ascii=False, indent=2)
+        chunks = self._split_outline_into_chunks(approved_outline)
+
+        # If the outline has no #### sections, fall back to single-call generation
+        has_theme_sections = any(label != "preamble" for label, _ in chunks)
+        if not has_theme_sections:
+            logger.info("No #### sections found in outline; generating full text in one call.")
+            return self._generate_full_single_call(context_json, approved_outline)
+
+        total_chunks = len(chunks)
+        logger.info(f"Generating full text in {total_chunks} section(s): {[label for label, _ in chunks]}")
+
+        written_sections: List[str] = []
+
+        for idx, (label, section_outline) in enumerate(chunks):
+            section_num = idx + 1
+            logger.info(f"Generating section {section_num}/{total_chunks}: {label}")
+
+            if progress_callback:
+                progress_callback(section_num, total_chunks, label)
+
+            if written_sections:
+                previous_note = (
+                    "Previously written sections (for context/continuity — do NOT repeat them):\n"
+                    + "\n---\n".join(written_sections[-2:])  # last 2 sections for context
+                )
+            else:
+                previous_note = "This is the first section of the chapter."
+
+            prompt = self.section_template.format(
+                research_context_json=context_json,
+                approved_outline=approved_outline,
+                section_outline=section_outline,
+                previous_sections_note=previous_note,
+                language_instruction=self._language_instruction(),
+            )
+            prompt = self._append_revision_block(prompt)
+            if self.user_note:
+                prompt = prompt + f"\n\n---\n\nAdditional user instructions:\n{self.user_note}"
+
+            section_text = self._call_llm(prompt=prompt, model_name=settings.llm.model)
+            written_sections.append(section_text)
+            logger.success(f"Section {section_num}/{total_chunks} generated ({len(section_text)} chars).")
+
+        return "\n\n---\n\n".join(written_sections)
+
+    def _generate_full_single_call(self, context_json: str, approved_outline: str) -> str:
+        """Fallback: generate the full chapter in one LLM call (original behavior)."""
         prompt = self.full_template.format(
             research_context_json=context_json,
             approved_outline=approved_outline,
@@ -191,7 +277,6 @@ class FindingsThematicColaizziWriter(BaseResearchSectionWriter):
         prompt = self._append_revision_block(prompt)
         if self.user_note:
             prompt = prompt + f"\n\n---\n\nAdditional user instructions:\n{self.user_note}"
-
         return self._call_llm(prompt=prompt, model_name=settings.llm.model)
 
 
@@ -238,5 +323,10 @@ class ResearchWritingService:
     def generate_outline(self, research_inputs: Dict[str, Any]) -> str:
         return self.writer.generate_outline(research_inputs)
 
-    def generate_full_text(self, research_inputs: Dict[str, Any], approved_outline: str) -> str:
-        return self.writer.generate_full_text(research_inputs, approved_outline)
+    def generate_full_text(
+        self,
+        research_inputs: Dict[str, Any],
+        approved_outline: str,
+        progress_callback: Optional[Callable[[int, int, str], None]] = None,
+    ) -> str:
+        return self.writer.generate_full_text(research_inputs, approved_outline, progress_callback)
