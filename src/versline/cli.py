@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 from versline.config import settings, reload_settings
+from versline.commands._common import EXTRA_BODY_HELP, apply_extra_body_option
 from versline.commands import transcribe, translate, qude, qualcode, slides, summarize, research
 
 
@@ -35,6 +36,7 @@ def main(
         resolve_path=True,
         help="Path to a custom .env file loaded before command execution",
     ),
+    extra_body: Optional[str] = typer.Option(None, "--extra-body", help=EXTRA_BODY_HELP),
 ):
     """
     [bold]Versline[/bold] is a powerful toolkit for automated media processing.
@@ -49,6 +51,9 @@ def main(
     """
     if env_file is not None:
         reload_settings(env_file=env_file)
+
+    if extra_body:
+        apply_extra_body_option(extra_body)
 
     configure_logging(verbose)
 

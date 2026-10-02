@@ -256,6 +256,36 @@ def call_openai_with_document_prefix(
         track_openai_usage(tracker, completion.usage)
     return completion.choices[0].message.content
 
+def _merge_extra_body(user_extra: Dict[str, Any], call_extra: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Merge the user-supplied extra body with a call's own extra_body (call-specific keys win)."""
+    merged = dict(user_extra)
+    merged.update(call_extra or {})
+    return merged
+
+
+def apply_extra_body(client, extra_body: Optional[Dict[str, Any]]):
+    """Make every chat.completions.create call on *client* send *extra_body*."""
+    if not client or not extra_body:
+        return client
+
+    def _wrap(target):
+        original = target.create
+
+        def create(*args, **kwargs):
+            kwargs["extra_body"] = _merge_extra_body(extra_body, kwargs.get("extra_body"))
+            return original(*args, **kwargs)
+
+        target.create = create
+
+    completions = client.chat.completions
+    _wrap(completions)
+    raw_completions = getattr(completions, "with_raw_response", None)
+    if raw_completions is not None:
+        _wrap(raw_completions)
+    logger.info(f"🔧 Extra request body enabled: {json.dumps(extra_body)}")
+    return client
+
+
 def configure_openai(llm_settings):
     """Configure OpenAI API client with defined settings."""
     try:
@@ -282,7 +312,8 @@ def configure_openai(llm_settings):
             logger.info("🔧 Using default OpenAI endpoint.")
             
         logger.info("✅ OpenAI client configured successfully.")
-        return client
+        from versline.config import settings as _app_settings
+        return apply_extra_body(client, _app_settings.llm.extra_body)
     except Exception as e:
         logger.error(f"❌ Error configuring OpenAI client: {e}")
         return None

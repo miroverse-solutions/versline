@@ -1,4 +1,5 @@
 import typer
+from versline.commands._common import EXTRA_BODY_HELP, apply_extra_body_option
 from typing import Optional
 from pathlib import Path
 import os
@@ -23,6 +24,7 @@ def main(
     api_key: Optional[str] = typer.Option(None, "--api-key", "-k", help="API Key"),
     base_url: Optional[str] = typer.Option(None, "--base-url", "-b", help="Base URL for custom/OpenAI provider"),
     proxy: Optional[str] = typer.Option(None, "--proxy", help="Proxy URL"),
+    extra_body: Optional[str] = typer.Option(None, "--extra-body", help=EXTRA_BODY_HELP),
     question_type: str = typer.Option("mcq", "--type", "-t", help="Question type (mcq, open)"),
     language: str = typer.Option("en", "--lang", "-l", help="Language code"),
     count: Optional[int] = typer.Option(None, "--count", "-c", help="Questions per chunk/slide (default: max possible)"),
@@ -62,6 +64,9 @@ def main(
     if input_path is None:
         typer.echo(ctx.get_help())
         raise typer.Exit()
+
+    if extra_body:
+        apply_extra_body_option(extra_body)
 
     designer = QuestionDesigner(
         input_path=str(input_path),

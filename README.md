@@ -245,6 +245,7 @@ versline transcribe [OPTIONS] FILE_PATH
 AvalAI-specific env options (applies to all commands that use LLM settings):
 - `VERSLINE_LLM_AVALAI_PROVIDER`: Upstream provider hint for AvalAI routing (for example `google`, `openai`, `anthropic`).
 - `VERSLINE_LLM_PROXY`: Proxy used for model calls and AvalAI cost lookup in restricted networks.
+- `VERSLINE_LLM_EXTRA_BODY`: Optional JSON object merged into every OpenAI-compatible chat request body (same as the `--extra-body` flag), e.g. `{"reasoning": {"max_tokens": 1500}}`. Not applied to the native Gemini provider.
 
 ---
 

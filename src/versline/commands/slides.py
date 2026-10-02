@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Optional
 
 import typer
+from versline.commands._common import EXTRA_BODY_HELP, apply_extra_body_option
 from loguru import logger
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
@@ -30,6 +31,7 @@ def generate_slides(
     api_key: Optional[str] = typer.Option(None, "--api-key", help="LLM API key"),
     api_endpoint: Optional[str] = typer.Option(None, "--api-endpoint", help="Custom API endpoint"),
     proxy: Optional[str] = typer.Option(None, "--proxy", help="HTTP/HTTPS proxy URL"),
+    extra_body: Optional[str] = typer.Option(None, "--extra-body", help=EXTRA_BODY_HELP),
     build: bool = typer.Option(False, "--build", help="Build generated deck with Vite"),
     single_file: bool = typer.Option(
         False,
@@ -124,6 +126,8 @@ def generate_slides(
         settings.llm.api_endpoint = api_endpoint
     if proxy:
         settings.llm.proxy = proxy
+    if extra_body:
+        apply_extra_body_option(extra_body)
     if npm_registry:
         settings.slides.npm_registry = npm_registry
 

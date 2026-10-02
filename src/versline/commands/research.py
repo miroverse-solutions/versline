@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import typer
+from versline.commands._common import EXTRA_BODY_HELP, apply_extra_body_option
 from loguru import logger
 from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn
 
@@ -283,6 +284,7 @@ def write_research_section(
     api_key: Optional[str] = typer.Option(None, "--api-key", help="Provider API key"),
     api_endpoint: Optional[str] = typer.Option(None, "--api-endpoint", help="Custom API endpoint"),
     proxy: Optional[str] = typer.Option(None, "--proxy", help="Proxy URL"),
+    extra_body: Optional[str] = typer.Option(None, "--extra-body", help=EXTRA_BODY_HELP),
     note: Optional[str] = typer.Option(None, "--note", help="Additional instruction"),
     note_file: Optional[Path] = typer.Option(None, "--note-file", help="Path to note file (.md/.txt)"),
     revision_file: Optional[Path] = typer.Option(
@@ -324,6 +326,8 @@ def write_research_section(
         settings.llm.api_endpoint = api_endpoint
     if proxy:
         settings.llm.proxy = proxy
+    if extra_body:
+        apply_extra_body_option(extra_body)
 
     try:
         out_path = _resolve_output_path(output=output, input_json=input_json, section=section, stage=stage)

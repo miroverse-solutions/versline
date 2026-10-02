@@ -1,4 +1,5 @@
-from typing import Optional
+import json
+from typing import Any, Dict, Optional
 from pathlib import Path
 import os
 import warnings
@@ -39,6 +40,11 @@ class LLMSettings(BaseSettings):
     avalai_provider: Optional[str] = Field(
         default=None,
         description="Optional AvalAI upstream provider hint (e.g. google, openai, anthropic)",
+    )
+
+    extra_body: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description='Extra JSON merged into every OpenAI-compatible request body (e.g. {"reasoning": {"max_tokens": 1500}})',
     )
 
     model_config = SettingsConfigDict(env_prefix='VERSLINE_LLM_', env_file='.env', extra='ignore')
@@ -125,3 +131,14 @@ def reload_settings(env_file: Optional[Path] = None, *, override_env: bool = Tru
     return settings
 
 
+
+
+def parse_extra_body(raw: str) -> Dict[str, Any]:
+    """Parse the --extra-body CLI value into a JSON object."""
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"--extra-body must be valid JSON: {exc}") from exc
+    if not isinstance(value, dict):
+        raise ValueError("--extra-body must be a JSON object, e.g. '{\"reasoning\": {\"max_tokens\": 1500}}'")
+    return value

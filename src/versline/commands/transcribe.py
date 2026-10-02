@@ -1,5 +1,6 @@
 import json
 import typer
+from versline.commands._common import EXTRA_BODY_HELP, apply_extra_body_option
 from typing import Optional
 from pathlib import Path
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
@@ -26,6 +27,7 @@ def transcribe_file(
     api_key: Optional[str] = typer.Option(None, help="API Key for the provider"),
     api_endpoint: Optional[str] = typer.Option(None, help="Custom API Endpoint"),
     proxy: Optional[str] = typer.Option(None, help="Proxy URL"),
+    extra_body: Optional[str] = typer.Option(None, "--extra-body", help=EXTRA_BODY_HELP),
     # Advanced options
     prompt_file: Optional[Path] = typer.Option(None, help="Custom system prompt file"),
     json_output: bool = typer.Option(False, "--json", "-j", help="Output in JSON format (using predefined schema)"),
@@ -58,6 +60,8 @@ def transcribe_file(
         settings.llm.api_endpoint = api_endpoint
     if proxy:
         settings.llm.proxy = proxy
+    if extra_body:
+        apply_extra_body_option(extra_body)
         
     resolved_path = file_path
     temp_download = None

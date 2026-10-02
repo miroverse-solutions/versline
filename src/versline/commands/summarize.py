@@ -1,4 +1,5 @@
 import typer
+from versline.commands._common import EXTRA_BODY_HELP, apply_extra_body_option
 from typing import Optional
 from pathlib import Path
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
@@ -84,6 +85,7 @@ def summarize_file(
     api_key: Optional[str] = typer.Option(None, help="API key for the provider"),
     api_endpoint: Optional[str] = typer.Option(None, help="Custom API endpoint"),
     proxy: Optional[str] = typer.Option(None, help="Proxy URL"),
+    extra_body: Optional[str] = typer.Option(None, "--extra-body", help=EXTRA_BODY_HELP),
     note: Optional[str] = typer.Option(None, "--note", help="Additional instruction to append to the prompt"),
     note_file: Optional[Path] = typer.Option(None, "--note-file", help="Path to a .md or .txt file with an additional instruction"),
 ):
@@ -126,6 +128,8 @@ def summarize_file(
         settings.llm.api_endpoint = api_endpoint
     if proxy:
         settings.llm.proxy = proxy
+    if extra_body:
+        apply_extra_body_option(extra_body)
 
     logger.info(f"Starting summarization [{mode}{'|didactic' if didactic else ''}{'|' + str(compression) + '%' if compression else ''}] for: {file_path}")
 

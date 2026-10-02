@@ -3,6 +3,7 @@ from typing import List, Optional
 import json
 
 import typer
+from versline.commands._common import EXTRA_BODY_HELP, apply_extra_body_option
 from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn
 from loguru import logger
 
@@ -59,6 +60,7 @@ def qualcode_file(
     api_key: Optional[str] = typer.Option(None, "--api-key", help="Provider API key"),
     api_endpoint: Optional[str] = typer.Option(None, "--api-endpoint", help="Custom API endpoint"),
     proxy: Optional[str] = typer.Option(None, "--proxy", help="Proxy URL"),
+    extra_body: Optional[str] = typer.Option(None, "--extra-body", help=EXTRA_BODY_HELP),
     force: bool = typer.Option(False, "--force", "-f", help="Force rerun and ignore progress cache"),
     note: Optional[str] = typer.Option(None, "--note", help="Additional instruction to append to the prompt"),
     note_file: Optional[Path] = typer.Option(None, "--note-file", help="Path to a .md or .txt file with an additional instruction"),
@@ -81,6 +83,8 @@ def qualcode_file(
         settings.llm.api_endpoint = api_endpoint
     if proxy:
         settings.llm.proxy = proxy
+    if extra_body:
+        apply_extra_body_option(extra_body)
 
     try:
         codebook_codes = list(codes)
