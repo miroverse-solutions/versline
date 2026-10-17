@@ -308,9 +308,34 @@ class AudioTranscriber:
             segments.append({"start": start, "end": end, "text": text})
         return segments
 
-    def _post_stt_request(self, url: str, api_key: str | None, audio_path: str, data_params: dict, timeout_seconds: int):
+    _STT_PROVIDER_ENDPOINTS = {
+        "openai": "https://api.openai.com/v1",
+        "avalai": "https://api.avalai.ir/v1",
+        "openrouter": "https://openrouter.ai/api/v1",
+    }
+
+    def _resolve_stt_config(self) -> dict:
+        """Resolve STT endpoint/key/proxy/language; each STT setting falls back to the LLM one."""
+        t = settings.transcription
+        llm = settings.llm
+        provider = (t.timestamp_provider or "").strip().lower()
+        if provider:
+            endpoint = t.timestamp_api_endpoint or self._STT_PROVIDER_ENDPOINTS.get(provider)
+            if not endpoint and provider in ("openaicompatible", "custom"):
+                endpoint = llm.api_endpoint
+        else:
+            endpoint = t.timestamp_api_endpoint or llm.api_endpoint
+        return {
+            "endpoint": (endpoint or "https://api.avalai.ir/v1").rstrip("/"),
+            "api_key": t.timestamp_api_key or llm.api_key,
+            "proxy": t.timestamp_proxy or llm.proxy,
+            "language": (t.timestamp_language or "").strip() or None,
+        }
+
+    def _post_stt_request(self, url: str, api_key: str | None, audio_path: str, data_params: dict, timeout_seconds: int, proxy: str | None = None):
         import requests
         mime = mimetypes.guess_type(audio_path)[0] or "audio/mpeg"
+        data_params = {k: v for k, v in data_params.items() if v is not None}
         with open(audio_path, "rb") as f:
             return requests.post(
                 url,
@@ -318,15 +343,18 @@ class AudioTranscriber:
                 files={"file": (Path(audio_path).name, f, mime)},
                 data=data_params,
                 timeout=timeout_seconds,
+                proxies={"http": proxy, "https": proxy} if proxy else None,
             )
 
     def transcribe_chunk_via_stt_api(self, model_name: str, audio_path: str, max_retries: int = 2, with_timestamps: bool = False):
         """Transcribe using the /v1/audio/transcriptions endpoint (STT API).
         If with_timestamps=True, tries native timestamps first, falls back to chunk-based."""
-        api_key = settings.llm.api_key
-        endpoint = (settings.llm.api_endpoint or "https://api.avalai.ir/v1").rstrip("/")
-        url = f"{endpoint}/audio/transcriptions"
-        timeout_seconds = max(10, int(getattr(settings.transcription, "stt_timeout_seconds", 120) or 120))
+        stt = self._resolve_stt_config()
+        api_key = stt["api_key"]
+        timestamp_proxy = stt["proxy"]
+        timestamp_language = stt["language"]
+        url = f"{stt['endpoint']}/audio/transcriptions"
+        timeout_seconds = max(10, int(getattr(settings.transcription, "timestamp_timeout_seconds", 120) or 120))
 
         for attempt in range(max_retries):
             try:
@@ -335,12 +363,12 @@ class AudioTranscriber:
                     try:
                         verbose_params = {
                             "model": model_name,
-                            "language": "fa",
+                            "language": timestamp_language,
                             "response_format": "verbose_json",
                             "timestamp_granularities[]": "segment",
                         }
                         verbose_resp = self._post_stt_request(
-                            url, api_key, audio_path, verbose_params, timeout_seconds
+                            url, api_key, audio_path, verbose_params, timeout_seconds, proxy=timestamp_proxy
                         )
                         if verbose_resp.status_code == 200:
                             data = verbose_resp.json()
@@ -368,12 +396,12 @@ class AudioTranscriber:
 
                     srt_params = {
                         "model": model_name,
-                        "language": "fa",
+                        "language": timestamp_language,
                         "response_format": "srt",
                     }
                     try:
                         srt_resp = self._post_stt_request(
-                            url, api_key, audio_path, srt_params, timeout_seconds
+                            url, api_key, audio_path, srt_params, timeout_seconds, proxy=timestamp_proxy
                         )
                     except Exception as srt_error:
                         if verbose_error is not None:
@@ -392,16 +420,16 @@ class AudioTranscriber:
                             "text": " ".join(seg["text"] for seg in srt_segments).strip(),
                             "segments": srt_segments,
                             "duration": srt_segments[-1]["end"],
-                            "language": "fa",
+                            "language": timestamp_language,
                             "source": "api_native_srt",
                         }
 
                     logger.info("⚠️ srt fallback returned no parseable segments")
                     return {"text": (srt_resp.text or "").strip(), "segments": None, "source": "api_text_only"}
 
-                data_params = {"model": model_name, "language": "fa"}
+                data_params = {"model": model_name, "language": timestamp_language}
                 resp = self._post_stt_request(
-                    url, api_key, audio_path, data_params, timeout_seconds
+                    url, api_key, audio_path, data_params, timeout_seconds, proxy=timestamp_proxy
                 )
                 if resp.status_code != 200:
                     raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:200]}")

@@ -25,15 +25,15 @@ class TestSttTimestampFallback(unittest.TestCase):
         self.transcriber = AudioTranscriber()
         self.orig_endpoint = settings.llm.api_endpoint
         self.orig_api_key = settings.llm.api_key
-        self.orig_timeout = settings.transcription.stt_timeout_seconds
+        self.orig_timeout = settings.transcription.timestamp_timeout_seconds
         settings.llm.api_endpoint = "https://api.avalai.ir/v1"
         settings.llm.api_key = "test-key"
-        settings.transcription.stt_timeout_seconds = 7
+        settings.transcription.timestamp_timeout_seconds = 7
 
     def tearDown(self):
         settings.llm.api_endpoint = self.orig_endpoint
         settings.llm.api_key = self.orig_api_key
-        settings.transcription.stt_timeout_seconds = self.orig_timeout
+        settings.transcription.timestamp_timeout_seconds = self.orig_timeout
 
     def test_falls_back_to_srt_when_verbose_json_times_out(self):
         srt_body = """1

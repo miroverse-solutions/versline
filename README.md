@@ -117,11 +117,21 @@ VERSLINE_LLM_API_ENDPOINT=
 # Useful when model id alone is ambiguous for AvalAI routing.
 VERSLINE_LLM_AVALAI_PROVIDER=
 
-# --- Transcription ---
-# Model used for timestamp annotation (STT endpoint preferred)
+# --- Transcription / Timestamps ---
+# Model used for timestamp annotation (STT /audio/transcriptions endpoint preferred)
 VERSLINE_TRANSCRIPTION_TIMESTAMP_MODEL=gpt-4o-mini-transcribe
 # Chunk duration in minutes for chunk-based timestamp fallback
 VERSLINE_TRANSCRIPTION_TIMESTAMP_CHUNK_MINUTES=3
+# Timestamp (STT) connection. Any empty value falls back to the matching VERSLINE_LLM_* setting.
+# Options: OpenAI, AvalAI, OpenRouter, OpenAICompatible
+VERSLINE_TRANSCRIPTION_TIMESTAMP_PROVIDER=
+VERSLINE_TRANSCRIPTION_TIMESTAMP_API_KEY=
+# Base URL without /audio/transcriptions (required for OpenAICompatible)
+VERSLINE_TRANSCRIPTION_TIMESTAMP_API_ENDPOINT=
+VERSLINE_TRANSCRIPTION_TIMESTAMP_PROXY=
+# Language code sent to the timestamp endpoint (e.g. fa, en). Leave empty for auto-detect.
+VERSLINE_TRANSCRIPTION_TIMESTAMP_LANGUAGE=fa
+VERSLINE_TRANSCRIPTION_TIMESTAMP_TIMEOUT_SECONDS=120
 
 # --- Media configuration ---
 # Full path to ffmpeg/ffprobe binaries if not in system PATH
@@ -158,7 +168,7 @@ VERSLINE_RESOURCE_RUN_WATCHDOG_WITH_CGROUP=false
 
 ## ⚡ Resource Limits
 
-Versline can apply OS-level resource limits at startup to prevent the process from consuming too much RAM, CPU, or GPU VRAM. This is useful when running large embedding or transcription workloads on shared machines.
+Versline can apply OS-level resource limits at startup to prevent the process from consuming too much RAM, CPU, or GPU VRAM. This is useful when running large transcription or media workloads on shared machines.
 
 ### Configuration
 
@@ -185,7 +195,7 @@ All three default to `0` / `0.0` which means **unlimited** — no limit is appli
 | `MAX_CPU_CORES` | `os.sched_setaffinity(0, {0..N-1})` — pins process to first N cores | Linux / most POSIX |
 | `MAX_GPU_VRAM_FRACTION` | `torch.cuda.set_per_process_memory_fraction(f, device)` | PyTorch + CUDA only |
 
-> **RAM note:** The primary mechanism writes the limit to the process's own **cgroup v2 `memory.max`** file. This is enforced synchronously by the kernel on every allocation, so even a sudden spike during model export or OpenVINO conversion is caught immediately — unlike a polling watchdog. If the cgroup file is not writable (e.g. in non-systemd or container environments), a fallback RSS watchdog thread is started instead.
+> **RAM note:** The primary mechanism writes the limit to the process's own **cgroup v2 `memory.max`** file. This is enforced synchronously by the kernel on every allocation, so even a sudden spike during model loading is caught immediately — unlike a polling watchdog. If the cgroup file is not writable (e.g. in non-systemd or container environments), a fallback RSS watchdog thread is started instead.
 > 
 > The watchdog trigger can be tuned with `VERSLINE_RESOURCE_RAM_SOFT_TRIGGER_PCT` (range `50..100`, default `85`).
 > Example: set `95` to reduce early terminations for model init spikes while still retaining a safety margin.
@@ -241,6 +251,15 @@ versline transcribe [OPTIONS] FILE_PATH
 | `--timestamped` | | Enable timestamp-aligned segments (dual strategy: native API → chunk-based). | `False` |
 | `--timestamp-model` | | Model for timestamp annotation (`gpt-4o-mini-transcribe`, `whisper-1`, etc.). | `gpt-4o-mini-transcribe` |
 | `--chunk-minutes` | | Chunk duration in minutes for chunk-based timestamp fallback. | `3` |
+| `--native-timestamps-only` | | Use only the native STT API for timestamps; fail instead of falling back to chunk-based. | `False` |
+| `--timestamp-provider` | | STT provider (`OpenAI`, `AvalAI`, `OpenRouter`, `OpenAICompatible`). | LLM settings |
+| `--timestamp-api-key` | | API key for the STT endpoint. | LLM API key |
+| `--timestamp-api-endpoint` | | STT base URL (without `/audio/transcriptions`). | Provider / LLM endpoint |
+| `--timestamp-proxy` | | Proxy URL for STT requests. | LLM proxy |
+| `--timestamp-language` | | Language code sent to the timestamp endpoint (e.g. `fa`, `en`). | `fa` |
+| `--timestamp-timeout` | | HTTP timeout in seconds for STT requests. | `120` |
+
+With `--timestamped`, the result is saved as JSON (`text` + `segments`) and the full text is also saved next to it as a `.md` file.
 
 AvalAI-specific env options (applies to all commands that use LLM settings):
 - `VERSLINE_LLM_AVALAI_PROVIDER`: Upstream provider hint for AvalAI routing (for example `google`, `openai`, `anthropic`).
@@ -739,216 +758,6 @@ When `--revealjs` is used, `versline slides` switches to the Reveal.js generatio
 
 ---
 
-### 🧩 `rag`
-Run modular RAG pipelines with preprocessing, ingestion, retrieval, and generation.
-
-**Usage:**
-```bash
-versline rag [COMMAND] [OPTIONS]
-```
-
-**Commands:**
-- `ingest`: ingest a file into vector store (currently Markdown/Text input)
-- `ask`: retrieve context and generate answer from indexed content
-
-**Examples:**
-```bash
-# Ingest markdown into Qdrant collection
-versline rag ingest notes.md --collection my_docs --provider OpenAI --api-key $OPENAI_API_KEY
-
-# Ask from collection
-versline rag ask "خلاصه نکات اصلی چیست؟" --collection my_docs --top-k 5 --provider OpenAI --api-key $OPENAI_API_KEY
-
-# Ingest a whole directory with resumable progress and per-service proxies
-versline rag ingest ./docs --collection my_docs --resume --embedding-proxy http://127.0.0.1:2080 --qdrant-proxy ""
-
-# Ask with hybrid retrieval + custom rate limits
-versline rag ask "main points" --collection my_docs --hybrid --embedding-rpm 120 --generation-rpm 30 --qdrant-rpm 300
-
-# Ingest + ask with hierarchical parent-child retrieval
-versline rag ingest ./docs --collection my_docs --parent-child --parent-chunk-size 2400 --chunk-size 1200
-versline rag ask "main points" --collection my_docs --parent-child --top-k 5
-
-# Ask with mixed RPM + TPM limits
-versline rag ask "main points" --collection my_docs --embedding-rpm 120 --embedding-tpm 80000 --generation-rpm 30 --generation-tpm 20000 --rerank --rerank-tpm 30000
-
-# Ask with adaptive TPM correction (estimate + actual usage)
-versline rag ask "main points" --collection my_docs --embedding-tpm 80000 --generation-tpm 20000 --token-limit-mode estimate_and_adjust
-
-# Ask with MCP external context (HTTP mode)
-versline rag ask "main points" --collection my_docs --mcp --mcp-transport http --mcp-server-url http://localhost:8080/mcp/context
-
-# Ask with MCP external context (stdio mode)
-versline rag ask "main points" --collection my_docs --mcp --mcp-transport stdio --mcp-server-command npx --mcp-server-args "@modelcontextprotocol/server-filesystem /home/mirza/projects/versline"
-
-# Ask with web search context (DuckDuckGo, no API key)
-versline rag ask "latest updates about qdrant hybrid search" --collection my_docs --web-search --web-search-provider duckduckgo --web-search-top-k 3
-
-# Ask with Tavily web search context + per-service rate limit/proxy
-versline rag ask "main points" --collection my_docs --web-search --web-search-provider tavily --web-search-api-key $TAVILY_API_KEY --web-search-rpm 60 --web-search-proxy http://127.0.0.1:2080
-
-# Ask with dedicated rerank model
-versline rag ask "main points" --collection my_docs --hybrid --rerank --rerank-provider cohere --rerank-model rerank-v3.5 --rerank-api-key $COHERE_API_KEY
-
-# Ask with local rerank model (OpenAI-compatible endpoint, default: http://localhost:11434/v1)
-versline rag ask "main points" --collection my_docs --hybrid --rerank --rerank-provider local --rerank-model bge-reranker-v2-m3 --rerank-api-endpoint http://localhost:11434/v1
-
-# Ask with local-file rerank model (sentence-transformers CrossEncoder)
-versline rag ask "main points" --collection my_docs --hybrid --rerank --rerank-provider local --rerank-model BAAI/bge-reranker-v2-m3 --rerank-model-path /models/bge-reranker-v2-m3 --rerank-local-files-only --rerank-device cpu
-
-# Ask with OpenVINO backend for embedding + rerank
-versline rag ask "main points" --collection my_docs --hybrid --embedding-provider sentence-transformers --embedding-model sentence-transformers/all-MiniLM-L6-v2 --embedding-backend openvino --rerank --rerank-provider local --rerank-model BAAI/bge-reranker-v2-m3 --rerank-backend openvino
-
-# Ask with per-service timeouts + preflight tuned for restricted/offline network
-versline rag ask "main points" --collection my_docs --embedding-timeout 90 --generation-timeout 180 --qdrant-timeout 30 --rerank-timeout 90 --preflight --no-preflight-network
-
-# Ingest using FastEmbed sparse backend with local cache-only mode
-versline rag ingest ./docs --collection my_docs --hybrid --sparse-provider fastembed --sparse-model prithivida/Splade_PP_en_v1 --sparse-cache-dir /models/fastembed --sparse-local-files-only
-
-# Ask using FlagEmbedding sparse backend (e.g. BGE-M3 lexical) on CUDA
-versline rag ask "main points" --collection my_docs --hybrid --sparse-provider flagembedding --sparse-model BAAI/bge-m3 --sparse-device cuda --sparse-use-fp16 --sparse-batch-size 8
-
-# Ask with local/offline dense embeddings via FastEmbed
-versline rag ask "main points" --collection my_docs --embedding-provider fastembed --embedding-model BAAI/bge-base-en-v1.5 --embedding-cache-dir /models/dense --embedding-local-files-only
-
-# Ask with local dense embeddings via Sentence-Transformers
-versline rag ask "main points" --collection my_docs --embedding-provider sentence-transformers --embedding-model sentence-transformers/all-MiniLM-L6-v2 --embedding-device cpu --embedding-batch-size 32
-
-# Ask with Sentence-Transformers using a local Qwen embedding model path
-versline rag ask "main points" --collection my_docs --embedding-provider sentence --embedding-model Qwen/Qwen3-Embedding-0.6B --embedding-model-path /models/Qwen3-Embedding-0.6B --embedding-local-files-only --embedding-device cpu
-
-# Ask with FlagEmbedding dense backend (BGE-M3)
-versline rag ask "main points" --collection my_docs --embedding-provider flagembedding --embedding-model BAAI/bge-m3 --embedding-device cuda --embedding-use-fp16
-
-# Ask with optimum-intel backend (pre-exported OpenVINO IR on Intel CPU)
-versline rag ask "main points" --collection my_docs --embedding-provider optimum-intel --embedding-model Qwen/Qwen3-Embedding-0.6B --embedding-model-path /models/Qwen3-Embedding-0.6B-OpenVINO --embedding-local-files-only --embedding-device CPU --embedding-batch-size 16
-
-# Ask with optimum-intel backend on Intel iGPU (GPU device)
-versline rag ask "main points" --collection my_docs --embedding-provider optimum-intel --embedding-model Qwen/Qwen3-Embedding-0.6B --embedding-model-path /models/Qwen3-Embedding-0.6B-OpenVINO --embedding-local-files-only --embedding-device GPU
-
-# Ask with optimum-intel reranker (pre-exported OpenVINO IR cross-encoder on Intel CPU)
-versline rag ask "main points" --collection my_docs --hybrid --rerank --rerank-provider optimum-intel --rerank-model BAAI/bge-reranker-v2-m3 --rerank-model-path /models/bge-reranker-v2-m3-OpenVINO --rerank-local-files-only --rerank-device CPU
-
-# Ask with both optimum-intel embedding and reranker on Intel CPU
-versline rag ask "main points" --collection my_docs --hybrid --embedding-provider optimum-intel --embedding-model Qwen/Qwen3-Embedding-0.6B --embedding-model-path /models/Qwen3-Embedding-0.6B-OpenVINO --embedding-local-files-only --embedding-device CPU --rerank --rerank-provider optimum-intel --rerank-model BAAI/bge-reranker-v2-m3 --rerank-model-path /models/bge-reranker-v2-m3-OpenVINO --rerank-local-files-only --rerank-device CPU
-```
-
-### RAG Operational Profiles
-
-- **Direct (no proxy):** do not set `VERSLINE_RAG_*_PROXY` values (or pass empty values via CLI).
-- **Per-service proxy:** set only the services you need, e.g. `VERSLINE_RAG_EMBEDDING_PROXY`, `VERSLINE_RAG_GENERATION_PROXY`, `VERSLINE_RAG_WEB_SEARCH_PROXY`, while keeping `VERSLINE_RAG_QDRANT_PROXY=` empty.
-- **Offline dense mode:** set `VERSLINE_RAG_EMBEDDING_PROVIDER` to `fastembed` / `sentence-transformers` / `flagembedding` / `optimum-intel`, enable `VERSLINE_RAG_EMBEDDING_LOCAL_FILES_ONLY=true`, and set `VERSLINE_RAG_EMBEDDING_CACHE_DIR` or `VERSLINE_RAG_EMBEDDING_MODEL_PATH`.
-- **Intel CPU/iGPU acceleration (optimum-intel):** set `VERSLINE_RAG_EMBEDDING_PROVIDER=optimum-intel` and point `VERSLINE_RAG_EMBEDDING_MODEL_PATH` to a pre-exported OpenVINO IR directory (contains `openvino_model.xml`). Set `VERSLINE_RAG_EMBEDDING_DEVICE=CPU` or `GPU` for iGPU. On first run with a plain HF model directory the model is exported automatically (requires network access once).
-- **Offline sparse mode:** set `VERSLINE_RAG_SPARSE_EMBEDDING_LOCAL_FILES_ONLY=true` and point `VERSLINE_RAG_SPARSE_EMBEDDING_CACHE_DIR` or `VERSLINE_RAG_SPARSE_EMBEDDING_MODEL_PATH` to local artifacts.
-- **Hierarchical parent-child retrieval:** set `VERSLINE_RAG_PARENT_CHILD_ENABLED=true` to index parent+child chunks and retrieve child matches expanded to parent context for generation.
-- **Local rerank mode:** set `VERSLINE_RAG_RERANK_PROVIDER=local`. If `VERSLINE_RAG_RERANK_MODEL_PATH` (or `VERSLINE_RAG_RERANK_LOCAL_FILES_ONLY`) is set, Versline loads a local sentence-transformers CrossEncoder model from files; otherwise it uses an OpenAI-compatible endpoint (default `http://localhost:11434/v1`, placeholder API key `local` when empty).
-- **Intel CPU/iGPU reranker acceleration (optimum-intel):** set `VERSLINE_RAG_RERANK_PROVIDER=optimum-intel` and point `VERSLINE_RAG_RERANK_MODEL_PATH` to a pre-exported OpenVINO IR directory (contains `openvino_model.xml`). Uses `OVModelForSequenceClassification` directly (no inference-backend flag required). Set `VERSLINE_RAG_RERANK_DEVICE=CPU` or `GPU` for iGPU. On first run with a plain HF checkpoint the model is exported automatically (requires network access once).
-- **OpenVINO acceleration:** set `VERSLINE_RAG_EMBEDDING_INFERENCE_BACKEND=openvino` and/or `VERSLINE_RAG_RERANK_INFERENCE_BACKEND=openvino` to enable OpenVINO where the selected provider supports it (for local sentence-transformers embedding/rerank paths). The selected provider is preserved and is not auto-switched.
-- **Preflight in locked environments:** keep `VERSLINE_RAG_PREFLIGHT_ENABLED=true` and set `VERSLINE_RAG_PREFLIGHT_NETWORK=false` to validate config without outbound endpoint checks.
-
-### OpenVINO Troubleshooting
-
-- Install minimum runtime dependencies in your environment:
-    ```bash
-    pip install -U openvino 'optimum[openvino]' sentence-transformers numpy
-    ```
-- Use a local sentence-transformers path for predictable OpenVINO runs:
-    - `VERSLINE_RAG_EMBEDDING_PROVIDER=sentence-transformers`
-    - `VERSLINE_RAG_EMBEDDING_INFERENCE_BACKEND=openvino`
-    - `VERSLINE_RAG_RERANK_PROVIDER=local` or `sentence-transformers`
-    - `VERSLINE_RAG_RERANK_INFERENCE_BACKEND=openvino`
-    - `VERSLINE_RAG_OPENVINO_CACHE_DIR=/absolute/path/to/openvino_cache`
-- If you see backend or export errors, clear model cache and re-download/export once:
-    - remove the model cache directory used by `VERSLINE_RAG_EMBEDDING_CACHE_DIR` / `VERSLINE_RAG_RERANK_CACHE_DIR`
-    - rerun with network access one time, then switch back to local/offline mode
-- OpenVINO is a local inference runtime. It applies to sentence-transformers/local rerank paths and can also be used with FastEmbed (embedding and rerank) when ONNX providers are set to `OpenVINOExecutionProvider,CPUExecutionProvider`.
-- The `optimum-intel` provider uses `OVModelForFeatureExtraction` directly with mean-pooling. It operates independently of `embedding_inference_backend` and is best suited for Intel CPU/iGPU scenarios on pre-exported OpenVINO IR models. To export a model from HuggingFace:
-    ```bash
-    optimum-cli export openvino --model Qwen/Qwen3-Embedding-0.6B --task feature-extraction /models/Qwen3-Embedding-0.6B-OpenVINO
-    ```
-- To use `optimum-intel` for **reranking**, set `VERSLINE_RAG_RERANK_PROVIDER=optimum-intel`. Uses `OVModelForSequenceClassification` with sigmoid over the first logit. Export a cross-encoder model with:
-    ```bash
-    optimum-cli export openvino --model BAAI/bge-reranker-v2-m3 --task sequence-classification /models/bge-reranker-v2-m3-OpenVINO
-    ```
-- API-managed providers (`openai`, `cohere`, `jina`, `openrouter`, `avalai`) keep their own provider runtime.
-
-### RAG Key Options (CLI)
-
-| Group | Main flags |
-| :--- | :--- |
-| Chunking/Ingest | `--vector-size`, `--chunk-size`, `--chunk-overlap`, `--parent-child/--no-parent-child`, `--parent-chunk-size`, `--parent-chunk-overlap`, `--parent-child-fetch-k`, `--ingestion-batch-size`, `--log-every-batches`, `--resume`, `--force` |
-| Retrieval/Hybrid | `--top-k`, `--retrieve-fetch-k`, `--hybrid/--no-hybrid`, `--hybrid-dense-weight`, `--hybrid-lexical-weight` |
-| Dense backend | `--embedding-provider`, `--embedding-model`, `--embedding-model-path`, `--embedding-cache-dir`, `--embedding-local-files-only`, `--embedding-device`, `--embedding-use-fp16`, `--embedding-batch-size`, `--embedding-backend` |
-| Sparse backend | `--sparse-provider`, `--sparse-model`, `--sparse-model-path`, `--sparse-cache-dir`, `--sparse-local-files-only`, `--sparse-device`, `--sparse-use-fp16`, `--sparse-batch-size` |
-| Rerank | `--rerank/--no-rerank`, `--rerank-provider`, `--rerank-model`, `--rerank-api-key`, `--rerank-api-endpoint`, `--rerank-model-path`, `--rerank-cache-dir`, `--rerank-local-files-only`, `--rerank-device`, `--rerank-batch-size`, `--rerank-backend`, `--rerank-onnx-providers` |
-| Timeouts | `--embedding-timeout`, `--generation-timeout`, `--qdrant-timeout`, `--rerank-timeout`, `--web-search-timeout`, `--mcp-timeout` |
-| Rate limits | `--embedding-rpm`, `--embedding-tpm`, `--generation-rpm`, `--generation-tpm`, `--qdrant-rpm`, `--rerank-rpm`, `--rerank-tpm`, `--web-search-rpm` |
-| External context | `--mcp`, `--mcp-transport`, `--mcp-server-url`, `--mcp-server-command`, `--mcp-server-args`, `--web-search`, `--web-search-provider` |
-| Preflight | `--preflight/--no-preflight`, `--preflight-network/--no-preflight-network` |
-
-### RAG Ecosystem Comparison (Web Research Snapshot — 2026-04-02)
-
-The table below compares publicly available options that are close to Versline's RAG direction, based on official repository/docs sources.
-
-#### 1) Library-First Comparison (Features, Quality, Ease of Use)
-
-This quick matrix focuses specifically on **library usage** (not CLI), based on practical developer experience patterns and public project direction.
-
-| Project | Features | RAG Output Quality | Library Ease of Use | Best Fit |
-| :--- | :---: | :---: | :---: | :--- |
-| **Versline (this repo)** | High (focused) | Very Good | Very Good (for current scope) | Ready-to-use ingestion/ask flow with built-in hybrid, rerank, rate limits, MCP |
-| **LlamaIndex** | High | Very Good | Very Good | Fastest path for Python-first RAG apps with low boilerplate |
-| **Haystack** | Very High | Excellent (production pipelines) | Medium–High | Complex, composable, production-grade pipelines and orchestration |
-| **LangChain** | Very High (ecosystem) | Good–Very Good (depends on composition) | Medium | Flexible framework when you need broad integrations and custom chains |
-| **txtai** | Medium–High | Good | High | Lightweight library/API-first setups with simple deployment paths |
-
-#### 2) Operational Capabilities Matrix
-
-This matrix checks three practical production needs: request/token rate limiting (and their combination), token usage tracking, and proxy-readiness.
-
-| Project | Rate Limiting (Request + Token + Combination) | Token Tracker | Proxy Config Ready |
-| :--- | :---: | :---: | :---: |
-| **Versline (this repo)** | ✅ Native (RPM + TPM + combined) | ✅ Native | ✅ Native (per service) |
-| **LlamaIndex** | ✅ Native (`requests_per_minute` + `tokens_per_minute`) | ✅ (`TokenCountingHandler`) | ⚠️ Provider/client dependent |
-| **Haystack** | ⚠️ Primarily retry/fallback; no clear global native RPM+TPM combo | ✅ (`meta.usage` token usage fields) | ✅ (`http_client_kwargs`) |
-| **LangChain** | ⚠️ Native request limiter, but no native token-based combo limiter | ✅ (`UsageMetadataCallbackHandler` / callbacks) | ✅ (`openai_proxy` and client config) |
-| **txtai** | ❌ No clear native unified RPM/TPM limiter in core | ⚠️ Not a unified built-in token tracker in core | ⚠️ Mostly backend/kwargs dependent |
-
-Legend: ✅ supported natively, ⚠️ partial or backend-dependent, ❌ not clearly available as a native unified capability.
-
-*Proxy footnote:* In Versline, the ability to keep `qdrant` outside proxy routing while applying proxies to other services required additional customization due to practical limitations in `qdrant-client`; this behavior is implemented.
-
-#### 3) Ecosystem Coverage (CLI, Library, Ingest/Query, Service Mode)
-
-| Project | RAG CLI | Python Library | Ingest + Query Flow | Service/API Mode | Notes vs Versline |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **Versline (this repo)** | ✅ `versline rag ingest/ask` | ✅ (`versline.services.rag`) | ✅ built-in with resumable ingest, hybrid + rerank, rate limits, MCP | ⚠️ Not a standalone HTTP service yet (CLI-first) | Strong CLI UX + provider-agnostic settings + resumability out of the box |
-| **LlamaIndex** | ✅ `llamaindex-cli rag` ([source][cmp-llama-cli-readme], [source][cmp-llama-cli-cmd]) | ✅ core Python framework ([source][cmp-llama-readme]) | ✅ CLI and Python workflows both documented ([source][cmp-llama-rag-doc], [source][cmp-llama-workflow]) | ⚠️ Mostly via custom app code; CLI can scaffold create-llama path ([source][cmp-llama-rag-base]) | Closest "both CLI + library" alternative in this snapshot |
-| **txtai** | ⚠️ No single `txtai rag` command found in examined docs; uses API/server + config | ✅ (`Embeddings`, `RAG`) ([source][cmp-txtai-rag-quickstart]) | ✅ Python + YAML/API flows documented ([source][cmp-txtai-rag-md], [source][cmp-txtai-api]) | ✅ FastAPI endpoints include `/rag` and `/batchrag` ([source][cmp-txtai-rag-router]) | Strong API-first path; CLI interaction is mostly `uvicorn` + config |
-| **Haystack** | ⚠️ Core Haystack is Python-first; RAG CLI appears through **Hayhooks** deployment CLI ([source][cmp-hayhooks-cli]) | ✅ (`haystack-ai`) ([source][cmp-haystack-get-started]) | ✅ modular RAG pipelines in Python ([source][cmp-haystack-rag-pipeline]) | ✅ via Hayhooks serving/deploy endpoints ([source][cmp-hayhooks-overview]) | Very strong pipeline composition; less direct single-command local RAG than Versline CLI |
-| **LangChain** | ⚠️ No first-party end-user RAG CLI in examined LangChain core docs/repo excerpts | ✅ (`pip install langchain`) ([source][cmp-langchain-readme]) | ✅ retrieval/RAG patterns available in Python APIs/guides ([source][cmp-langchain-rag-guide]) | ⚠️ Not shown as built-in RAG service in examined core sources | Broad ecosystem/framework; usually requires composition with extra components |
-
-**Methodology note:** direct outbound HTTP from this environment was blocked, so this comparison uses official GitHub repository/documentation artifacts reachable via indexed repository queries.
-
-[cmp-llama-cli-readme]: https://github.com/run-llama/llama_index/tree/main/llama-index-cli/README.md
-[cmp-llama-cli-cmd]: https://github.com/run-llama/llama_index/tree/main/llama-index-cli/llama_index/cli/command_line.py
-[cmp-llama-readme]: https://github.com/run-llama/llama_index/tree/main/README.md
-[cmp-llama-rag-doc]: https://github.com/run-llama/llama_index/tree/main/docs/src/content/docs/framework/getting_started/starter_tools/rag_cli.md
-[cmp-llama-workflow]: https://github.com/run-llama/llama_index/tree/main/docs/examples/workflow/rag.ipynb
-[cmp-llama-rag-base]: https://github.com/run-llama/llama_index/tree/main/llama-index-cli/llama_index/cli/rag/base.py
-[cmp-txtai-rag-quickstart]: https://github.com/neuml/txtai/tree/main/examples/rag_quickstart.py
-[cmp-txtai-rag-md]: https://github.com/neuml/txtai/tree/main/docs/pipeline/llm/rag.md
-[cmp-txtai-api]: https://github.com/neuml/txtai/tree/main/docs/api/index.md
-[cmp-txtai-rag-router]: https://github.com/neuml/txtai/tree/main/src/python/txtai/api/routers/rag.py
-[cmp-haystack-get-started]: https://github.com/deepset-ai/haystack/tree/main/docs-website/docs/overview/get-started.mdx
-[cmp-haystack-rag-pipeline]: https://github.com/deepset-ai/haystack/tree/main/docs-website/docs/concepts/pipelines/creating-pipelines.mdx
-[cmp-hayhooks-overview]: https://github.com/deepset-ai/haystack/tree/main/docs-website/docs/development/hayhooks.mdx
-[cmp-hayhooks-cli]: https://github.com/deepset-ai/haystack/tree/main/docs-website/docs/development/hayhooks.mdx
-[cmp-langchain-readme]: https://github.com/langchain-ai/langchain/tree/main/README.md
-[cmp-langchain-rag-guide]: https://github.com/langchain-ai/langchain/tree/main/libs/langchain/langchain_classic/chains/question_answering/chain.py
-
----
-
 ### ⬇️ `download`
 Download a file from a URL using HTTP/Stream.
 
@@ -1102,52 +911,6 @@ coder = QualitativeCoder(
 outputs = coder.process_file("interview.md")
 print(outputs)  # generated files per format
 print(coder.last_parse_failures)
-```
-
-**4. RAG in Library Mode (Full Control):**
-```python
-from versline.services.rag import RAGPipeline
-from versline.config import settings
-
-settings.rag.web_search_enabled = True
-settings.rag.web_search_provider = "duckduckgo"
-
-pipeline = RAGPipeline(
-    collection_name="fiqh_docs",
-    embedding_model="text-embedding-3-small",
-    embedding_provider="openai",
-    embedding_api_key="YOUR_EMBEDDING_KEY",
-    qdrant_url="http://localhost:6333",
-    chunk_size=1200,
-    chunk_overlap=200,
-    ingestion_batch_size=32,
-    hybrid_enabled=True,
-    sparse_embedding_provider="flagembedding",  # fastembed | flagembedding
-    sparse_embedding_model="BAAI/bge-m3",
-    sparse_embedding_device="cpu",
-    sparse_embedding_use_fp16=False,
-    sparse_embedding_batch_size=8,
-    sparse_embedding_local_files_only=True,
-    sparse_embedding_model_path="/models/bge-m3",
-    embedding_timeout_seconds=90,
-    generation_timeout_seconds=180,
-    qdrant_timeout_seconds=30,
-    rerank_timeout_seconds=90,
-    preflight=True,
-    preflight_network=False,
-)
-
-# Ingest a directory
-pipeline.ingest_path("./data/docs", resume=True, force=False)
-
-# Ask with optional web context
-result = pipeline.generate(
-    query="خلاصه نکات اصلی چیست؟",
-    top_k=5,
-)
-
-print(result["answer"])
-print(result["metadata"].get("web_sources", []))
 ```
 
 **5. Markdown to Slide Deck (HTML/CSS/TypeScript):**

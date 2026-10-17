@@ -39,6 +39,13 @@ def transcribe_file(
     timestamp_model: Optional[str] = typer.Option(None, "--timestamp-model", help="Model to use for timestamp annotation (e.g. gpt-4o-transcribe)"),
     chunk_minutes: Optional[int] = typer.Option(None, "--chunk-minutes", help="Minutes per chunk for the primary transcription phase"),
     native_timestamps_only: bool = typer.Option(False, "--native-timestamps-only", help="Only use native STT API for timestamps; fail instead of falling back to chunk-based"),
+    # STT options (default to the LLM settings when omitted)
+    timestamp_provider: Optional[str] = typer.Option(None, "--timestamp-provider", help="STT provider (OpenAI, AvalAI, OpenRouter, OpenAICompatible). Defaults to LLM settings"),
+    timestamp_api_key: Optional[str] = typer.Option(None, "--timestamp-api-key", help="API key for the STT endpoint. Defaults to the LLM API key"),
+    timestamp_api_endpoint: Optional[str] = typer.Option(None, "--timestamp-api-endpoint", help="STT base URL (without /audio/transcriptions). Defaults to provider/LLM endpoint"),
+    timestamp_proxy: Optional[str] = typer.Option(None, "--timestamp-proxy", help="Proxy URL for STT requests. Defaults to the LLM proxy"),
+    timestamp_language: Optional[str] = typer.Option(None, "--timestamp-language", help="Language code for STT (e.g. fa, en). Default: fa"),
+    timestamp_timeout: Optional[int] = typer.Option(None, "--timestamp-timeout", help="HTTP timeout in seconds for timestamp (STT) requests"),
 ):
     """
     Transcribe a single file (or URL).
@@ -62,6 +69,18 @@ def transcribe_file(
         settings.llm.proxy = proxy
     if extra_body:
         apply_extra_body_option(extra_body)
+    if timestamp_provider:
+        settings.transcription.timestamp_provider = timestamp_provider
+    if timestamp_api_key:
+        settings.transcription.timestamp_api_key = timestamp_api_key
+    if timestamp_api_endpoint:
+        settings.transcription.timestamp_api_endpoint = timestamp_api_endpoint
+    if timestamp_proxy:
+        settings.transcription.timestamp_proxy = timestamp_proxy
+    if timestamp_language:
+        settings.transcription.timestamp_language = timestamp_language
+    if timestamp_timeout:
+        settings.transcription.timestamp_timeout_seconds = timestamp_timeout
         
     resolved_path = file_path
     temp_download = None
@@ -152,6 +171,13 @@ def transcribe_file(
             f.write(content)
             
         logger.success(f"Transcription saved to: {output_path}")
+
+        if isinstance(full_text, dict) and full_text.get("text"):
+            text_path = Path(output_path).with_suffix(".md")
+            if text_path == Path(output_path):
+                text_path = Path(output_path).with_name(f"{Path(output_path).stem}_full.md")
+            text_path.write_text(full_text["text"], encoding="utf-8")
+            logger.success(f"Full transcription text saved to: {text_path}")
 
         print_cost_report(transcriber.tracker, api_key=settings.llm.api_key)
         

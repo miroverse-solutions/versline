@@ -3,7 +3,7 @@ from typing import Any, Dict, Optional
 from pathlib import Path
 import os
 import warnings
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from dotenv import load_dotenv
 
@@ -23,9 +23,34 @@ class TranscriptionSettings(BaseSettings):
         default="timestamp_chunk_prompt.md",
         description="Prompt file used for timestamp chunk transcription",
     )
-    stt_timeout_seconds: int = Field(
+    timestamp_timeout_seconds: int = Field(
         default=120,
+        validation_alias=AliasChoices(
+            "VERSLINE_TRANSCRIPTION_TIMESTAMP_TIMEOUT_SECONDS",
+            "VERSLINE_TRANSCRIPTION_STT_TIMEOUT_SECONDS",
+            "timestamp_timeout_seconds",
+        ),
         description="HTTP timeout in seconds for /audio/transcriptions STT requests",
+    )
+    timestamp_provider: Optional[str] = Field(
+        default=None,
+        description="STT provider (OpenAI, AvalAI, OpenRouter, OpenAICompatible). Falls back to the LLM provider settings when empty",
+    )
+    timestamp_api_key: Optional[str] = Field(
+        default=None,
+        description="API key for the STT endpoint. Falls back to the LLM API key when empty",
+    )
+    timestamp_api_endpoint: Optional[str] = Field(
+        default=None,
+        description="Base URL of the STT endpoint (without /audio/transcriptions). Falls back to the provider default or LLM endpoint",
+    )
+    timestamp_proxy: Optional[str] = Field(
+        default=None,
+        description="Proxy URL for STT requests. Falls back to the LLM proxy when empty",
+    )
+    timestamp_language: Optional[str] = Field(
+        default="fa",
+        description="Language code sent to the STT endpoint (e.g. fa, en). Empty means auto-detect",
     )
 
     model_config = SettingsConfigDict(env_prefix='VERSLINE_TRANSCRIPTION_', env_file='.env', extra='ignore')

@@ -22,7 +22,7 @@ from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP(
     "versline",
-    instructions="Miroverse Toolkit — transcription, translation, summarization, Q&A, slides, RAG, and more.",
+    instructions="Miroverse Toolkit — transcription, translation, summarization, Q&A, slides, and more.",
 )
 
 # ---------------------------------------------------------------------------
