@@ -273,6 +273,36 @@ class AudioTranscriber:
             normalized.append({"start": start, "end": end, "text": text})
         return normalized
 
+    def _words_to_segments(self, words, max_gap: float = 0.8, max_len: float = 12.0):
+        """Group word-level timestamps (e.g. ElevenLabs Scribe) into sentence-like segments."""
+        segments = []
+        cur = None
+        for w in words or []:
+            if (w.get("type") or "word") != "word":
+                continue
+            try:
+                start = float(w.get("start"))
+                end = float(w.get("end"))
+            except Exception:
+                continue
+            token = str(w.get("word", "")).strip()
+            if not token:
+                continue
+            if cur and (start - cur["end"] > max_gap or end - cur["start"] > max_len):
+                segments.append(cur)
+                cur = None
+            if cur is None:
+                cur = {"start": start, "end": end, "text": token}
+            else:
+                cur["end"] = end
+                cur["text"] += " " + token
+            if token[-1] in ".!?؟…":
+                segments.append(cur)
+                cur = None
+        if cur:
+            segments.append(cur)
+        return segments
+
     def _srt_timestamp_to_seconds(self, value: str) -> float:
         value = value.strip().replace(",", ".")
         hh, mm, ss = value.split(":")
@@ -373,6 +403,8 @@ class AudioTranscriber:
                         if verbose_resp.status_code == 200:
                             data = verbose_resp.json()
                             segments = self._normalize_native_segments(data.get("segments"))
+                            if not segments:
+                                segments = self._words_to_segments(data.get("words"))
                             if segments:
                                 logger.info(
                                     f"✅ Native timestamps (verbose_json): {len(segments)} segments, duration={data.get('duration')}s"
@@ -609,7 +641,7 @@ class AudioTranscriber:
         ts_chunk_sec = 30
         ts_overlap = 3
         
-        use_stt = any(k in tm.lower() for k in ('whisper', 'transcribe', 'groq'))
+        use_stt = any(k in tm.lower() for k in ('whisper', 'transcribe', 'groq', 'scribe'))
         logger.info(f"⏱️ Timestamped: model={tm}, method={'STT' if use_stt else 'LLM'}")
         if progress_callback:
             progress_callback(0, 1, "⏱️ Timestamp annotation...")
