@@ -612,6 +612,8 @@ class AudioTranscriber:
         temp_dir = work_dir / "temp_chunks"
         progress_file = work_dir / "progress.json"
         
+        if reuse_only:
+            force = False
         if force:
             if progress_file.exists():
                 logger.warning("Force mode enabled: Deleting previous progress.")
@@ -640,6 +642,13 @@ class AudioTranscriber:
             )
         
         total_chunks = len(chunks)
+        if reuse_only:
+            if not transcriptions or last_index < total_chunks:
+                raise RuntimeError(
+                    f"--reuse-transcript: cached transcript is incomplete ({last_index}/{total_chunks} chunks) in {progress_file}"
+                )
+            logger.info(f"♻️ Reusing cached transcript ({total_chunks} chunks), skipping main transcription.")
+            return self.merge_transcriptions(transcriptions[:], overlap)
         if progress_callback:
             progress_callback(0, total_chunks, "Starting transcription...")
         
@@ -684,7 +693,57 @@ class AudioTranscriber:
         full_text = self.merge_transcriptions(final_text_blocks, overlap)
         return full_text
 
-    def process_file(self, file_path: str, chunk_length=900, overlap=180, progress_callback=None, force=False, timestamped: bool = False, timestamp_model: str | None = None, chunk_minutes: int | None = None, native_timestamps_only: bool = False):
+    def _native_timestamps_chunked(self, tm: str, file_path: str, ts_dir: Path, chunk_sec: int = 600, force: bool = False):
+        """Run the native STT timestamp API on fixed-length slices and stitch results with time offsets.
+
+        Uploading a multi-hundred-MB file in one request times out; slices stay small and each
+        result is cached in ts_dir so a failed run resumes where it stopped.
+        """
+        import json
+        import shutil
+        slices_dir = ts_dir / "native_slices"
+        cache_dir = ts_dir / "native_cache"
+        if force:
+            shutil.rmtree(slices_dir, ignore_errors=True)
+            shutil.rmtree(cache_dir, ignore_errors=True)
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        existing = sorted(slices_dir.glob("chunk_*.*")) if slices_dir.exists() else []
+        slices = [str(p) for p in existing] or media.split_audio_with_ffmpeg(file_path, chunk_sec, 0, str(slices_dir))
+        if not slices:
+            raise RuntimeError("Could not split audio for native timestamping")
+
+        segments, words, native_flags = [], [], []
+        language = None
+        for i, sp in enumerate(slices):
+            offset = i * chunk_sec
+            cache_file = cache_dir / f"{i:03d}.json"
+            if cache_file.exists():
+                logger.info(f"📂 [{i+1}/{len(slices)}] native timestamps cached")
+                res = json.loads(cache_file.read_text(encoding="utf-8"))
+            else:
+                logger.info(f"⏱ [{i+1}/{len(slices)}] native timestamps for {Path(sp).name} (offset {offset}s)")
+                res = self.transcribe_chunk_via_stt_api(tm, sp, max_retries=2, with_timestamps=True)
+                if not isinstance(res, dict) or not str(res.get("source", "")).startswith("api_native"):
+                    raise RuntimeError(f"Native timestamps unavailable for slice {i+1}/{len(slices)}")
+                cache_file.write_text(json.dumps(res, ensure_ascii=False), encoding="utf-8")
+            for sg in res["segments"]:
+                segments.append({**sg, "start": sg["start"] + offset, "end": sg["end"] + offset})
+            for w in res.get("words") or []:
+                words.append({**w, "start": float(w["start"]) + offset, "end": float(w["end"]) + offset})
+            native_flags.append(res.get("segments_native", True))
+            language = language or res.get("language")
+
+        return {
+            "text": " ".join(sg["text"] for sg in segments),
+            "segments": segments,
+            "words": words,
+            "duration": (media.get_audio_duration(file_path) or (segments[-1]["end"] if segments else None)),
+            "language": language,
+            "segments_native": all(native_flags),
+            "source": "api_native_verbose_json",
+        }
+
+    def process_file(self, file_path: str, chunk_length=900, overlap=180, progress_callback=None, force=False, timestamped: bool = False, timestamp_model: str | None = None, chunk_minutes: int | None = None, native_timestamps_only: bool = False, reuse_transcript: bool = False, force_timestamps: bool = False):
         """Transcribe audio file. If timestamped=True, also produce timestamp-aligned segments.
         
         Returns:
@@ -695,7 +754,7 @@ class AudioTranscriber:
         chunk-based fallback is skipped entirely and an error is raised on failure.
         """
         # --- Phase 1: Primary transcription with main model ---
-        full_text = self._process_file_internal(file_path, chunk_length, overlap, progress_callback, force)
+        full_text = self._process_file_internal(file_path, chunk_length, overlap, progress_callback, force, reuse_only=reuse_transcript)
         
         if not timestamped:
             return full_text
@@ -718,8 +777,8 @@ class AudioTranscriber:
         if use_stt:
             logger.info("🔍 Trying native timestamp API (verbose_json + timestamp_granularities)...")
             try:
-                native_result = self.transcribe_chunk_via_stt_api(
-                    tm, file_path, max_retries=1, with_timestamps=True
+                native_result = self._native_timestamps_chunked(
+                    tm, file_path, ts_dir, force=force or force_timestamps
                 )
                 source = str(native_result.get("source", "")) if isinstance(native_result, dict) else ""
                 if isinstance(native_result, dict) and source.startswith("api_native"):
@@ -828,7 +887,7 @@ class AudioTranscriber:
             progress_callback(1, 1, f"✅ Chunk-based timestamp: {len(segments)} segments")
         return result
 
-    def _process_file_internal(self, file_path, chunk_length, overlap, progress_callback, force):
+    def _process_file_internal(self, file_path, chunk_length, overlap, progress_callback, force, reuse_only=False):
         """Internal: the original process_file logic, returning plain text."""
         import shutil
         file_path = str(Path(file_path).resolve())

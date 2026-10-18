@@ -39,6 +39,7 @@ def transcribe_file(
     timestamp_model: Optional[str] = typer.Option(None, "--timestamp-model", help="Model to use for timestamp annotation (e.g. gpt-4o-transcribe)"),
     chunk_minutes: Optional[int] = typer.Option(None, "--chunk-minutes", help="Minutes per chunk for the primary transcription phase"),
     native_timestamps_only: bool = typer.Option(False, "--native-timestamps-only", help="Only use native STT API for timestamps; fail instead of falling back to chunk-based"),
+    reuse_transcript: bool = typer.Option(False, "--reuse-transcript", help="Skip the main transcription and reuse the cached transcript (work_dir/<name>/progress.json); only redo timestamping. --force then only resets timestamp caches"),
     # STT options (default to the LLM settings when omitted)
     timestamp_provider: Optional[str] = typer.Option(None, "--timestamp-provider", help="STT provider (OpenAI, AvalAI, OpenRouter, OpenAICompatible). Defaults to LLM settings"),
     timestamp_api_key: Optional[str] = typer.Option(None, "--timestamp-api-key", help="API key for the STT endpoint. Defaults to the LLM API key"),
@@ -155,6 +156,7 @@ def transcribe_file(
                 timestamp_model=timestamp_model,
                 chunk_minutes=chunk_minutes,
                 native_timestamps_only=native_timestamps_only,
+                reuse_transcript=reuse_transcript,
             )
         
         if output:
