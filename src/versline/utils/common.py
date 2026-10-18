@@ -126,3 +126,152 @@ def align_cheap_to_good_text(good_text: str, cheap_chunks: list[tuple[float, flo
         })
 
     return segments
+
+
+_PERSIAN_CHAR_MAP = str.maketrans({
+    "ي": "ی", "ك": "ک", "ۀ": "ه", "ة": "ه", "أ": "ا", "إ": "ا", "ٱ": "ا", "آ": "ا",
+    "۰": "0", "۱": "1", "۲": "2", "۳": "3", "۴": "4", "۵": "5", "۶": "6", "۷": "7", "۸": "8", "۹": "9",
+    "٠": "0", "١": "1", "٢": "2", "٣": "3", "٤": "4", "٥": "5", "٦": "6", "٧": "7", "٨": "8", "٩": "9",
+})
+_PERSIAN_STRIP = dict.fromkeys(map(ord, "‌‍‏‎ـًٌٍَُِّْ"), None)
+
+
+def _norm_token(token: str) -> str:
+    """Lowercase, unify Arabic/Persian letter variants and drop ZWNJ, diacritics and punctuation."""
+    token = token.translate(_PERSIAN_CHAR_MAP).translate(_PERSIAN_STRIP).lower()
+    return "".join(ch for ch in token if ch.isalnum())
+
+
+def _align_token_gap(a: list[str], b: list[str], min_ratio: float = 0.5) -> list[tuple[int, int]]:
+    """Needleman-Wunsch over a small gap using fuzzy character similarity. Returns (i, j) pairs."""
+    n, m = len(a), len(b)
+    if not n or not m or n * m > 4_000_000:
+        return []
+    gap = -0.5
+    score = [[0.0] * (m + 1) for _ in range(n + 1)]
+    back = [[0] * (m + 1) for _ in range(n + 1)]  # 1=diag, 2=up (skip a), 3=left (skip b)
+    for i in range(1, n + 1):
+        score[i][0], back[i][0] = i * gap, 2
+    for j in range(1, m + 1):
+        score[0][j], back[0][j] = j * gap, 3
+    for i in range(1, n + 1):
+        for j in range(1, m + 1):
+            best, move = score[i - 1][j] + gap, 2
+            if score[i][j - 1] + gap > best:
+                best, move = score[i][j - 1] + gap, 3
+            ratio = 1.0 if a[i - 1] == b[j - 1] else SequenceMatcher(None, a[i - 1], b[j - 1]).ratio()
+            if ratio >= min_ratio and score[i - 1][j - 1] + ratio * 2 - 1 >= best:
+                best, move = score[i - 1][j - 1] + ratio * 2 - 1, 1
+            score[i][j], back[i][j] = best, move
+    pairs, i, j = [], n, m
+    while i > 0 or j > 0:
+        move = back[i][j]
+        if move == 1:
+            pairs.append((i - 1, j - 1))
+            i, j = i - 1, j - 1
+        elif move == 2:
+            i -= 1
+        else:
+            j -= 1
+    pairs.reverse()
+    return pairs
+
+
+def align_words_to_good_text(
+    good_text: str,
+    words: list[dict],
+    total_duration: Optional[float] = None,
+    min_len: float = 2.5,
+    max_len: float = 14.0,
+) -> list[dict]:
+    """Split the good transcript into timed segments using word-level timestamps from an STT API.
+
+    The STT words (start/end/word) are matched to the good text's words (exact anchors first,
+    fuzzy DP inside the gaps), so the STT's own spelling/style never leaks into the output.
+    Unmatched words get interpolated times. The good text is cut only at word boundaries and
+    every character of it ends up in exactly one segment."""
+    import re
+
+    stt = []
+    for w in words or []:
+        try:
+            start, end = float(w["start"]), float(w["end"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        norm = _norm_token(str(w.get("word", "")))
+        if norm:
+            stt.append((norm, start, end))
+    spans = [(m.start(), m.end()) for m in re.finditer(r"\S+", good_text)]
+    if not stt or not spans:
+        return []
+
+    good_norm = [_norm_token(good_text[s:e]) for s, e in spans]
+    stt_norm = [t[0] for t in stt]
+
+    # Match good-word index -> stt-word index
+    match: dict[int, int] = {}
+    good_idx = [i for i, t in enumerate(good_norm) if t]
+    good_tokens = [good_norm[i] for i in good_idx]
+    blocks = [b for b in SequenceMatcher(None, good_tokens, stt_norm, autojunk=False).get_matching_blocks() if b.size >= 3]
+    prev_a = prev_b = 0
+    for block in blocks + [None]:
+        a_end, b_end = (block.a, block.b) if block else (len(good_tokens), len(stt_norm))
+        for ia, jb in _align_token_gap(good_tokens[prev_a:a_end], stt_norm[prev_b:b_end]):
+            match[good_idx[prev_a + ia]] = prev_b + jb
+        if block:
+            for k in range(block.size):
+                match[good_idx[block.a + k]] = block.b + k
+            prev_a, prev_b = block.a + block.size, block.b + block.size
+
+    # Per-word times: matched -> STT time, unmatched -> interpolate (weighted by length) between neighbours
+    n = len(spans)
+    audio_end = total_duration if total_duration else stt[-1][2]
+    starts = [0.0] * n
+    ends = [0.0] * n
+    known = [i for i in range(n) if i in match]
+    for i in known:
+        starts[i], ends[i] = stt[match[i]][1], stt[match[i]][2]
+    anchors = [(-1, 0.0)] + [(i, None) for i in known] + [(n, audio_end)]
+    for (left, _), (right, _) in zip(anchors, anchors[1:]):
+        gap_ids = list(range(left + 1, right))
+        if not gap_ids:
+            continue
+        t0 = ends[left] if left >= 0 else 0.0
+        t1 = starts[right] if right < n else audio_end
+        t1 = max(t1, t0)
+        weights = [max(1, len(good_text[spans[i][0]:spans[i][1]])) for i in gap_ids]
+        total_w = sum(weights)
+        cursor = t0
+        for i, w in zip(gap_ids, weights):
+            starts[i] = cursor
+            cursor += (t1 - t0) * w / total_w
+            ends[i] = cursor
+
+    # Cut into segments at sentence ends / paragraph breaks, never exceeding max_len
+    sentence_end = (".", "!", "?", "؟", "…", ":")
+    soft_end = (",", "،", "؛", ";")
+    segments = []
+    seg_first = 0
+    for i in range(n):
+        word = good_text[spans[i][0]:spans[i][1]]
+        dur = ends[i] - starts[seg_first]
+        last = i == n - 1
+        para_break = not last and "\n" in good_text[spans[i][1]:spans[i + 1][0]]
+        cut = last or para_break and dur >= min_len
+        if not cut and dur >= min_len:
+            stripped = word.rstrip("*_»\")]")
+            cut = stripped.endswith(sentence_end) or (dur >= max_len * 0.6 and stripped.endswith(soft_end))
+        if not cut and dur >= max_len:
+            cut = True
+        if cut:
+            seg_start = spans[seg_first][0] if segments else 0
+            seg_end = len(good_text) if last else spans[i][1]
+            text = good_text[seg_start:seg_end].strip()
+            if text:
+                segments.append({
+                    "start": round(starts[seg_first], 1),
+                    "end": round(max(ends[i], starts[seg_first]), 1),
+                    "text": text,
+                })
+            seg_first = i + 1
+    return segments

@@ -273,6 +273,11 @@ class AudioTranscriber:
             normalized.append({"start": start, "end": end, "text": text})
         return normalized
 
+    @staticmethod
+    def _is_degenerate_segments(segments, max_single_span: float = 60.0) -> bool:
+        """A single segment spanning a long stretch means the API ignored segmentation."""
+        return len(segments) == 1 and (segments[0]["end"] - segments[0]["start"]) > max_single_span
+
     def _words_to_segments(self, words, max_gap: float = 0.8, max_len: float = 12.0):
         """Group word-level timestamps (e.g. ElevenLabs Scribe) into sentence-like segments."""
         segments = []
@@ -376,6 +381,31 @@ class AudioTranscriber:
                 proxies={"http": proxy, "https": proxy} if proxy else None,
             )
 
+    def _post_stt_logged(self, label: str, url: str, api_key: str | None, audio_path: str, data_params: dict, timeout_seconds: int, proxy: str | None = None, net_attempts: int = 2):
+        """POST to the STT endpoint with timing logs; retries only on timeout/connection errors."""
+        import requests
+        size_mb = os.path.getsize(audio_path) / 1e6
+        shown = {k: v for k, v in data_params.items() if v is not None}
+        last_exc = None
+        for n in range(1, net_attempts + 1):
+            logger.info(
+                f"🌐 STT [{label}] attempt {n}/{net_attempts}: POST {url} file={Path(audio_path).name} "
+                f"({size_mb:.1f} MB) timeout={timeout_seconds}s proxy={'yes' if proxy else 'no'} params={shown}"
+            )
+            t0 = time.monotonic()
+            try:
+                resp = self._post_stt_request(url, api_key, audio_path, data_params, timeout_seconds, proxy=proxy)
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+                last_exc = e
+                logger.warning(f"🌐 STT [{label}] attempt {n} network error after {time.monotonic() - t0:.1f}s: {type(e).__name__}: {e}")
+                continue
+            logger.info(
+                f"🌐 STT [{label}] HTTP {resp.status_code} in {time.monotonic() - t0:.1f}s, "
+                f"content-type={resp.headers.get('content-type')}, body={len(getattr(resp, 'content', None) or resp.text or '')} bytes"
+            )
+            return resp
+        raise last_exc
+
     def transcribe_chunk_via_stt_api(self, model_name: str, audio_path: str, max_retries: int = 2, with_timestamps: bool = False):
         """Transcribe using the /v1/audio/transcriptions endpoint (STT API).
         If with_timestamps=True, tries native timestamps first, falls back to chunk-based."""
@@ -390,22 +420,41 @@ class AudioTranscriber:
             try:
                 if with_timestamps:
                     verbose_error = None
+                    # OpenRouter only supports json/verbose_json, so srt can't rescue a failed verbose_json.
+                    no_srt = "openrouter.ai" in url
                     try:
                         verbose_params = {
                             "model": model_name,
                             "language": timestamp_language,
                             "response_format": "verbose_json",
-                            "timestamp_granularities[]": "segment",
+                            "timestamp_granularities[]": ["word", "segment"],
                         }
-                        verbose_resp = self._post_stt_request(
-                            url, api_key, audio_path, verbose_params, timeout_seconds, proxy=timestamp_proxy
+                        verbose_resp = self._post_stt_logged(
+                            "verbose_json", url, api_key, audio_path, verbose_params, timeout_seconds,
+                            proxy=timestamp_proxy, net_attempts=2 if no_srt else 1,
                         )
                         if verbose_resp.status_code == 200:
                             data = verbose_resp.json()
+                            logger.info(
+                                f"📋 verbose_json keys={sorted(data.keys())} raw_segments={len(data.get('segments') or [])} "
+                                f"raw_words={len(data.get('words') or [])} duration={data.get('duration')} language={data.get('language')}"
+                            )
                             segments = self._normalize_native_segments(data.get("segments"))
-                            if not segments:
-                                segments = self._words_to_segments(data.get("words"))
-                            if segments:
+                            stt_words = [
+                                w for w in (data.get("words") or [])
+                                if isinstance(w, dict) and (w.get("type") or "word") == "word"
+                            ]
+                            # True when the model itself segmented the audio (not rebuilt from words).
+                            segments_native = bool(segments) and not self._is_degenerate_segments(segments)
+                            if not segments_native:
+                                # Some providers (e.g. OpenRouter/ElevenLabs Scribe) return one
+                                # giant segment but real word-level timestamps.
+                                word_segments = self._words_to_segments(data.get("words"))
+                                if word_segments:
+                                    segments = word_segments
+                            if segments and self._is_degenerate_segments(segments):
+                                logger.info("⚠️ verbose_json returned a single long segment (no real segmentation), trying srt fallback")
+                            elif segments:
                                 logger.info(
                                     f"✅ Native timestamps (verbose_json): {len(segments)} segments, duration={data.get('duration')}s"
                                 )
@@ -414,15 +463,24 @@ class AudioTranscriber:
                                     "segments": segments,
                                     "duration": data.get("duration"),
                                     "language": data.get("language"),
+                                    "words": stt_words,
+                                    "segments_native": segments_native,
                                     "source": "api_native_verbose_json",
                                 }
-                            logger.info("⚠️ verbose_json returned no usable segments, trying srt fallback")
+                            else:
+                                logger.info("⚠️ verbose_json returned no usable segments, trying srt fallback")
                         else:
                             verbose_error = RuntimeError(
                                 f"verbose_json HTTP {verbose_resp.status_code}: {verbose_resp.text[:200]}"
                             )
                             logger.warning(f"{verbose_error}; trying srt fallback")
                     except Exception as e:
+                        import requests
+                        if no_srt and isinstance(e, (requests.exceptions.Timeout, requests.exceptions.ConnectionError)):
+                            raise RuntimeError(
+                                f"verbose_json failed (timeout={timeout_seconds}s; consider raising "
+                                f"VERSLINE_TRANSCRIPTION_TIMESTAMP_TIMEOUT_SECONDS): {type(e).__name__}: {e}"
+                            ) from e
                         verbose_error = e
                         logger.warning(f"verbose_json request failed: {e}; trying srt fallback")
 
@@ -432,8 +490,8 @@ class AudioTranscriber:
                         "response_format": "srt",
                     }
                     try:
-                        srt_resp = self._post_stt_request(
-                            url, api_key, audio_path, srt_params, timeout_seconds, proxy=timestamp_proxy
+                        srt_resp = self._post_stt_logged(
+                            "srt", url, api_key, audio_path, srt_params, timeout_seconds, proxy=timestamp_proxy
                         )
                     except Exception as srt_error:
                         if verbose_error is not None:
@@ -443,9 +501,15 @@ class AudioTranscriber:
                         raise
 
                     if srt_resp.status_code != 200:
-                        raise RuntimeError(f"srt HTTP {srt_resp.status_code}: {srt_resp.text[:200]}")
+                        msg = f"srt HTTP {srt_resp.status_code}: {srt_resp.text[:200]}"
+                        if verbose_error is not None:
+                            msg = f"verbose_json failed: {verbose_error}; {msg}"
+                        raise RuntimeError(msg)
 
                     srt_segments = self._parse_srt_segments(srt_resp.text)
+                    if srt_segments and self._is_degenerate_segments(srt_segments):
+                        logger.info("⚠️ srt returned a single long segment (no real segmentation)")
+                        return {"text": " ".join(seg["text"] for seg in srt_segments).strip(), "segments": None, "source": "api_text_only"}
                     if srt_segments:
                         logger.info(f"✅ Native timestamps (srt): {len(srt_segments)} segments")
                         return {
@@ -641,12 +705,12 @@ class AudioTranscriber:
         ts_chunk_sec = 30
         ts_overlap = 3
         
-        use_stt = any(k in tm.lower() for k in ('whisper', 'transcribe', 'groq', 'scribe'))
+        use_stt = any(k in tm.lower() for k in ('whisper', 'transcribe', 'groq', 'scribe', 'asr'))
         logger.info(f"⏱️ Timestamped: model={tm}, method={'STT' if use_stt else 'LLM'}")
         if progress_callback:
             progress_callback(0, 1, "⏱️ Timestamp annotation...")
         
-        from versline.utils.common import align_cheap_to_good_text
+        from versline.utils.common import align_cheap_to_good_text, align_words_to_good_text
         ts_dir = Path("work_dir") / Path(file_path).stem / "timestamp_chunks"
         ts_dir.mkdir(parents=True, exist_ok=True)
         
@@ -663,8 +727,29 @@ class AudioTranscriber:
                     api_segments = native_result["segments"]
                     logger.info(f"✅ Using native segments: {len(api_segments)} segments")
                     # Align good text with native segments
-                    api_chunks = [(s["start"], s["end"], s["text"]) for s in api_segments]
-                    segments = align_cheap_to_good_text(full_text, api_chunks)
+                    # Segments from the model itself take priority; word-level alignment is used
+                    # when the model returned no real segments (segments rebuilt from words).
+                    def _align_by_segments():
+                        api_chunks = [(s["start"], s["end"], s["text"]) for s in api_segments]
+                        return align_cheap_to_good_text(full_text, api_chunks)
+
+                    def _align_by_words():
+                        if not native_result.get("words"):
+                            return []
+                        return align_words_to_good_text(
+                            full_text, native_result["words"], total_duration=native_result.get("duration")
+                        )
+
+                    if native_result.get("segments_native", True):
+                        order = [("segments", _align_by_segments), ("words", _align_by_words)]
+                    else:
+                        order = [("words", _align_by_words), ("segments", _align_by_segments)]
+                    segments = []
+                    for name, align in order:
+                        segments = align()
+                        if segments:
+                            logger.info(f"🧩 Aligned good text using model {name}: {len(segments)} segments")
+                            break
                     result = {
                         "text": full_text,
                         "segments": segments,

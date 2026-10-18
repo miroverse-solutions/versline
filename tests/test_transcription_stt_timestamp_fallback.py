@@ -47,7 +47,7 @@ class TestSttTimestampFallback(unittest.TestCase):
 
         calls = []
 
-        def fake_post(url, headers, files, data, timeout):
+        def fake_post(url, headers, files, data, timeout, proxies=None):
             calls.append({"data": dict(data), "timeout": timeout, "url": url})
             if data.get("response_format") == "verbose_json":
                 raise requests.exceptions.ReadTimeout("timed out")
@@ -75,7 +75,7 @@ class TestSttTimestampFallback(unittest.TestCase):
     def test_uses_verbose_json_segments_when_available(self):
         calls = []
 
-        def fake_post(url, headers, files, data, timeout):
+        def fake_post(url, headers, files, data, timeout, proxies=None):
             calls.append(dict(data))
             return _FakeResponse(
                 status_code=200,

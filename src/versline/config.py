@@ -148,6 +148,7 @@ def reload_settings(env_file: Optional[Path] = None, *, override_env: bool = Tru
 
     refreshed_settings = Settings()
     settings.llm = refreshed_settings.llm
+    settings.transcription = refreshed_settings.transcription
     settings.ffmpeg = refreshed_settings.ffmpeg
     settings.resource = refreshed_settings.resource
     settings.slides = refreshed_settings.slides
