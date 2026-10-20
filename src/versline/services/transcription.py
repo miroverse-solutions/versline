@@ -771,7 +771,7 @@ class AudioTranscriber:
             "source": "api_native_verbose_json",
         }
 
-    def process_file(self, file_path: str, chunk_length=900, overlap=180, progress_callback=None, force=False, timestamped: bool = False, timestamp_model: str | None = None, chunk_minutes: int | None = None, native_timestamps_only: bool = False, reuse_transcript: bool = False, force_timestamps: bool = False):
+    def process_file(self, file_path: str, chunk_length=900, overlap=180, progress_callback=None, force=False, timestamped: bool = False, timestamp_model: str | None = None, chunk_minutes: int | None = None, native_timestamps_only: bool = False, reuse_transcript: bool = False, force_timestamps: bool = False, skip_blocked: bool = False):
         """Transcribe audio file. If timestamped=True, also produce timestamp-aligned segments.
         
         Returns:
@@ -782,7 +782,7 @@ class AudioTranscriber:
         chunk-based fallback is skipped entirely and an error is raised on failure.
         """
         # --- Phase 1: Primary transcription with main model ---
-        full_text = self._process_file_internal(file_path, chunk_length, overlap, progress_callback, force, reuse_only=reuse_transcript)
+        full_text = self._process_file_internal(file_path, chunk_length, overlap, progress_callback, force, reuse_only=reuse_transcript, skip_blocked=skip_blocked)
         
         if not timestamped:
             return full_text
@@ -915,7 +915,7 @@ class AudioTranscriber:
             progress_callback(1, 1, f"✅ Chunk-based timestamp: {len(segments)} segments")
         return result
 
-    def _process_file_internal(self, file_path, chunk_length, overlap, progress_callback, force, reuse_only=False):
+    def _process_file_internal(self, file_path, chunk_length, overlap, progress_callback, force, reuse_only=False, skip_blocked=False):
         """Internal: the original process_file logic, returning plain text."""
         import shutil
         file_path = str(Path(file_path).resolve())
@@ -976,7 +976,13 @@ class AudioTranscriber:
             )
             
             model = settings.llm.model
-            text = self.transcribe_chunk_with_retry(model, chunk_path, current_prompt)
+            try:
+                text = self.transcribe_chunk_with_retry(model, chunk_path, current_prompt)
+            except ContentBlockedError as e:
+                if not skip_blocked:
+                    raise
+                logger.warning(f"⏭ [{i+1}/{total_chunks}] {chunk_name} skipped (--skip-blocked): {e}")
+                text = f"[⚠️ chunk {i+1}/{total_chunks} skipped: blocked by provider content policy]"
             
             new_speakers = self.extract_speaker_samples(text)
             speaker_samples.update(new_speakers)

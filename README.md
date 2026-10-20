@@ -246,6 +246,7 @@ versline transcribe [OPTIONS] FILE_PATH
 | `--prompt-file` | | Path to a custom system prompt file (markdown). | `None` |
 | `--json` | `-j` | Output in JSON format (schema-based editor/diarization). | `False` |
 | `--force` | `-f` | Force re-transcription (ignore cache/progress). | `False` |
+| `--skip-blocked` | | Skip chunks the provider blocks for content-policy reasons (e.g. Gemini `PROHIBITED_CONTENT`) instead of aborting. A `[⚠️ chunk N/M skipped: ...]` placeholder is left in the output, and the chunk is marked done in the progress cache. | `False` |
 | `--note` | | Additional instruction appended to the prompt (inline string). | `None` |
 | `--note-file` | | Path to a `.md` or `.txt` file whose content is appended to the prompt. | `None` |
 | `--timestamped` | | Enable timestamp-aligned segments (dual strategy: native API → chunk-based). | `False` |
