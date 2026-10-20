@@ -14,6 +14,10 @@ from versline.core.prompts import load_prompt
 from versline.utils.common import find_best_text_overlap_point
 from versline.services.pricing import TokenTracker
 
+
+class ContentBlockedError(RuntimeError):
+    """Provider refused the content (policy block); retries are pointless."""
+
 class AudioTranscriber:
     def __init__(self, user_note: str | None = None):
         self.tracker = TokenTracker()
@@ -208,6 +212,12 @@ class AudioTranscriber:
                 if result and result.strip():
                     return result
                 raise RuntimeError("Empty transcription result (model returned blank response)")
+            except ContentBlockedError as e:
+                logger.error(
+                    f"[{chunk_name}] {e}. Try a different model/provider for this file "
+                    f"(e.g. a non-Gemini model); progress up to the previous chunk is saved."
+                )
+                raise
             except Exception as e:
                 endpoint_hint = getattr(settings.llm, "api_endpoint", None) or "(default)"
                 if attempt < max_retries - 1:
@@ -598,7 +608,25 @@ class AudioTranscriber:
             if completion.usage:
                 track_openai_usage(self.tracker, completion.usage)
 
-            return completion.choices[0].message.content
+            choices = getattr(completion, "choices", None)
+            if not choices:
+                # OpenRouter may return HTTP 200 with an error payload (e.g. upstream
+                # failure / flex-tier capacity) and no `choices`.
+                err = getattr(completion, "error", None)
+                if err is None:
+                    err = (getattr(completion, "model_extra", None) or {}).get("error")
+                err_text = str(err or completion)
+                if "PROHIBITED_CONTENT" in err_text or "content_policy_violation" in err_text:
+                    raise ContentBlockedError(
+                        f"Request blocked by provider content policy (retrying will not help): {err_text}"
+                    )
+                raise RuntimeError(f"Provider returned no choices: {err_text}")
+            content = choices[0].message.content
+            if content is None:
+                raise RuntimeError(
+                    f"Provider returned empty content (finish_reason={choices[0].finish_reason})"
+                )
+            return content
         except Exception as e:
             endpoint = getattr(client, "base_url", "unknown")
             logger.error(f"API call failed — {type(e).__name__}: {e} (endpoint={endpoint}, model={model_name})")
