@@ -1,3 +1,4 @@
+import os
 import unittest
 from unittest.mock import patch
 
@@ -39,7 +40,9 @@ class TestDocumentProcessorPptSupport(unittest.TestCase):
             slides_per_batch=5,
         )
         self.assertEqual(chunks, [{"text": "slide content", "page": "Batch 1"}])
-        rmtree_mock.assert_called_once_with("/tmp/versline_ppt_convert_x", ignore_errors=True)
+        rmtree_mock.assert_called_once_with(
+            os.path.dirname("/tmp/versline_ppt_convert_x/legacy.pptx"), ignore_errors=True
+        )
 
 
 class TestPyMuPDFImport(unittest.TestCase):

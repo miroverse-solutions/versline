@@ -42,14 +42,14 @@ class TestApplyCpuLimit(unittest.TestCase):
     def test_zero_skips_affinity(self):
         from versline.core.resources import _apply_cpu_limit
 
-        with patch("os.sched_setaffinity") as mock_aff:
+        with patch("os.sched_setaffinity", create=True) as mock_aff:
             _apply_cpu_limit(0)
             mock_aff.assert_not_called()
 
     def test_negative_skips_affinity(self):
         from versline.core.resources import _apply_cpu_limit
 
-        with patch("os.sched_setaffinity") as mock_aff:
+        with patch("os.sched_setaffinity", create=True) as mock_aff:
             _apply_cpu_limit(-1)
             mock_aff.assert_not_called()
 
@@ -58,7 +58,7 @@ class TestApplyCpuLimit(unittest.TestCase):
 
         with (
             patch("os.cpu_count", return_value=8),
-            patch("os.sched_setaffinity") as mock_aff,
+            patch("os.sched_setaffinity", create=True) as mock_aff,
         ):
             _apply_cpu_limit(4)
             mock_aff.assert_called_once_with(0, {0, 1, 2, 3})
@@ -69,7 +69,7 @@ class TestApplyCpuLimit(unittest.TestCase):
 
         with (
             patch("os.cpu_count", return_value=2),
-            patch("os.sched_setaffinity") as mock_aff,
+            patch("os.sched_setaffinity", create=True) as mock_aff,
         ):
             _apply_cpu_limit(16)
             mock_aff.assert_called_once_with(0, {0, 1})
@@ -90,7 +90,7 @@ class TestApplyCpuLimit(unittest.TestCase):
 
         with (
             patch("os.cpu_count", return_value=4),
-            patch("os.sched_setaffinity", side_effect=PermissionError),
+            patch("os.sched_setaffinity", side_effect=PermissionError, create=True),
         ):
             # Must not propagate
             _apply_cpu_limit(2)
@@ -111,6 +111,7 @@ class TestCreateIsolatedCgroup(unittest.TestCase):
         with patch("versline.core.resources._read_cgroup_path", return_value=None):
             self.assertFalse(_try_create_isolated_cgroup(4 * 1024 ** 3))
 
+    @unittest.skipUnless(sys.platform == "linux", "cgroup paths are POSIX-only")
     def test_creates_child_cgroup_moves_pid_sets_memory_max(self):
         from versline.core.resources import _try_create_isolated_cgroup
 

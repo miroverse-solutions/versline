@@ -1,4 +1,5 @@
 import os
+import os
 import tempfile
 import unittest
 from types import SimpleNamespace
@@ -51,13 +52,14 @@ class TestTranscriptionProviderResolution(unittest.TestCase):
         settings.llm.avalai_provider = None
 
         fake_client = _FakeClient()
-        with tempfile.NamedTemporaryFile(suffix=".wav") as tmp:
-            tmp.write(b"audio-bytes")
-            tmp.flush()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            audio_path = os.path.join(tmp_dir, "chunk.wav")
+            with open(audio_path, "wb") as f:
+                f.write(b"audio-bytes")
             transcriber.transcribe_audio_chunk_by_openaicompatible(
                 client=fake_client,
                 model_name="gemini-3-flash-preview",
-                audio_path=tmp.name,
+                audio_path=audio_path,
                 prompt="prompt",
                 provider="avalai",
             )
