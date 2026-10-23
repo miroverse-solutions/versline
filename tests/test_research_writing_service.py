@@ -55,6 +55,7 @@ class TestResearchWritingService(unittest.TestCase):
         prompt_map = {
             "research_findings_colaizzi_outline_prompt.md": "OUTLINE::{research_context_json}::{language_instruction}",
             "research_findings_colaizzi_full_prompt.md": "FULL::{research_context_json}::{approved_outline}::{language_instruction}",
+            "research_findings_colaizzi_full_section_prompt.md": "SECTION::{research_context_json}::{approved_outline}::{section_outline}::{previous_sections_note}::{language_instruction}",
             "research_findings_revision_prompt.md": "REVISION::{revision_instructions}",
         }
         mock_load_prompt.side_effect = lambda filename: prompt_map[filename]
@@ -87,6 +88,7 @@ class TestResearchWritingService(unittest.TestCase):
         prompt_map = {
             "research_findings_colaizzi_outline_prompt.md": "OUTLINE::{research_context_json}::{language_instruction}",
             "research_findings_colaizzi_full_prompt.md": "FULL::{research_context_json}::{approved_outline}::{language_instruction}",
+            "research_findings_colaizzi_full_section_prompt.md": "SECTION::{research_context_json}::{approved_outline}::{section_outline}::{previous_sections_note}::{language_instruction}",
             "research_findings_revision_prompt.md": "REVISION::{revision_instructions}",
         }
         mock_load_prompt.side_effect = lambda filename: prompt_map[filename]
@@ -131,6 +133,7 @@ class TestResearchWritingService(unittest.TestCase):
         prompt_map = {
             "research_findings_colaizzi_outline_prompt.md": "OUTLINE::{research_context_json}::{language_instruction}",
             "research_findings_colaizzi_full_prompt.md": "FULL::{research_context_json}::{approved_outline}::{language_instruction}",
+            "research_findings_colaizzi_full_section_prompt.md": "SECTION::{research_context_json}::{approved_outline}::{section_outline}::{previous_sections_note}::{language_instruction}",
             "research_findings_revision_prompt.md": "REVISION::{revision_instructions}",
         }
         mock_load_prompt.side_effect = lambda filename: prompt_map[filename]
@@ -171,6 +174,7 @@ class TestResearchWritingService(unittest.TestCase):
         prompt_map = {
             "research_findings_colaizzi_outline_prompt.md": "OUTLINE::{research_context_json}::{language_instruction}",
             "research_findings_colaizzi_full_prompt.md": "FULL::{research_context_json}::{approved_outline}::{language_instruction}",
+            "research_findings_colaizzi_full_section_prompt.md": "SECTION::{research_context_json}::{approved_outline}::{section_outline}::{previous_sections_note}::{language_instruction}",
             "research_findings_revision_prompt.md": "REVISION::{revision_instructions}",
         }
         mock_load_prompt.side_effect = lambda filename: prompt_map[filename]
