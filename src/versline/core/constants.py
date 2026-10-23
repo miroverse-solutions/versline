@@ -9,7 +9,7 @@ DEFAULT_WORDS_PER_BATCH = 2000
 DEFAULT_MODELS = {
     AIProvider.OPENAI: "gpt-4o",
     AIProvider.GEMINI: "gemini-1.5-pro",
-    AIProvider.OPENROUTER: "openai/gpt-4o",
+    AIProvider.OPENROUTER: "~google/gemini-flash-latest",
     AIProvider.AVALAI: "gpt-4o-mini",
     AIProvider.CUSTOM: "gpt-4o",
 }

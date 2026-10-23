@@ -18,7 +18,7 @@ PROVIDERS = ["Google", "OpenAI", "OpenRouter", "AvalAI", "OpenAICompatible"]
 DEFAULT_MODELS = {
     "Google": "gemini-2.0-flash",
     "OpenAI": "gpt-4o-mini",
-    "OpenRouter": "google/gemini-2.0-flash-001",
+    "OpenRouter": "~google/gemini-flash-latest",
     "AvalAI": "gemini-2.0-flash",
     "OpenAICompatible": "",
 }
