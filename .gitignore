@@ -14,3 +14,5 @@ schfiqh_mds/
 qt.py
 #for quick testing, not part of the main codebase
 
+dist-bin/
+build-bin/

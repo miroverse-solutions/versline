@@ -4,27 +4,26 @@ $ErrorActionPreference = "Stop"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $repo = "miroverse-solutions/versline"
 
-if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
-    Write-Host "Installing uv (Python tool manager)..."
-    # uv's installer calls `exit`, which would close this window if run in-process. Run it in a child PowerShell.
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://astral.sh/uv/install.ps1 | iex"
-    $env:Path = "$env:USERPROFILE\.local\bin;$env:USERPROFILE\.cargo\bin;$env:Path"
-    if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
-        throw "uv was installed but was not found on PATH. Open a new PowerShell window and run this command again."
-    }
-}
-
 Write-Host "Finding the latest Versline release..."
 $release = Invoke-RestMethod "https://api.github.com/repos/$repo/releases/latest" -Headers @{ "User-Agent" = "versline-installer" }
-$asset = $release.assets | Where-Object { $_.name -like "*.whl" } | Select-Object -First 1
-if (-not $asset) {
-    throw "No published release with a .whl file was found at https://github.com/$repo/releases"
+$zip = $release.assets | Where-Object { $_.name -eq "versline-windows-x64.zip" } | Select-Object -First 1
+if (-not $zip) {
+    throw "No versline-windows-x64.zip was found in the latest release at https://github.com/$repo/releases"
 }
 
-Write-Host "Installing Versline $($release.tag_name)..."
-uv tool install --force --python 3.12 $asset.browser_download_url
-if ($LASTEXITCODE -ne 0) { throw "Installation failed (uv exit code $LASTEXITCODE)." }
-uv tool update-shell | Out-Null
+# Self-contained build: no Python, uv or PyPI access needed.
+$dir = Join-Path $env:LOCALAPPDATA "Versline"
+$tmp = Join-Path $env:TEMP "versline-windows-x64.zip"
+Write-Host "Downloading Versline $($release.tag_name)..."
+Invoke-WebRequest $zip.browser_download_url -OutFile $tmp -UseBasicParsing
+if (Test-Path $dir) { Remove-Item $dir -Recurse -Force }
+Expand-Archive $tmp -DestinationPath $dir -Force
+Remove-Item $tmp -Force
+
+$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+if (($userPath -split ";") -notcontains $dir) {
+    [Environment]::SetEnvironmentVariable("Path", "$userPath;$dir".TrimStart(";"), "User")
+}
 
 Write-Host ""
 Write-Host "Done. Close this window, open a NEW terminal, then run:  versline init"
