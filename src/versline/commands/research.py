@@ -125,7 +125,7 @@ def _resolve_output_path(
         return base.with_suffix(".md")
 
     stem = input_json.stem if input_json else "research"
-    return Path("output") / f"{stem}_{section}_{stage}.md"
+    return Path(settings.output_directory) / f"{stem}_{section}_{stage}.md"
 
 
 def _revision_history_path(reference_path: Path) -> Path:

@@ -37,7 +37,7 @@ _VERSLINE_PYTHON = sys.executable
 def _versline_subprocess(*args: str, timeout: int = 600) -> str:
     """Run versline CLI as a subprocess and return captured output."""
     env = os.environ.copy()
-    env.setdefault("PYTHONPATH", f"{_PROJECT_ROOT / 'src'}:{env.get('PYTHONPATH', '')}")
+    env.setdefault("PYTHONPATH", f"{_PROJECT_ROOT / 'src'}{os.pathsep}{env.get('PYTHONPATH', '')}")
 
     # Only add PYTHONPATH if versline isn't already installed
     try:

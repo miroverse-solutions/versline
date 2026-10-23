@@ -5,7 +5,15 @@ from pathlib import Path
 from typing import Optional
 from versline.config import settings, reload_settings
 from versline.commands._common import EXTRA_BODY_HELP, apply_extra_body_option
-from versline.commands import transcribe, translate, qude, qualcode, slides, summarize, research
+from versline import __version__
+from versline.commands import transcribe, translate, qude, qualcode, slides, summarize, research, setup
+
+# Windows consoles default to a legacy code page; make output UTF-8 safe (Persian text, emoji).
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 
 app = typer.Typer(
@@ -24,8 +32,21 @@ app.add_typer(slides.app, name="slides", help="[cyan]Generate immersive HTML/TS 
 app.add_typer(summarize.app, name="summarize", help="[cyan]Summarize files[/cyan] (outline, detailed, or slides mode).")
 app.add_typer(research.app, name="research", help="[cyan]Write research sections[/cyan] with a staged outline-to-full pipeline.")
 
+app.command("init", help="[cyan]First-time setup[/cyan]: choose a provider and save your API key.")(setup.init_command)
+app.command("config", help="[cyan]Show saved settings[/cyan] (API keys are masked).")(setup.config_command)
+app.command("update", help="[cyan]Update Versline[/cyan] to the latest version.")(setup.update_command)
+
+
+def _version_callback(value: bool):
+    if value:
+        typer.echo(f"versline {__version__}")
+        raise typer.Exit()
+
+
 @app.callback()
 def main(
+    ctx: typer.Context,
+    version: bool = typer.Option(False, "--version", callback=_version_callback, is_eager=True, help="Show the version and exit"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging"),
     env_file: Optional[Path] = typer.Option(
         None,
@@ -56,6 +77,8 @@ def main(
         apply_extra_body_option(extra_body)
 
     configure_logging(verbose)
+    if ctx.invoked_subcommand not in ("update", "init", "config"):
+        setup.maybe_notify_update()
 
 def configure_logging(verbose: bool):
     logger.remove()

@@ -1,6 +1,34 @@
 # Versline
 **Advanced Toolkit for Transcription, Translation, and Media Processing**
 
+## نصب (برای کاربران)
+
+**ویندوز** — PowerShell را باز کنید و این یک خط را اجرا کنید:
+
+```powershell
+irm https://raw.githubusercontent.com/miroverse-solutions/versline/main/install.ps1 | iex
+```
+
+**مک / لینوکس:**
+
+```sh
+curl -LsSf https://raw.githubusercontent.com/miroverse-solutions/versline/main/install.sh | sh
+```
+
+سپس ترمینال را ببندید، یک ترمینال **جدید** باز کنید و اجرا کنید:
+
+```sh
+versline init              # انتخاب سرویس و ذخیره‌ی کلید API (فقط یک بار)
+versline transcribe فایل.mp3
+```
+
+- به‌روزرسانی: `versline update`
+- نمایش نسخه: `versline --version`
+- تنظیمات ذخیره‌شده: `versline config`
+- حذف: `uv tool uninstall versline`
+
+ffmpeg به‌صورت خودکار تأمین می‌شود. خروجی‌ها در پوشه‌ی `output` کنار محل اجرا ذخیره می‌شوند. برای نمایش درست متن فارسی، فایل‌های خروجی را در یک ویرایشگر باز کنید (ترمینال ویندوز حروف فارسی را درست نمایش نمی‌دهد).
+
 ## 🚀 Installation
 
 ### 📦 Local Installation (user)

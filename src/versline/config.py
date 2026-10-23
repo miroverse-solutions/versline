@@ -7,6 +7,8 @@ from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from dotenv import load_dotenv
 
+from versline.userconfig import user_env_path
+
 
 ENV_FILE_ENV_VAR = "VERSLINE_ENV_FILE"
 
@@ -131,9 +133,18 @@ def _load_env_file(env_path: Path, *, override: bool, raise_if_missing: bool) ->
     load_dotenv(dotenv_path=env_path, override=override)
 
 
+def _load_default_env_files() -> None:
+    """Lowest-precedence sources: the working-directory .env, then the per-user config.env."""
+    load_dotenv(dotenv_path=Path(".env"), override=False)
+    user_env = user_env_path()
+    if user_env.is_file():
+        load_dotenv(dotenv_path=user_env, override=False)
+
+
 _bootstrap_env_path = _resolve_env_file_path(None)
 if _bootstrap_env_path is not None:
     _load_env_file(_bootstrap_env_path, override=False, raise_if_missing=False)
+_load_default_env_files()
 
 
 # Global settings instance

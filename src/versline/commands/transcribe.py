@@ -167,7 +167,7 @@ def transcribe_file(
             # If URL, resolved_path is temp file, make output in current dir based on original/temp filename
             ext = ".json" if (json_output or (timestamped and isinstance(full_text, dict))) else ".md"
             out_name = Path(resolved_path).with_suffix(ext).name
-            output_path = Path("output") / out_name
+            output_path = Path(settings.output_directory) / out_name
             output_path.parent.mkdir(parents=True, exist_ok=True)
             
         content = json.dumps(full_text, ensure_ascii=False, indent=2) if isinstance(full_text, dict) else full_text

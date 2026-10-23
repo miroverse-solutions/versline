@@ -1,11 +1,32 @@
 import subprocess
 import os
 from loguru import logger
+import shutil
 from versline.config import settings
+
+
+def _bundled_binaries():
+    """Download-on-first-use static ffmpeg/ffprobe (static-ffmpeg package). Returns (ffmpeg, ffprobe) or (None, None)."""
+    try:
+        from static_ffmpeg.run import get_or_fetch_platform_executables_else_raise
+
+        return get_or_fetch_platform_executables_else_raise()
+    except Exception as e:
+        logger.debug(f"Bundled ffmpeg unavailable: {e}")
+        return None, None
+
+
+def resolve_ffmpeg() -> str:
+    """Explicit setting, then PATH, then the bundled static build."""
+    return settings.ffmpeg.ffmpeg_path or shutil.which("ffmpeg") or _bundled_binaries()[0] or "ffmpeg"
+
+
+def resolve_ffprobe() -> str:
+    return settings.ffmpeg.ffprobe_path or shutil.which("ffprobe") or _bundled_binaries()[1] or "ffprobe"
 
 def get_audio_duration(file_path: str) -> float:
     """Get audio file duration using ffprobe."""
-    ffprobe_path = settings.ffmpeg.ffprobe_path or "ffprobe"
+    ffprobe_path = resolve_ffprobe()
     
     try:
         result = subprocess.run(
@@ -33,7 +54,7 @@ def split_audio_with_ffmpeg(file_path: str, chunk_length_sec: int, chunk_overlap
     Chunks are written in the same container format as the source file
     to avoid codec/container mismatches (e.g., AAC-in-M4A copied into .mp3).
     """
-    ffmpeg_path = settings.ffmpeg.ffmpeg_path or "ffmpeg"
+    ffmpeg_path = resolve_ffmpeg()
     
     if not os.path.exists(temp_dir):
         os.makedirs(temp_dir)
