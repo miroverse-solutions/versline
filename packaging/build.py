@@ -1,5 +1,9 @@
 """Build a self-contained Versline folder with PyInstaller (run from the repo root)."""
 import PyInstaller.__main__
+from static_ffmpeg.run import get_or_fetch_platform_executables_else_raise
+
+# Fetch ffmpeg now so it ships inside the bundle instead of downloading silently on first use.
+get_or_fetch_platform_executables_else_raise()
 
 COLLECT_ALL = [
     "versline", "markitdown", "static_ffmpeg", "genanki", "pptx", "docx",

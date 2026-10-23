@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "versline"
-version = "1.0.2"
+version = "1.0.3"
 description = "Miroverse Toolkit, CLI and Library for Media Transcription, Document Translation, and Question Generation using LLMs."
 readme = "README.md"
 requires-python = ">=3.9"

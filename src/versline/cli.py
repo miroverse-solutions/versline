@@ -6,7 +6,7 @@ from typing import Optional
 from versline.config import settings, reload_settings
 from versline.commands._common import EXTRA_BODY_HELP, apply_extra_body_option
 from versline import __version__
-from versline.commands import transcribe, translate, qude, qualcode, slides, summarize, research, setup
+from versline.commands import setup
 
 # Windows consoles default to a legacy code page; make output UTF-8 safe (Persian text, emoji).
 for _stream in (sys.stdout, sys.stderr):
@@ -23,14 +23,19 @@ app = typer.Typer(
     rich_markup_mode="rich",
 )
 
-# Register subcommands
-app.add_typer(transcribe.app, name="transcribe", help="[cyan]Convert audio/video to text[/cyan] using advanced LLMs.")
-app.add_typer(translate.app, name="translate", help="[cyan]Translate text files[/cyan] to other languages.")
-app.add_typer(qude.app, name="qude", help="[cyan]Generate questions[/cyan] from documents (Flashcards, MCQs).")
-app.add_typer(qualcode.app, name="qualcode", help="[cyan]Run qualitative coding[/cyan] on markdown files.")
-app.add_typer(slides.app, name="slides", help="[cyan]Generate immersive HTML/TS slides[/cyan] from markdown files.")
-app.add_typer(summarize.app, name="summarize", help="[cyan]Summarize files[/cyan] (outline, detailed, or slides mode).")
-app.add_typer(research.app, name="research", help="[cyan]Write research sections[/cyan] with a staged outline-to-full pipeline.")
+# Setup commands are light; the processing commands pull in pandas, openai, markitdown etc. (seconds of
+# import time, much more on a first Windows run), so skip them when only a setup command is requested.
+_LIGHT_COMMANDS = {"init", "config", "update", "--version"}
+if not (len(sys.argv) > 1 and sys.argv[1] in _LIGHT_COMMANDS):
+    from versline.commands import transcribe, translate, qude, qualcode, slides, summarize, research
+
+    app.add_typer(transcribe.app, name="transcribe", help="[cyan]Convert audio/video to text[/cyan] using advanced LLMs.")
+    app.add_typer(translate.app, name="translate", help="[cyan]Translate text files[/cyan] to other languages.")
+    app.add_typer(qude.app, name="qude", help="[cyan]Generate questions[/cyan] from documents (Flashcards, MCQs).")
+    app.add_typer(qualcode.app, name="qualcode", help="[cyan]Run qualitative coding[/cyan] on markdown files.")
+    app.add_typer(slides.app, name="slides", help="[cyan]Generate immersive HTML/TS slides[/cyan] from markdown files.")
+    app.add_typer(summarize.app, name="summarize", help="[cyan]Summarize files[/cyan] (outline, detailed, or slides mode).")
+    app.add_typer(research.app, name="research", help="[cyan]Write research sections[/cyan] with a staged outline-to-full pipeline.")
 
 app.command("init", help="[cyan]First-time setup[/cyan]: choose a provider and save your API key.")(setup.init_command)
 app.command("config", help="[cyan]Show saved settings[/cyan] (API keys are masked).")(setup.config_command)
