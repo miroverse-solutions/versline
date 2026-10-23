@@ -1,5 +1,5 @@
-import os
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from versline.services.document_processor import (
@@ -41,7 +41,7 @@ class TestDocumentProcessorPptSupport(unittest.TestCase):
         )
         self.assertEqual(chunks, [{"text": "slide content", "page": "Batch 1"}])
         rmtree_mock.assert_called_once_with(
-            os.path.dirname("/tmp/versline_ppt_convert_x/legacy.pptx"), ignore_errors=True
+            str(Path("/tmp/versline_ppt_convert_x/legacy.pptx").parent), ignore_errors=True
         )
 
 
