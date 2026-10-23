@@ -15,7 +15,15 @@ if (-not $zip) {
 $dir = Join-Path $env:LOCALAPPDATA "Versline"
 $tmp = Join-Path $env:TEMP "versline-windows-x64.zip"
 Write-Host "Downloading Versline $($release.tag_name)..."
-Invoke-WebRequest $zip.browser_download_url -OutFile $tmp -UseBasicParsing
+# curl.exe ships with Windows 10+ and shows a real progress bar; Invoke-WebRequest's own is slow and unreadable.
+$curl = Get-Command curl.exe -ErrorAction SilentlyContinue
+if ($curl) {
+    & $curl.Source -L --fail --progress-bar -o $tmp $zip.browser_download_url
+    if ($LASTEXITCODE -ne 0) { throw "Download failed (curl exit code $LASTEXITCODE)." }
+} else {
+    $ProgressPreference = "SilentlyContinue"
+    Invoke-WebRequest $zip.browser_download_url -OutFile $tmp -UseBasicParsing
+}
 if (Test-Path $dir) { Remove-Item $dir -Recurse -Force }
 Expand-Archive $tmp -DestinationPath $dir -Force
 Remove-Item $tmp -Force
