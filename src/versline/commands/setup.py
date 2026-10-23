@@ -101,14 +101,20 @@ def config_command(
         console.print(f"{key}={_mask(key, value)}", markup=False, highlight=False)
 
 
-def _latest_release_tag(timeout: float = 2.0) -> Optional[str]:
+def _latest_release(timeout: float = 2.0) -> dict:
+    """Return {"tag": str, "wheel_url": str | None} for the latest published release."""
     import httpx
 
     resp = httpx.get(
         f"https://api.github.com/repos/{REPO}/releases/latest", timeout=timeout, follow_redirects=True
     )
     resp.raise_for_status()
-    return resp.json().get("tag_name")
+    data = resp.json()
+    wheel_url = next(
+        (a["browser_download_url"] for a in data.get("assets", []) if a.get("name", "").endswith(".whl")),
+        None,
+    )
+    return {"tag": data.get("tag_name"), "wheel_url": wheel_url}
 
 
 def _version_tuple(tag: str):
@@ -120,15 +126,43 @@ def _version_tuple(tag: str):
 
 
 def update_command():
-    """Update Versline to the latest version."""
+    """Update Versline to the latest release."""
+    console.print(f"Current version: {__version__}")
+    try:
+        release = _latest_release(timeout=15)
+    except Exception as exc:
+        console.print(f"[red]Could not check for updates:[/red] {exc}")
+        raise typer.Exit(1)
+
+    tag, wheel_url = release["tag"], release["wheel_url"]
+    if not tag or not wheel_url:
+        console.print("[red]No published release with a .whl file was found.[/red]")
+        raise typer.Exit(1)
+    if _version_tuple(tag) <= _version_tuple(__version__):
+        console.print("[green]You already have the latest version.[/green]")
+        return
+
+    console.print(f"Updating to {tag}...")
+    if sys.platform == "win32":
+        # Windows cannot replace versline.exe while it is running, so hand over to the
+        # installer in a new window that starts after this process exits.
+        command = (
+            "Start-Sleep -Seconds 2; "
+            f"irm https://raw.githubusercontent.com/{REPO}/main/install.ps1 | iex; "
+            "Read-Host 'Press Enter to close'"
+        )
+        subprocess.Popen(
+            ["powershell", "-NoProfile", "-Command", command],
+            creationflags=subprocess.CREATE_NEW_CONSOLE,
+        )
+        console.print("A new window will finish the update. Then open a new terminal.")
+        return
+
     uv = shutil.which("uv")
     if not uv:
-        console.print(
-            "[red]uv was not found.[/red] Re-run the install command from the README to update."
-        )
+        console.print("[red]uv was not found.[/red] Re-run the install command from the README to update.")
         raise typer.Exit(1)
-    console.print(f"Current version: {__version__}")
-    result = subprocess.run([uv, "tool", "upgrade", "versline"])
+    result = subprocess.run([uv, "tool", "install", "--force", "--python", "3.12", wheel_url])
     if result.returncode != 0:
         raise typer.Exit(result.returncode)
     console.print("[green]Done.[/green] Run 'versline --version' to confirm.")
@@ -146,7 +180,7 @@ def maybe_notify_update() -> None:
             if now - data.get("checked", 0) < 86400:
                 return
         user_config_dir().mkdir(parents=True, exist_ok=True)
-        tag = _latest_release_tag()
+        tag = _latest_release()["tag"]
         stamp.write_text(json.dumps({"checked": now, "tag": tag}), encoding="utf-8")
         if tag and _version_tuple(tag) > _version_tuple(__version__):
             console.print(

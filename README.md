@@ -31,8 +31,32 @@ ffmpeg به‌صورت خودکار تأمین می‌شود. خروجی‌ها 
 
 ## 🚀 Installation
 
-### 📦 Local Installation (user)
-To install Versline functionally on your machine:
+### 📦 Install (end users)
+No Python or git needed: the installer sets up everything, including ffmpeg.
+
+**Windows** (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/miroverse-solutions/versline/main/install.ps1 | iex
+```
+
+**macOS / Linux:**
+
+```sh
+curl -LsSf https://raw.githubusercontent.com/miroverse-solutions/versline/main/install.sh | sh
+```
+
+Then open a **new** terminal and run:
+
+```sh
+versline init      # choose a provider and save your API key (once)
+versline --help
+```
+
+Update with `versline update`; uninstall with `uv tool uninstall versline`.
+
+### 🧩 Install from source
+To install the current checkout into your own Python environment:
 
 ```bash
 pip install .
