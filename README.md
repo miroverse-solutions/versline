@@ -3,7 +3,7 @@
 
 ## نصب (برای کاربران)
 
-**ویندوز** — PowerShell را باز کنید و این یک خط را اجرا کنید:
+**ویندوز (روش پیشنهادی)** — PowerShell را باز کنید و این یک خط را اجرا کنید. این روش نسخه‌ی Self-contained را از GitHub می‌گیرد و به پایتون، uv یا دسترسی به PyPI نیاز ندارد (حدود ۱۵۰ مگابایت دانلود):
 
 ```powershell
 irm https://raw.githubusercontent.com/miroverse-solutions/versline/main/install.ps1 | iex
@@ -25,7 +25,8 @@ versline transcribe فایل.mp3
 - به‌روزرسانی: `versline update`
 - نمایش نسخه: `versline --version`
 - تنظیمات ذخیره‌شده: `versline config`
-- حذف: `uv tool uninstall versline`
+- حذف (ویندوز): پوشه‌ی `%LOCALAPPDATA%\Versline` را پاک کنید و همان را از PATH کاربر حذف کنید
+- حذف (مک / لینوکس): `uv tool uninstall versline`
 
 ffmpeg به‌صورت خودکار تأمین می‌شود. خروجی‌ها در پوشه‌ی `output` کنار محل اجرا ذخیره می‌شوند. برای نمایش درست متن فارسی، فایل‌های خروجی را در یک ویرایشگر باز کنید (ترمینال ویندوز حروف فارسی را درست نمایش نمی‌دهد).
 
@@ -34,7 +35,7 @@ ffmpeg به‌صورت خودکار تأمین می‌شود. خروجی‌ها 
 ### 📦 Install (end users)
 No Python or git needed: the installer sets up everything, including ffmpeg.
 
-**Windows** (PowerShell):
+**Windows** (PowerShell) — recommended. Downloads a self-contained build (Python and all dependencies bundled) from the latest GitHub release into `%LOCALAPPDATA%\Versline` and adds it to your user PATH. It needs neither uv nor PyPI access, so it also works on restricted or slow networks:
 
 ```powershell
 irm https://raw.githubusercontent.com/miroverse-solutions/versline/main/install.ps1 | iex
@@ -53,7 +54,7 @@ versline init      # choose a provider and save your API key (once)
 versline --help
 ```
 
-Update with `versline update`; uninstall with `uv tool uninstall versline`.
+Update with `versline update`. Uninstall on Windows by deleting `%LOCALAPPDATA%\Versline` and removing it from your user PATH; on macOS/Linux use `uv tool uninstall versline`.
 
 ### 🧩 Install from source
 To install the current checkout into your own Python environment:
