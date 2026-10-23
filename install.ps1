@@ -25,9 +25,43 @@ if ($curl) {
     Invoke-WebRequest $zip.browser_download_url -OutFile $tmp -UseBasicParsing
 }
 if (Test-Path $dir) { Remove-Item $dir -Recurse -Force }
-Expand-Archive $tmp -DestinationPath $dir -Force
+
+# Extract entry by entry so we can draw a curl-style bar; Expand-Archive's own progress is unreadable.
+Write-Host "Extracting Versline..."
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$archive = [IO.Compression.ZipFile]::OpenRead($tmp)
+try {
+    $root = [IO.Path]::GetFullPath($dir).TrimEnd("\") + "\"
+    $entries = @($archive.Entries)
+    $total = [Math]::Max($entries.Count, 1)
+    $width = 60
+    $lastFilled = -1
+    for ($i = 0; $i -lt $entries.Count; $i++) {
+        $entry = $entries[$i]
+        $target = [IO.Path]::GetFullPath((Join-Path $dir $entry.FullName))
+        if (-not $target.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Unsafe path in archive: $($entry.FullName)"
+        }
+        if ($entry.FullName.EndsWith("/") -or $entry.FullName.EndsWith("\")) {
+            New-Item -ItemType Directory -Path $target -Force | Out-Null
+        } else {
+            New-Item -ItemType Directory -Path (Split-Path $target) -Force | Out-Null
+            [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $target, $true)
+        }
+        $percent = ($i + 1) * 100 / $total
+        $filled = [int][Math]::Floor($percent * $width / 100)
+        if ($filled -ne $lastFilled -or $i -eq $entries.Count - 1) {
+            $lastFilled = $filled
+            Write-Host ("`r" + ("#" * $filled) + (" " * ($width - $filled)) + (" {0,5:N1}%" -f $percent)) -NoNewline
+        }
+    }
+    Write-Host ""
+} finally {
+    $archive.Dispose()
+}
 Remove-Item $tmp -Force
 
+Write-Host "Adding Versline to PATH..."
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
 if (($userPath -split ";") -notcontains $dir) {
     [Environment]::SetEnvironmentVariable("Path", "$userPath;$dir".TrimStart(";"), "User")
