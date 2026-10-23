@@ -6,8 +6,12 @@ $repo = "miroverse-solutions/versline"
 
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
     Write-Host "Installing uv (Python tool manager)..."
-    Invoke-RestMethod https://astral.sh/uv/install.ps1 | Invoke-Expression
-    $env:Path = "$env:USERPROFILE\.local\bin;$env:Path"
+    # uv's installer calls `exit`, which would close this window if run in-process. Run it in a child PowerShell.
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://astral.sh/uv/install.ps1 | iex"
+    $env:Path = "$env:USERPROFILE\.local\bin;$env:USERPROFILE\.cargo\bin;$env:Path"
+    if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
+        throw "uv was installed but was not found on PATH. Open a new PowerShell window and run this command again."
+    }
 }
 
 Write-Host "Finding the latest Versline release..."
