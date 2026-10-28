@@ -30,6 +30,7 @@ class MediaItem:
     size: Optional[int] = None
     duration: Optional[float] = None
     source_ref: Any = None  # opaque handle used by ChannelSource.download
+    downloadable: bool = True  # False when the source can't serve the file (e.g. audio on the web preview)
 
     @property
     def transcribable(self) -> bool:

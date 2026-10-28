@@ -33,10 +33,14 @@ def _save_credentials(api_id: str, api_hash: str) -> None:
         pass
 
 
-def _make_source(proxy: Optional[str] = None):
-    from versline.services.channel_archive.sources.telegram import TelegramSource
-
+def _make_source(proxy: Optional[str] = None, web: bool = False):
     try:
+        if web:
+            from versline.services.channel_archive.sources.telegram_web import TelegramWebSource
+
+            return TelegramWebSource(proxy=proxy)
+        from versline.services.channel_archive.sources.telegram import TelegramSource
+
         return TelegramSource(proxy=proxy)
     except (RuntimeError, ValueError) as exc:
         logger.error(str(exc))
@@ -89,7 +93,12 @@ def archive(
     no_transcribe: bool = typer.Option(False, "--no-transcribe", help="Only save captions/metadata; skip transcription"),
     max_size: Optional[float] = typer.Option(None, "--max-size", help="Skip media larger than this many MB"),
     force: bool = typer.Option(False, "--force", "-f", help="Re-process posts already archived (and ignore the transcription cache)"),
+    reuse_transcripts: bool = typer.Option(False, "--reuse-transcripts", help="Re-process already archived posts (captions, tags, --summary, --taqrir...) but keep the transcripts in their existing notes instead of transcribing again"),
     dry_run: bool = typer.Option(False, "--dry-run", help="List matching posts without downloading or writing anything"),
+    add_summary: bool = typer.Option(False, "--summary", help="Add an LLM-written summary at the top of each note"),
+    add_taqrir: bool = typer.Option(False, "--taqrir", help="Add a taqrir: the talk (or a long text post) rewritten as a structured, formulated exposition, after the transcript/caption"),
+    output_lang: Optional[str] = typer.Option(None, "--output-lang", help="Language for --summary/--taqrir (default: same as the content)"),
+    web: bool = typer.Option(False, "--web", help="Read the public web preview (t.me/s/<channel>) instead of a logged-in account: no login needed, public channels only; audio files and large videos can't be downloaded"),
     # LLM / transcription overrides (same as `versline transcribe`)
     model: Optional[str] = typer.Option(None, help="LLM Model to use (overrides config)"),
     provider: Optional[str] = typer.Option(None, help="LLM Provider (Google, OpenAI, OpenRouter, AvalAI, OpenAICompatible)"),
@@ -137,7 +146,7 @@ def archive(
         if bad:
             raise typer.BadParameter(f"Unknown type(s): {', '.join(sorted(bad))}. Choose from: {', '.join(sorted(VALID_TYPES))}")
 
-    source = _make_source(telegram_proxy)
+    source = _make_source(telegram_proxy, web=web)
     try:
         transcriber = None
         if not no_transcribe and not dry_run:
@@ -145,6 +154,17 @@ def archive(
 
             user_note = resolve_user_note(note=note, note_file=str(note_file) if note_file else None)
             transcriber = AudioTranscriber(user_note=user_note)
+
+        tracker = transcriber.tracker if transcriber is not None else None
+        text_llm = None
+        steps = ["media", "transcribe"]
+        if add_summary or add_taqrir:
+            from versline.services.channel_archive.llm import TextLLM
+            from versline.services.pricing import TokenTracker
+
+            tracker = tracker or TokenTracker()
+            text_llm = TextLLM(tracker)
+            steps += (["summary"] if add_summary else []) + (["taqrir"] if add_taqrir else [])
 
         ctx = StepContext(
             source=source,
@@ -159,6 +179,8 @@ def archive(
             overlap=overlap,
             skip_blocked=skip_blocked,
             transcriber=transcriber,
+            text_llm=text_llm,
+            output_lang=output_lang or "",
         )
         options = ArchiveOptions(
             out_dir=output,
@@ -169,6 +191,8 @@ def archive(
             types=type_set,
             dry_run=dry_run,
             force=force,
+            reuse_transcripts=reuse_transcripts,
+            steps=steps,
         )
         archiver = ChannelArchiver(source, ctx, options)
 
@@ -210,9 +234,9 @@ def archive(
     console.print(f"[bold]Done:[/bold] {summary.done}  skipped: {summary.skipped}  failed: {summary.failed}  → {archiver.out_dir}")
     for error in summary.errors:
         console.print(f"[red]  {error}[/red]")
-    if transcriber is not None and summary.done:
+    if tracker is not None and summary.done:
         from versline.services.pricing import print_cost_report
 
-        print_cost_report(transcriber.tracker, api_key=settings.llm.api_key)
+        print_cost_report(tracker, api_key=settings.llm.api_key)
     if summary.failed:
         raise typer.Exit(code=1)

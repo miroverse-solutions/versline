@@ -4,7 +4,7 @@ import json
 import re
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import jdatetime
 
@@ -14,7 +14,9 @@ from versline.utils.common import format_duration, sanitize_filename
 # Headings used in generated notes; change them here only.
 LABELS = {
     "caption": "توضیحات",
+    "summary": "خلاصه",
     "transcript": "متن پیاده‌شده",
+    "taqrir": "تقریر و صورت‌بندی",
     "attachments": "پیوست‌ها",
     "source": "پست اصلی",
     "untitled": "پست",
@@ -33,17 +35,28 @@ _TITLE_MAX = 80
 
 # ---------- text helpers ----------
 
+def normalize_tag(raw: str) -> str:
+    """Make a hashtag valid for Obsidian: ZWNJ/space -> '_', and only letters, digits, '_', '-', '/' are kept."""
+    tag = re.sub(r"[\u200c\u200d\s]+", "_", raw)
+    tag = re.sub(r"[^\w/-]", "", tag)
+    return tag.strip("_")
+
+
 def extract_hashtags(text: str) -> List[str]:
     seen: List[str] = []
     for match in _HASHTAG_RE.finditer(text or ""):
-        tag = match.group(1).strip("_")
+        tag = normalize_tag(match.group(1))
         if tag and not tag.isdigit() and tag not in seen:
             seen.append(tag)
     return seen
 
 
+_MD_LINK_RE = re.compile(r"\[([^\]]*)\]\([^)\s]*\)")
+
+
 def make_title(post: ChannelPost) -> str:
     for line in (post.text or "").splitlines():
+        line = _MD_LINK_RE.sub(lambda m: m.group(1) if re.search(r"\w", m.group(1)) else "", line)
         cleaned = _URL_RE.sub("", _HASHTAG_RE.sub("", line))
         cleaned = re.sub(r"[*_`>~]+", "", cleaned)
         cleaned = " ".join(cleaned.split()).strip(" -–—:|")
@@ -136,6 +149,25 @@ def render_note(record: PostRecord, title: str) -> str:
     if record.post.url:
         parts += ["---", f"[{LABELS['source']}]({record.post.url})", ""]
     return "\n".join(parts)
+
+
+def read_note_transcript(path: Path) -> Optional[Tuple[str, Optional[str]]]:
+    """(transcript, transcription model) stored in a note we wrote earlier, or None when it has no transcript."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    heading = f"\n## {LABELS['transcript']}\n"
+    start = text.find(heading)
+    if start < 0:
+        return None
+    body = text[start + len(heading):]
+    end = re.search(rf"\n## |\n---\n\[{re.escape(LABELS['source'])}\]", body)
+    body = (body[: end.start()] if end else body).strip()
+    if not body:
+        return None
+    model = re.search(r'^transcription_model: "(.*)"$', text, re.MULTILINE)
+    return body, model.group(1) if model else None
 
 
 def write_text_atomic(path: Path, content: str) -> None:

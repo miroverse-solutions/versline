@@ -5,7 +5,7 @@ from pathlib import Path
 
 from versline.services.channel_archive.models import ChannelInfo, ChannelPost, MediaItem
 from versline.services.channel_archive.pipeline import ArchiveOptions, ChannelArchiver
-from versline.services.channel_archive.steps import StepContext
+from versline.services.channel_archive.steps import StepContext, clean_transcript
 
 BASE = datetime(2026, 3, 1, 12, 0, tzinfo=timezone.utc)
 
@@ -54,6 +54,24 @@ def audio(pid, day, text=""):
                        media=[MediaItem(kind="audio", duration=30, size=10, source_ref=object())])
 
 
+class FakeLLM:
+    def __init__(self):
+        self.prompts = []
+
+    def generate(self, prompt):
+        self.prompts.append(prompt)
+        return "TAQRIR TEXT" if "taqrir" in prompt.lower() else "SUMMARY TEXT"
+
+
+class TestCleanTranscript(unittest.TestCase):
+    def test_removes_preamble_and_end_marker_only(self):
+        raw = "بله، حتماً. در ادامه پیاده‌سازی و ویراستاری این فایل صوتی تقدیم می‌گردد:\n\n**گوینده اول:** سلام\n\n[---پایان فایل صوتی---]"
+        self.assertEqual(clean_transcript(raw), "**گوینده اول:** سلام")
+        self.assertEqual(clean_transcript("بله، من آنجا بودم و گفتم:\n"), "بله، من آنجا بودم و گفتم:")
+        keep = "[---خروجی ناقص است---]"
+        self.assertEqual(clean_transcript(keep), keep)
+
+
 class TestPipeline(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
@@ -71,6 +89,16 @@ class TestPipeline(unittest.TestCase):
         options = ArchiveOptions(out_dir=self.tmp / "out", temp_dir=ctx.temp_dir, **opts)
         archiver = ChannelArchiver(source, ctx, options)
         return archiver, archiver.run("@testchan"), source, transcriber
+
+    def test_non_downloadable_media_is_skipped_but_note_written(self):
+        self.posts = [ChannelPost(id=9, date=BASE, text="x",
+                                  media=[MediaItem(kind="audio", duration=30, downloadable=False)])]
+        _, summary, source, tr = self.run_archive()
+        self.assertEqual((summary.done, summary.failed), (1, 0))
+        self.assertEqual(source.downloads, [])
+        self.assertEqual(tr.calls, [])
+        note = next((self.tmp / "out" / "posts").glob("*.md")).read_text(encoding="utf-8")
+        self.assertIn("audio not downloadable", note)
 
     def test_notes_written_for_audio_and_text_posts(self):
         _, summary, _, tr = self.run_archive()
@@ -126,6 +154,60 @@ class TestPipeline(unittest.TestCase):
         _, summary, _, _ = self.run_archive(limit=2)
         self.assertEqual(summary.done, 2)
 
+
+    def test_summary_goes_first_and_taqrir_after_transcript(self):
+        self.posts = [audio(1, 0, "کپشن " * 80)]
+        llm = FakeLLM()
+        source, transcriber = FakeSource(self.posts), FakeTranscriber()
+        ctx = StepContext(source=source, channel=None, out_dir=None, temp_dir=self.tmp / "tmp",
+                          transcriber=transcriber, text_llm=llm)
+        options = ArchiveOptions(out_dir=self.tmp / "out", temp_dir=ctx.temp_dir, steps=["media", "transcribe", "summary", "taqrir"])
+        summary = ChannelArchiver(source, ctx, options).run("@testchan")
+        self.assertEqual(summary.done, 1)
+        note = next((self.tmp / "out" / "posts").glob("*.md")).read_text(encoding="utf-8")
+        order = [note.index(h) for h in ("## خلاصه", "## توضیحات", "## متن پیاده‌شده", "## تقریر و صورت‌بندی")]
+        self.assertEqual(order, sorted(order))
+        self.assertIn("SUMMARY TEXT", note)
+        self.assertIn("TAQRIR TEXT", note)
+
+    def test_long_text_post_gets_taqrir_from_caption(self):
+        self.posts = [ChannelPost(id=3, date=BASE, text="متن بلند " * 80)]
+        llm = FakeLLM()
+        source = FakeSource(self.posts)
+        ctx = StepContext(source=source, channel=None, out_dir=None, temp_dir=self.tmp / "tmp", text_llm=llm, transcribe=False)
+        options = ArchiveOptions(out_dir=self.tmp / "out", temp_dir=ctx.temp_dir, steps=["media", "taqrir"])
+        ChannelArchiver(source, ctx, options).run("@testchan")
+        self.assertEqual(len(llm.prompts), 1)
+        self.assertIn("written channel post", llm.prompts[0])
+        note = next((self.tmp / "out" / "posts").glob("*.md")).read_text(encoding="utf-8")
+        self.assertIn("TAQRIR TEXT", note)
+
+    def test_short_text_posts_get_no_summary_and_no_taqrir(self):
+        self.posts = [ChannelPost(id=2, date=BASE, text="فقط متن")]
+        llm = FakeLLM()
+        source = FakeSource(self.posts)
+        ctx = StepContext(source=source, channel=None, out_dir=None, temp_dir=self.tmp / "tmp", text_llm=llm, transcribe=False)
+        options = ArchiveOptions(out_dir=self.tmp / "out", temp_dir=ctx.temp_dir, steps=["media", "summary", "taqrir"])
+        ChannelArchiver(source, ctx, options).run("@testchan")
+        self.assertEqual(llm.prompts, [])
+
+    def test_reuse_transcripts_keeps_text_and_adds_new_sections_without_transcribing(self):
+        self.posts = [audio(1, 0, "کپشن " * 80)]
+        self.run_archive()
+        llm = FakeLLM()
+        source, transcriber = FakeSource(self.posts), FakeTranscriber()
+        ctx = StepContext(source=source, channel=None, out_dir=None, temp_dir=self.tmp / "tmp",
+                          transcriber=transcriber, text_llm=llm)
+        options = ArchiveOptions(out_dir=self.tmp / "out", temp_dir=ctx.temp_dir, reuse_transcripts=True,
+                                 steps=["media", "transcribe", "summary", "taqrir"])
+        summary = ChannelArchiver(source, ctx, options).run("@testchan")
+        self.assertEqual((summary.done, summary.skipped), (1, 0))
+        self.assertEqual(transcriber.calls, [])
+        self.assertEqual(source.downloads, [])
+        note = next((self.tmp / "out" / "posts").glob("*.md")).read_text(encoding="utf-8")
+        self.assertIn("transcript of", note)
+        self.assertIn("SUMMARY TEXT", note)
+        self.assertIn("TAQRIR TEXT", note)
 
 if __name__ == "__main__":
     unittest.main()

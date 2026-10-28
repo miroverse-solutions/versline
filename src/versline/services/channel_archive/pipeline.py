@@ -13,7 +13,7 @@ from versline.services.channel_archive import obsidian
 from versline.services.channel_archive.models import ChannelInfo, ChannelPost, PostRecord
 from versline.services.channel_archive.sources.base import ChannelSource
 from versline.services.channel_archive.state import ChannelState
-from versline.services.channel_archive.steps import DEFAULT_STEPS, STEPS, PostStep, StepContext
+from versline.services.channel_archive.steps import DEFAULT_STEPS, STEPS, PostStep, StepContext, clean_transcript
 from versline.utils.common import sanitize_filename
 
 
@@ -28,6 +28,7 @@ class ArchiveOptions:
     steps: List[str] = field(default_factory=lambda: list(DEFAULT_STEPS))
     dry_run: bool = False
     force: bool = False
+    reuse_transcripts: bool = False  # re-process archived posts, but keep the transcripts already in their notes
 
 
 @dataclass
@@ -133,7 +134,7 @@ class ChannelArchiver:
                 title = obsidian.make_title(post)
                 if opts.dry_run:
                     summary.plans.append(PostPlan(post.id, post.date, post.media_type, self._duration(post), title))
-                elif state.is_done(post.id) and not opts.force:
+                elif state.is_done(post.id) and not (opts.force or opts.reuse_transcripts):
                     summary.skipped += 1
                 else:
                     self._process(channel, post, title, state, summary)
@@ -158,6 +159,15 @@ class ChannelArchiver:
             else Path("posts") / f"{obsidian.note_stem(post, title)}.md"
         )
         record = self._base_record(channel, post, title)
+        if opts.reuse_transcripts and any(item.transcribable for item in post.media):
+            old = obsidian.read_note_transcript(self.out_dir / rel_note)
+            if old:
+                record.sections["transcript"] = clean_transcript(old[0])
+                record.frontmatter["transcribed"] = True
+                if old[1]:
+                    record.frontmatter["transcription_model"] = old[1]
+                record.work["reused_transcript"] = True
+                logger.info(f"Post {post.id}: reusing the transcript from its existing note")
         try:
             for step in self.steps:
                 step.run(post, record, self.ctx)

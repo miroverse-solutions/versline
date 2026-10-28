@@ -195,6 +195,15 @@ VERSLINE_FFMPEG_FFPROBE_PATH=
 VERSLINE_OUTPUT_DIRECTORY=output
 VERSLINE_TEMP_DIRECTORY=temp
 
+# --- Telegram channel archive ---
+# Get api_id / api_hash at https://my.telegram.org (API development tools)
+VERSLINE_TELEGRAM_API_ID=
+VERSLINE_TELEGRAM_API_HASH=
+# Optional: socks5://host:port or http://host:port (falls back to VERSLINE_LLM_PROXY)
+VERSLINE_TELEGRAM_PROXY=
+# Optional: custom Telethon session file path
+VERSLINE_TELEGRAM_SESSION_PATH=
+
 # --- Resource Limits ---
 # Maximum RAM (virtual address space) in MB. 0 = unlimited.
 VERSLINE_RESOURCE_MAX_RAM_MB=0
@@ -852,22 +861,168 @@ versline download [OPTIONS] URL
 
 ## 📣 Telegram Channel Archive
 
-Archive a Telegram channel into Obsidian: one note per post (caption, transcript of audio/video, detailed frontmatter) plus a channel index note.
+Archive a Telegram channel into an Obsidian vault: **one Markdown note per post** (caption, transcript of audio/video, optional summary and *taqrir*, detailed frontmatter) plus a channel index note. Works for audio/video channels, text-only channels and mixed ones.
 
-1. Create an app at <https://my.telegram.org> → *API development tools* to get `api_id` / `api_hash`.
-2. `versline telegram login` (once; asks for api_id/api_hash, then your phone number and the code Telegram sends). The session file grants access to your account, so keep it private. Behind a filter, add `--proxy socks5://host:port` or set `VERSLINE_TELEGRAM_PROXY`.
-3. Check what a date range contains, then archive it into your vault:
+### Quick start
 
 ```sh
+# 1. Log in once (see "Choosing how to connect" below; skip with --web for public channels)
+versline telegram login
+
+# 2. See what a date range contains (nothing is downloaded or written)
 versline telegram archive @channel --since 2026-03-01 --until 2026-03-31 --dry-run
+
+# 3. Archive it into your vault
 versline telegram archive @channel --since 2026-03-01 --until 2026-03-31 -o ~/Vault/Telegram/channel
 ```
 
-- Dates are Gregorian (`2026-03-01`) or Shamsi (`1404-12-10`), optionally with `HH:MM`; `--until` includes the whole day.
-- `--types audio,voice,video,text` filters post types; text-only posts are archived too. `--no-transcribe` saves captions/metadata only; `--keep-media` saves files under `attachments/` and embeds them; `--max-size MB` skips big files.
-- Re-running skips finished posts (manifest `.versline-channel.json`); `--force` redoes them. A failing post is reported and retried next run without stopping the rest.
-- Transcription uses the same provider settings and options as `versline transcribe` (`--model`, `--note`, ...).
-- Layout: `<out>/<Channel>.md` (index), `<out>/posts/YYYY-MM-DD - <id> - <title>.md`.
+LLM settings (provider, key, model, proxy, `extra_body`) come from the usual `VERSLINE_LLM_*` variables / `.env` / `--env-file`, or from the command-line overrides listed below.
+
+### Choosing how to connect
+
+| | Logged-in account (default) | Web preview (`--web`) |
+| :--- | :--- | :--- |
+| Needs `api_id` / `api_hash` and `telegram login` | Yes | **No** |
+| Channels | Public, private, and ones you joined by invite link | **Public only** (`@name`, `t.me/name`) |
+| Audio files, documents, very large videos | Downloaded and transcribed | **Not downloadable** (no URL on the preview) – the post still gets a note with its caption/metadata and a `skipped_media` entry |
+| Voice messages, round videos, small videos | Yes | Yes |
+| Speed | Fast | Slower (polite delay between requests); date ranges are located by binary search, so old ranges are still quick to reach |
+
+**Logged-in account.**
+1. Create an app at <https://my.telegram.org> → *API development tools* to get `api_id` / `api_hash`.
+2. Either put them in your env file (`VERSLINE_TELEGRAM_API_ID`, `VERSLINE_TELEGRAM_API_HASH`) or let `versline telegram login` ask for them and save them to your per-user config.
+3. Run `versline telegram login`: it asks for your phone number, the code Telegram sends you and, if enabled, your 2FA password. Setting the variables alone is **not** enough – the account login is a separate step. A session file is then stored in your user config directory (override with `VERSLINE_TELEGRAM_SESSION_PATH`).
+4. `versline telegram logout` ends the session and deletes the file.
+
+> The session file grants access to your Telegram account. Keep it private and never commit it.
+
+**Web preview.** Add `--web` to read `https://t.me/s/<channel>` instead. No account, no login. Private channels, invite links and `t.me/c/...` links are rejected with a clear message; use the logged-in mode for those. A channel that doesn't exist or has the web preview disabled gives a "not found" error.
+
+**Behind a filter?** Use `--proxy` on `login` (or `--telegram-proxy` on `archive`), or set `VERSLINE_TELEGRAM_PROXY`. Supported: `socks5://host:port`, `socks5://user:pass@host:port`, `http://host:port`. For Telegram the order is `--telegram-proxy` → `VERSLINE_TELEGRAM_PROXY` → `--proxy`/`VERSLINE_LLM_PROXY`. (`--proxy` on `archive` is the proxy for the LLM provider.)
+
+### `telegram login`
+
+```bash
+versline telegram login [--proxy URL]
+```
+
+### `telegram logout`
+
+```bash
+versline telegram logout
+```
+
+### `telegram archive`
+
+```bash
+versline telegram archive [OPTIONS] CHANNEL
+```
+
+`CHANNEL` can be `@name`, `name`, `https://t.me/name`, `https://t.me/c/<id>` (private) or an invite link of a channel you already joined (the last two need the logged-in mode).
+
+**Selecting posts**
+
+| Option | Description | Default |
+| :--- | :--- | :--- |
+| `--since` | Only posts from this date. `YYYY-MM-DD[ HH:MM]`, Gregorian or Shamsi (`1404-07-01`). | Beginning of channel |
+| `--until` | Only posts up to and including this date. A date without a time covers the whole day. | End of channel |
+| `--limit` | Process at most N matching posts. | No limit |
+| `--types` | Comma-separated post types: `audio`, `voice`, `video`, `video_note`, `photo`, `document`, `text`. See below. | All types |
+| `--dry-run` | List the matching posts (id, date, type, duration, title) without downloading or writing anything. | `False` |
+
+A post's type is the type of its **first** media item (an album starting with a photo is `photo`); a post without media is `text`. `--types voice,audio,video` keeps only spoken content; `--types text` keeps only text-only posts. Only audio, voice and video are transcribed; other types just get their caption and metadata.
+
+**Output**
+
+| Option | Short | Description | Default |
+| :--- | :--- | :--- | :--- |
+| `--output` | `-o` | Output folder. Point it at your Obsidian vault. | `output/<channel username>` (`VERSLINE_OUTPUT_DIRECTORY`) |
+| `--keep-media` | | Save media under `attachments/` and embed it in the notes. | `False` |
+| `--max-size` | | Skip media larger than this many MB (recorded in `skipped_media`). | No limit |
+| `--no-transcribe` | | Only save captions/metadata; do not transcribe. | `False` |
+
+**Extra sections (optional, LLM)**
+
+| Option | Description |
+| :--- | :--- |
+| `--summary` | Add a **خلاصه** (summary) section at the top of each note. Built from the transcript, or from the caption for text posts. Skipped for content shorter than ~300 characters. |
+| `--taqrir` | Add a **تقریر و صورت‌بندی** section after the transcript: the talk rewritten as a structured, formulated written exposition (issue, claims, arguments, objections, conclusion), faithful to the speaker. For text posts it is built from the caption (≥ ~300 characters) with a prompt suited to written text. |
+| `--output-lang` | Language of the summary/taqrir (e.g. `English`). Default: same language as the content. |
+
+Both use the model from `VERSLINE_LLM_*` / `--model` and their cost is included in the cost report printed at the end. The prompts live in `src/versline/resources/prompts/` (`channel_summary_prompt.md`, `channel_taqrir_prompt.md`, `channel_taqrir_text_prompt.md`); edit them to change the style. Each extra call costs tokens, so try `--limit 3` first on large channels.
+
+**Resuming and redoing**
+
+| Option | Short | Description |
+| :--- | :--- | :--- |
+| *(none)* | | Re-running skips posts already archived (manifest `.versline-channel.json` in the output folder). A failing post is reported, marked failed and retried next run without stopping the rest. Ctrl+C is safe: finished posts are kept. |
+| `--force` | `-f` | Re-process archived posts **from scratch**, including transcription (the transcription cache is ignored). |
+| `--reuse-transcripts` | | Re-process archived posts (captions, titles, tags, `--summary`, `--taqrir`, …) but **keep the transcript already stored in each note** – no download and no new transcription cost. Posts without a stored transcript are transcribed normally. If combined with `--force`, this option wins. Edits you made to a note's transcript are preserved; edits elsewhere in the note are overwritten. |
+
+**LLM / transcription overrides** (same meaning as in `versline transcribe`)
+
+| Option | Description |
+| :--- | :--- |
+| `--model`, `--provider`, `--api-key`, `--api-endpoint` | Provider settings (override config). |
+| `--proxy` | Proxy for the LLM provider. |
+| `--telegram-proxy` | Proxy for Telegram (defaults to `VERSLINE_TELEGRAM_PROXY`, then `--proxy`). |
+| `--extra-body` | JSON merged into every OpenAI-compatible request body (also `VERSLINE_LLM_EXTRA_BODY`). Not applied to native Gemini. |
+| `--note`, `--note-file` | Extra instruction appended to the transcription prompt. |
+| `--chunk-size`, `--overlap` | Audio chunk length and overlap in seconds (`900` / `180`). |
+| `--skip-blocked` | Skip chunks blocked by the provider instead of failing the post. |
+
+### What gets written
+
+```text
+<out>/
+├── <Channel title>.md                     # index: table of all archived posts
+├── .versline-channel.json                 # manifest used for resuming
+├── posts/
+│   └── 2026-03-14 - 223 - <title>.md      # one note per post
+└── attachments/                           # only with --keep-media
+```
+
+Each post note contains, in order: the frontmatter, a title (the first meaningful line of the caption, without hashtags, links or Markdown), **خلاصه** (`--summary`), **توضیحات** (the caption, with bold/italic/links preserved), **متن پیاده‌شده** (transcript; several media items become `### 1`, `### 2`, …), **تقریر و صورت‌بندی** (`--taqrir`), **پیوست‌ها** (`--keep-media`) and a link back to the original post.
+
+Frontmatter: `title`, `source`, `channel`, `channel_title`, `post_id`, `url`, `date`, `date_shamsi`, `media_type`, `duration`, `file_name`, `views`, `forwards`, `forwarded_from`, `album_size`, `tags`, `aliases`, `archived_at`, and when applicable `transcribed`, `transcription_model`, `summary_model`, `taqrir_model`, `skipped_media`. Hashtags in the caption become `tags` (a zero-width non-joiner or space inside a hashtag is turned into `_`, e.g. `#حسن‌صباح` → `حسن_صباح`, because Obsidian rejects it otherwise); `telegram` is always added.
+
+The transcript is cleaned of the model's chatter (an opening such as «بله، حتماً…» and a closing «[---پایان فایل صوتی---]» are removed).
+
+### Recipes
+
+```sh
+# Audio channel: transcripts + summary + taqrir, media kept, into the vault
+versline --env-file ~/.versline.env telegram archive @lectures --since 1404-07-01 \
+  --summary --taqrir --keep-media -o ~/Vault/Telegram/lectures
+
+# Text-only channel without any login: structured notes (+ summaries/taqrir of long posts)
+versline telegram archive @news --web --types text --summary --taqrir
+
+# Add summaries and taqrir to posts you already archived, without re-transcribing
+versline telegram archive @lectures --since 1404-07-01 --summary --taqrir --reuse-transcripts \
+  -o ~/Vault/Telegram/lectures
+
+# Only spoken content, skip files above 200 MB, in English summaries
+versline telegram archive @lectures --types audio,voice,video --max-size 200 --summary --output-lang English
+```
+
+### Environment variables
+
+| Variable | Description |
+| :--- | :--- |
+| `VERSLINE_TELEGRAM_API_ID` | `api_id` from <https://my.telegram.org>. |
+| `VERSLINE_TELEGRAM_API_HASH` | `api_hash` from <https://my.telegram.org>. |
+| `VERSLINE_TELEGRAM_PROXY` | Proxy for Telegram (`socks5://…` / `http://…`); falls back to `VERSLINE_LLM_PROXY`. |
+| `VERSLINE_TELEGRAM_SESSION_PATH` | Custom Telethon session file path (default: per-user config dir). |
+
+### Troubleshooting
+
+- **"Not logged in to Telegram"** – run `versline telegram login` (env variables alone don't log you in), or use `--web` for a public channel.
+- **"api_id/api_hash are not set"** – put them in the env file passed with `--env-file`, or run `versline telegram login` to be asked for them.
+- **Web mode says "not found or its web preview is disabled"** – the channel is private, doesn't exist, or its owner disabled the preview; use the logged-in mode.
+- **Posts show `audio not downloadable` in `skipped_media`** – that is the web preview's limit; use the logged-in mode to transcribe audio files and large videos.
+- **Nothing happens for a date range** – check it with `--dry-run`; dates are interpreted in local time and Shamsi years (< 1700) are converted automatically.
+- **A note's title/tags look old after an update** – re-run the range with `--reuse-transcripts` (or `--force`).
 
 ## 🛠️ Features
 - **Smart Context**: Uses previous chunks to identify speakers consistently.
@@ -875,6 +1030,7 @@ versline telegram archive @channel --since 2026-03-01 --until 2026-03-31 -o ~/Va
 - **Rich UI**: Colorful progress bars and spinners.
 - **Flexible**: Agnostic to LLM provider (Google, OpenAI, OpenRouter, AvalAI, Custom).
 - **Markdown-to-Slides**: Generate immersive slide decks (`index.html`, `style.css`, `main.ts`) with optional Vite build and single-file export.
+- **Telegram Archive**: Turn channels (audio, video or text) into Obsidian notes with transcripts, summaries and taqrir, with or without logging in (`--web`).
 - **Proxy Support**: Full support for HTTP/HTTPS proxies.
 - **Resource Limits**: Cap RAM, CPU cores, and GPU VRAM via env vars to prevent OOM crashes on shared machines.
 

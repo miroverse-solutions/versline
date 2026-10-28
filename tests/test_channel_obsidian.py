@@ -24,8 +24,16 @@ class TestObsidian(unittest.TestCase):
         long = obsidian.make_title(_post("کلمه " * 50))
         self.assertLessEqual(len(long), 82)
 
+    def test_title_drops_markdown_links(self):
+        self.assertEqual(obsidian.make_title(_post("[◀](https://t.me/x/1) نکاتی از جریان حسن صباح")), "نکاتی از جریان حسن صباح")
+        self.assertEqual(obsidian.make_title(_post("درس [اول](https://t.me/x/1) فقه")), "درس اول فقه")
+
     def test_hashtags(self):
         self.assertEqual(obsidian.extract_hashtags("متن #فقه_اسلامی و #فقه_اسلامی #123 #علم."), ["فقه_اسلامی", "علم"])
+
+    def test_hashtags_are_valid_obsidian_tags(self):
+        # ZWNJ (حسن‌صباح) makes Obsidian mark the tag invalid; it becomes an underscore.
+        self.assertEqual(obsidian.extract_hashtags("#حسن\u200cصباح #فقه🌷 #a-b"), ["حسن_صباح", "فقه", "a-b"])
 
     def test_note_stem_has_no_link_breaking_chars(self):
         stem = obsidian.note_stem(_post("x"), "a [b] #c | d^e", tz=timezone.utc)

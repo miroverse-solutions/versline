@@ -124,8 +124,12 @@ class TelegramSource:
         self._run(_c())
 
     def close(self) -> None:
+        async def _disconnect():
+            # Telethon's disconnect() runs itself (returning None) when the loop isn't running, so await it from inside one.
+            await self._client.disconnect()
+
         try:
-            self._run(self._client.disconnect())
+            self._run(_disconnect())
         finally:
             self._loop.close()
 
