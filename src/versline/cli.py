@@ -27,7 +27,7 @@ app = typer.Typer(
 # import time, much more on a first Windows run), so skip them when only a setup command is requested.
 _LIGHT_COMMANDS = {"init", "config", "update", "--version"}
 if not (len(sys.argv) > 1 and sys.argv[1] in _LIGHT_COMMANDS):
-    from versline.commands import transcribe, translate, qude, qualcode, slides, summarize, research
+    from versline.commands import transcribe, translate, qude, qualcode, slides, summarize, research, telegram
 
     app.add_typer(transcribe.app, name="transcribe", help="[cyan]Convert audio/video to text[/cyan] using advanced LLMs.")
     app.add_typer(translate.app, name="translate", help="[cyan]Translate text files[/cyan] to other languages.")
@@ -36,6 +36,7 @@ if not (len(sys.argv) > 1 and sys.argv[1] in _LIGHT_COMMANDS):
     app.add_typer(slides.app, name="slides", help="[cyan]Generate immersive HTML/TS slides[/cyan] from markdown files.")
     app.add_typer(summarize.app, name="summarize", help="[cyan]Summarize files[/cyan] (outline, detailed, or slides mode).")
     app.add_typer(research.app, name="research", help="[cyan]Write research sections[/cyan] with a staged outline-to-full pipeline.")
+    app.add_typer(telegram.app, name="telegram", help="[cyan]Archive a Telegram channel[/cyan] (captions + transcripts) as Obsidian notes.")
 
 app.command("init", help="[cyan]First-time setup[/cyan]: choose a provider and save your API key.")(setup.init_command)
 app.command("config", help="[cyan]Show saved settings[/cyan] (API keys are masked).")(setup.config_command)

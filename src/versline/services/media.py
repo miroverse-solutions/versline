@@ -48,6 +48,23 @@ def get_audio_duration(file_path: str) -> float:
         logger.error(f"❌ Unexpected error reading file duration: {e}")
         return None
 
+def extract_audio(src: str, dest: str) -> str:
+    """Extract a mono 64k mp3 track from an audio/video file (video containers can't be chunk-copied as mp3)."""
+    ffmpeg_path = resolve_ffmpeg()
+    try:
+        subprocess.run(
+            [ffmpeg_path, '-i', src, '-vn', '-ac', '1', '-b:a', '64k', '-y', dest],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True,
+        )
+    except FileNotFoundError:
+        raise RuntimeError(f"FFmpeg executable not found at '{ffmpeg_path}'.")
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"ffmpeg failed to extract audio: {e.stderr.decode(errors='replace')[-300:]}")
+    return dest
+
+
 def split_audio_with_ffmpeg(file_path: str, chunk_length_sec: int, chunk_overlap_sec: int, temp_dir: str) -> list[str]:
     """Split audio file into specified chunks with overlap using ffmpeg.
     
@@ -86,7 +103,7 @@ def split_audio_with_ffmpeg(file_path: str, chunk_length_sec: int, chunk_overlap
 
         # Skip if chunk is too short (less than 10 seconds) unless it's the only/last chunk and still meaningful? 
         # Old code break < 10.
-        if chunk_duration < 10:
+        if chunk_duration < 10 and chunk_index > 0:
             break
         
         try:

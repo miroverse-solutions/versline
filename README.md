@@ -850,6 +850,25 @@ versline download [OPTIONS] URL
 | `--output` | `-o` | Output file path or directory. |
 
 
+## 📣 Telegram Channel Archive
+
+Archive a Telegram channel into Obsidian: one note per post (caption, transcript of audio/video, detailed frontmatter) plus a channel index note.
+
+1. Create an app at <https://my.telegram.org> → *API development tools* to get `api_id` / `api_hash`.
+2. `versline telegram login` (once; asks for api_id/api_hash, then your phone number and the code Telegram sends). The session file grants access to your account, so keep it private. Behind a filter, add `--proxy socks5://host:port` or set `VERSLINE_TELEGRAM_PROXY`.
+3. Check what a date range contains, then archive it into your vault:
+
+```sh
+versline telegram archive @channel --since 2026-03-01 --until 2026-03-31 --dry-run
+versline telegram archive @channel --since 2026-03-01 --until 2026-03-31 -o ~/Vault/Telegram/channel
+```
+
+- Dates are Gregorian (`2026-03-01`) or Shamsi (`1404-12-10`), optionally with `HH:MM`; `--until` includes the whole day.
+- `--types audio,voice,video,text` filters post types; text-only posts are archived too. `--no-transcribe` saves captions/metadata only; `--keep-media` saves files under `attachments/` and embeds them; `--max-size MB` skips big files.
+- Re-running skips finished posts (manifest `.versline-channel.json`); `--force` redoes them. A failing post is reported and retried next run without stopping the rest.
+- Transcription uses the same provider settings and options as `versline transcribe` (`--model`, `--note`, ...).
+- Layout: `<out>/<Channel>.md` (index), `<out>/posts/YYYY-MM-DD - <id> - <title>.md`.
+
 ## 🛠️ Features
 - **Smart Context**: Uses previous chunks to identify speakers consistently.
 - **Retry Mechanism**: Automatically retries failed API calls.

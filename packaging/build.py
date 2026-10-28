@@ -14,6 +14,6 @@ args = ["packaging/entry.py", "--name", "versline", "--onedir", "--noconfirm", "
         "--distpath", "dist-bin", "--workpath", "build-bin", "--specpath", "build-bin"]
 for pkg in COLLECT_ALL:
     args += ["--collect-all", pkg]
-for pkg in ("pydantic", "pydantic_settings", "loguru", "tiktoken"):
+for pkg in ("pydantic", "pydantic_settings", "loguru", "tiktoken", "telethon"):
     args += ["--collect-submodules", pkg]
 PyInstaller.__main__.run(args)
