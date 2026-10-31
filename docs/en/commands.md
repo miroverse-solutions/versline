@@ -31,6 +31,8 @@ Audio/video is split with ffmpeg into overlapping chunks (default 900 s, 180 s o
 | `-j, --json` | Structured JSON output | off |
 | `-f, --force` | Ignore the cache | off |
 | `--skip-blocked` | Skip chunks blocked by the provider (leaves a `[⚠️ chunk N/M skipped: ...]` placeholder) instead of aborting | off |
+| `--compress` | Re-encode audio to mono low-bitrate mp3 before splitting so chunks stay small (avoids provider payload limits) | off |
+| `--compress-kbps` | Bitrate (kbps) used by `--compress` | 32 |
 | `--timestamped` | Also produce time-aligned segments. Tries the native STT endpoint (`verbose_json`) and falls back to chunk-based timestamping. Writes a JSON result plus the full text in a sibling `.md`. | off |
 | `--timestamp-model` | STT model | `gpt-4o-mini-transcribe` |
 | `--chunk-minutes N` | Minutes per chunk for chunk-based phases | config |

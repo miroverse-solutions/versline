@@ -771,7 +771,7 @@ class AudioTranscriber:
             "source": "api_native_verbose_json",
         }
 
-    def process_file(self, file_path: str, chunk_length=900, overlap=180, progress_callback=None, force=False, timestamped: bool = False, timestamp_model: str | None = None, chunk_minutes: int | None = None, native_timestamps_only: bool = False, reuse_transcript: bool = False, force_timestamps: bool = False, skip_blocked: bool = False):
+    def process_file(self, file_path: str, chunk_length=900, overlap=180, progress_callback=None, force=False, timestamped: bool = False, timestamp_model: str | None = None, chunk_minutes: int | None = None, native_timestamps_only: bool = False, reuse_transcript: bool = False, force_timestamps: bool = False, skip_blocked: bool = False, compress_kbps: int | None = None):
         """Transcribe audio file. If timestamped=True, also produce timestamp-aligned segments.
         
         Returns:
@@ -782,7 +782,7 @@ class AudioTranscriber:
         chunk-based fallback is skipped entirely and an error is raised on failure.
         """
         # --- Phase 1: Primary transcription with main model ---
-        full_text = self._process_file_internal(file_path, chunk_length, overlap, progress_callback, force, reuse_only=reuse_transcript, skip_blocked=skip_blocked)
+        full_text = self._process_file_internal(file_path, chunk_length, overlap, progress_callback, force, reuse_only=reuse_transcript, skip_blocked=skip_blocked, compress_kbps=compress_kbps)
         
         if not timestamped:
             return full_text
@@ -915,7 +915,7 @@ class AudioTranscriber:
             progress_callback(1, 1, f"✅ Chunk-based timestamp: {len(segments)} segments")
         return result
 
-    def _process_file_internal(self, file_path, chunk_length, overlap, progress_callback, force, reuse_only=False, skip_blocked=False):
+    def _process_file_internal(self, file_path, chunk_length, overlap, progress_callback, force, reuse_only=False, skip_blocked=False, compress_kbps=None):
         """Internal: the original process_file logic, returning plain text."""
         import shutil
         file_path = str(Path(file_path).resolve())
@@ -931,6 +931,7 @@ class AudioTranscriber:
                     progress_file.unlink()
                 except OSError as e:
                     logger.warning(f"Failed to delete progress file: {e}")
+            (work_dir / "compressed.mp3").unlink(missing_ok=True)
             if temp_dir.exists():
                 logger.warning("Force mode enabled: Deleting cached audio chunks.")
                 try:
@@ -947,8 +948,14 @@ class AudioTranscriber:
             logger.info(f"📂 Using {len(existing_chunks)} cached audio chunks (skipping re-split).")
             chunks = [str(p) for p in existing_chunks]
         else:
+            split_source = file_path
+            if compress_kbps:
+                split_source = str(work_dir / "compressed.mp3")
+                if not Path(split_source).exists():
+                    logger.info(f"🗜️ Compressing audio to mono {compress_kbps}k before splitting…")
+                    media.extract_audio(file_path, split_source, bitrate=f"{compress_kbps}k")
             chunks = media.split_audio_with_ffmpeg(
-                file_path, chunk_length, overlap, str(temp_dir)
+                split_source, chunk_length, overlap, str(temp_dir)
             )
         
         total_chunks = len(chunks)

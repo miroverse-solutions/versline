@@ -48,12 +48,12 @@ def get_audio_duration(file_path: str) -> float:
         logger.error(f"❌ Unexpected error reading file duration: {e}")
         return None
 
-def extract_audio(src: str, dest: str) -> str:
-    """Extract a mono 64k mp3 track from an audio/video file (video containers can't be chunk-copied as mp3)."""
+def extract_audio(src: str, dest: str, bitrate: str = '64k') -> str:
+    """Extract a mono mp3 track (64k by default) from an audio/video file (video containers can't be chunk-copied as mp3)."""
     ffmpeg_path = resolve_ffmpeg()
     try:
         subprocess.run(
-            [ffmpeg_path, '-i', src, '-vn', '-ac', '1', '-b:a', '64k', '-y', dest],
+            [ffmpeg_path, '-i', src, '-vn', '-ac', '1', '-b:a', bitrate, '-y', dest],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             check=True,

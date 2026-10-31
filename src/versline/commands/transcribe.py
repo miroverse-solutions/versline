@@ -28,6 +28,8 @@ def transcribe_file(
     api_endpoint: Optional[str] = typer.Option(None, help="Custom API Endpoint"),
     proxy: Optional[str] = typer.Option(None, help="Proxy URL"),
     extra_body: Optional[str] = typer.Option(None, "--extra-body", help=EXTRA_BODY_HELP),
+    compress: bool = typer.Option(False, "--compress", help="Re-encode audio to mono low-bitrate mp3 before splitting, so chunks stay small (avoids provider payload-size limits)"),
+    compress_kbps: int = typer.Option(32, "--compress-kbps", help="Bitrate in kbps used by --compress"),
     # Advanced options
     prompt_file: Optional[Path] = typer.Option(None, help="Custom system prompt file"),
     json_output: bool = typer.Option(False, "--json", "-j", help="Output in JSON format (using predefined schema)"),
@@ -159,6 +161,7 @@ def transcribe_file(
                 native_timestamps_only=native_timestamps_only,
                 reuse_transcript=reuse_transcript,
                 skip_blocked=skip_blocked,
+                compress_kbps=compress_kbps if compress else None,
             )
         
         if output:
