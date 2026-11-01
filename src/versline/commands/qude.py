@@ -1,6 +1,6 @@
 import typer
-from versline.commands._common import EXTRA_BODY_HELP, apply_extra_body_option
-from typing import Optional
+from versline.commands._common import EXTRA_BODY_HELP, INTERSPERSED, apply_extra_body_option
+from typing import List, Optional
 from pathlib import Path
 import os
 
@@ -12,12 +12,12 @@ from versline.core.constants import (
 )
 from versline.core.prompts import resolve_user_note
 
-app = typer.Typer(help="Generate questions from documents.")
+app = typer.Typer(help="Generate questions from documents.", context_settings=INTERSPERSED)
 
 @app.callback(invoke_without_command=True)
 def main(
     ctx: typer.Context,
-    input_path: Optional[Path] = typer.Argument(None, help="Input file or directory", exists=True),
+    input_paths: Optional[List[Path]] = typer.Argument(None, help="Input file(s) or folder(s). Options may follow them.", exists=True),
     output_dir: Path = typer.Option("output", "--output", "-o", help="Output directory"),
     provider: Optional[str] = typer.Option(None, "--provider", "-p", help="AI Provider (openai, avalai, gemini, openrouter, custom)"),
     model: Optional[str] = typer.Option(None, "--model", "-m", help="AI Model name"),
@@ -61,7 +61,7 @@ def main(
         return
 
     # If no input path provided and not showing help
-    if input_path is None:
+    if not input_paths:
         typer.echo(ctx.get_help())
         raise typer.Exit()
 
@@ -69,7 +69,7 @@ def main(
         apply_extra_body_option(extra_body)
 
     designer = QuestionDesigner(
-        input_path=str(input_path),
+        input_path=[str(p) for p in input_paths],
         output_dir=str(output_dir),
         provider=provider,
         model=model,

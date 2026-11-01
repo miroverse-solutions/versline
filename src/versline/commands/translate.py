@@ -1,7 +1,7 @@
 import typer
-from versline.commands._common import EXTRA_BODY_HELP, apply_extra_body_option
+from versline.commands._common import EXTRA_BODY_HELP, INTERSPERSED, apply_extra_body_option
 import re
-from typing import Optional
+from typing import List, Optional
 from pathlib import Path
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 from loguru import logger
@@ -9,8 +9,11 @@ from versline.services.translation import TextTranslator
 from versline.config import settings
 from versline.services.pricing import print_cost_report
 from versline.core.prompts import resolve_user_note
+from versline.commands._batch import (
+    DONE, SKIPPED, TEXT_EXTENSIONS, expand_inputs, output_is_complete, resolve_batch_output, run_batch,
+)
 
-app = typer.Typer(help="Translate files.")
+app = typer.Typer(help="Translate files.", context_settings=INTERSPERSED)
 
 
 def _markdown_to_text(markdown: str) -> str:
@@ -29,8 +32,10 @@ def _markdown_to_text(markdown: str) -> str:
     return text.strip()
 
 
-def _resolve_output_paths(file_path: Path, output: Optional[Path]) -> tuple[Path, Path]:
-    if output:
+def _resolve_output_paths(file_path: Path, output: Optional[Path], output_dir: bool = False) -> tuple[Path, Path]:
+    if output and output_dir:
+        base_path = output / f"{file_path.stem}_translated"
+    elif output:
         base_path = output.with_suffix("") if output.suffix else output
     else:
         base_path = file_path.with_name(f"{file_path.stem}_translated")
@@ -40,8 +45,8 @@ def _resolve_output_paths(file_path: Path, output: Optional[Path]) -> tuple[Path
 @app.callback(invoke_without_command=True)
 def translate_file(
     ctx: typer.Context,
-    file_path: Optional[Path] = typer.Argument(None, help="Path to the input file", exists=True),
-    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Base output path (writes both .md and .txt)"),
+    file_paths: Optional[List[Path]] = typer.Argument(None, help="Input file(s), folder(s) or glob(s). Options may follow them."),
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Base output path (writes both .md and .txt); a directory when several inputs are given"),
     target_lang: str = typer.Option("Persian", "--lang", "-l", help="Target language (e.g. Persian, English, French)"),
     model: Optional[str] = typer.Option(None, help="LLM Model to use (overrides config)"),
     provider: Optional[str] = typer.Option(None, help="LLM Provider (Google, OpenAI, OpenRouter, AvalAI, OpenAICompatible)"),
@@ -49,7 +54,8 @@ def translate_file(
     api_endpoint: Optional[str] = typer.Option(None, help="Custom API Endpoint"),
     proxy: Optional[str] = typer.Option(None, help="Proxy URL"),
     extra_body: Optional[str] = typer.Option(None, "--extra-body", help=EXTRA_BODY_HELP),
-    force: bool = typer.Option(False, "--force", "-f", help="Force re-translation (ignore cache)"),
+    force: bool = typer.Option(False, "--force", "-f", help="Re-translate even if the output already exists (ignore saved progress)"),
+    recursive: bool = typer.Option(False, "--recursive", help="Also search sub-folders of folder inputs"),
     note: Optional[str] = typer.Option(None, "--note", help="Additional instruction to append to the prompt"),
     note_file: Optional[Path] = typer.Option(None, "--note-file", help="Path to a .md or .txt file with an additional instruction"),
 ):
@@ -61,7 +67,7 @@ def translate_file(
     if ctx.invoked_subcommand is not None:
         return
 
-    if not file_path:
+    if not file_paths:
         typer.echo(ctx.get_help())
         raise typer.Exit()
 
@@ -78,50 +84,63 @@ def translate_file(
     if extra_body:
         apply_extra_body_option(extra_body)
 
-    logger.info(f"Starting translation for: {file_path}")
-    
+    inputs = expand_inputs(file_paths, TEXT_EXTENSIONS, recursive=recursive)
+    if not inputs:
+        logger.error("No input files found.")
+        raise typer.Exit(code=1)
+    output = resolve_batch_output(output, len(inputs))
+    output_is_dir = len(inputs) > 1
+
     user_note = resolve_user_note(note=note, note_file=str(note_file) if note_file else None)
     translator = TextTranslator(user_note=user_note)
-    
+
+    def process_one(file_path: Path):
+        md_output_path, txt_output_path = _resolve_output_paths(file_path, output, output_is_dir)
+        if not force and output_is_complete(md_output_path, txt_output_path):
+            logger.info(f"Skipping {file_path}: {md_output_path} already exists (use --force to redo)")
+            return SKIPPED
+
+        logger.info(f"Starting translation for: {file_path}")
+        try:
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                redirect_stdout=True,
+                redirect_stderr=True,
+            ) as progress:
+                task_id = progress.add_task("[blue]Translating...", total=100)
+
+                def progress_handler(current, total, message):
+                    progress.update(task_id, completed=current, total=total, description=message)
+
+                final_text = translator.process_file(
+                    str(file_path),
+                    target_language=target_lang,
+                    progress_callback=progress_handler,
+                    force=force
+                )
+
+            md_output_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(md_output_path, "w", encoding="utf-8") as md_file:
+                md_file.write(final_text)
+
+            txt_content = _markdown_to_text(final_text)
+            with open(txt_output_path, "w", encoding="utf-8") as txt_file:
+                txt_file.write(txt_content)
+
+            logger.success(f"Markdown translation saved to: {md_output_path}")
+            logger.success(f"Text translation saved to: {txt_output_path}")
+        except Exception as e:
+            logger.error(f"Translation failed for {file_path}: {e}")
+            raise typer.Exit(code=1)
+        return DONE
+
     try:
-        final_text = ""
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            redirect_stdout=True,
-            redirect_stderr=True,
-        ) as progress:
-            task_id = progress.add_task("[blue]Translating...", total=100)
-            
-            def progress_handler(current, total, message):
-                progress.update(task_id, completed=current, total=total, description=message)
-                
-            final_text = translator.process_file(
-                str(file_path),
-                target_language=target_lang,
-                progress_callback=progress_handler,
-                force=force
-            )
-            
-        md_output_path, txt_output_path = _resolve_output_paths(file_path, output)
-
-        with open(md_output_path, "w", encoding="utf-8") as md_file:
-            md_file.write(final_text)
-
-        txt_content = _markdown_to_text(final_text)
-        with open(txt_output_path, "w", encoding="utf-8") as txt_file:
-            txt_file.write(txt_content)
-
-        logger.success(f"Markdown translation saved to: {md_output_path}")
-        logger.success(f"Text translation saved to: {txt_output_path}")
-
+        run_batch(inputs, process_one)
+    finally:
         print_cost_report(translator.tracker, api_key=settings.llm.api_key)
-
-    except Exception as e:
-        logger.error(f"Translation failed: {e}")
-        raise typer.Exit(code=1)
 
 if __name__ == "__main__":
     app()

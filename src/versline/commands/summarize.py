@@ -1,6 +1,6 @@
 import typer
-from versline.commands._common import EXTRA_BODY_HELP, apply_extra_body_option
-from typing import Optional
+from versline.commands._common import EXTRA_BODY_HELP, INTERSPERSED, apply_extra_body_option
+from typing import List, Optional
 from pathlib import Path
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 from loguru import logger
@@ -9,13 +9,17 @@ from versline.services.summarizer import TextSummarizer, MODES, _AUTO_LANG
 from versline.config import settings
 from versline.services.pricing import print_cost_report
 from versline.core.prompts import resolve_user_note
-from typing import Optional
+from versline.commands._batch import (
+    DONE, SKIPPED, TEXT_EXTENSIONS, expand_inputs, output_is_complete, resolve_batch_output, run_batch,
+)
 
-app = typer.Typer(help="Summarize files in multiple modes.")
+app = typer.Typer(help="Summarize files in multiple modes.", context_settings=INTERSPERSED)
 
 
-def _resolve_output_path(file_path: Path, output: Optional[Path], mode: str) -> Path:
-    if output:
+def _resolve_output_path(file_path: Path, output: Optional[Path], mode: str, output_dir: bool = False) -> Path:
+    if output and output_dir:
+        base = output / f"{file_path.stem}_summary_{mode}"
+    elif output:
         base = output.with_suffix("") if output.suffix else output
     else:
         base = file_path.with_name(f"{file_path.stem}_summary_{mode}")
@@ -25,8 +29,8 @@ def _resolve_output_path(file_path: Path, output: Optional[Path], mode: str) -> 
 @app.callback(invoke_without_command=True)
 def summarize_file(
     ctx: typer.Context,
-    file_path: Optional[Path] = typer.Argument(
-        None, help="Path to the input file", exists=True
+    file_paths: Optional[List[Path]] = typer.Argument(
+        None, help="Input file(s), folder(s) or glob(s). Options may follow them."
     ),
     mode: str = typer.Option(
         "detailed",
@@ -76,8 +80,10 @@ def summarize_file(
             "Omit to let the LLM decide based on the selected mode."
         ),
     ),    output: Optional[Path] = typer.Option(
-        None, "--output", "-o", help="Output .md file path"
+        None, "--output", "-o", help="Output .md file path (a directory when several inputs are given)"
     ),
+    force: bool = typer.Option(False, "--force", "-f", help="Re-summarize even if the output already exists (ignore saved progress)"),
+    recursive: bool = typer.Option(False, "--recursive", help="Also search sub-folders of folder inputs"),
     model: Optional[str] = typer.Option(None, help="LLM model to use (overrides config)"),
     provider: Optional[str] = typer.Option(
         None, help="LLM provider (Google, OpenAI, OpenRouter, AvalAI, OpenAICompatible)"
@@ -107,7 +113,7 @@ def summarize_file(
     if ctx.invoked_subcommand is not None:
         return
 
-    if not file_path:
+    if not file_paths:
         typer.echo(ctx.get_help())
         raise typer.Exit()
 
@@ -131,7 +137,12 @@ def summarize_file(
     if extra_body:
         apply_extra_body_option(extra_body)
 
-    logger.info(f"Starting summarization [{mode}{'|didactic' if didactic else ''}{'|' + str(compression) + '%' if compression else ''}] for: {file_path}")
+    inputs = expand_inputs(file_paths, TEXT_EXTENSIONS, recursive=recursive)
+    if not inputs:
+        logger.error("No input files found.")
+        raise typer.Exit(code=1)
+    output = resolve_batch_output(output, len(inputs))
+    output_is_dir = len(inputs) > 1
 
     summarizer = TextSummarizer(
         mode=mode,
@@ -142,38 +153,48 @@ def summarize_file(
         user_note=resolve_user_note(note=note, note_file=str(note_file) if note_file else None),
     )
 
-    try:
-        result = ""
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            redirect_stdout=True,
-            redirect_stderr=True,
-        ) as progress:
-            task_id = progress.add_task("[blue]Summarizing…", total=100)
+    def process_one(file_path: Path):
+        out_path = _resolve_output_path(file_path, output, mode, output_is_dir)
+        if not force and output_is_complete(out_path):
+            logger.info(f"Skipping {file_path}: {out_path} already exists (use --force to redo)")
+            return SKIPPED
 
-            def progress_handler(current, total, message):
-                progress.update(
-                    task_id, completed=current, total=total, description=message
+        logger.info(f"Starting summarization [{mode}{'|didactic' if didactic else ''}{'|' + str(compression) + '%' if compression else ''}] for: {file_path}")
+        try:
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                redirect_stdout=True,
+                redirect_stderr=True,
+            ) as progress:
+                task_id = progress.add_task("[blue]Summarizing…", total=100)
+
+                def progress_handler(current, total, message):
+                    progress.update(
+                        task_id, completed=current, total=total, description=message
+                    )
+
+                result = summarizer.process_file(
+                    str(file_path),
+                    progress_callback=progress_handler,
+                    force=force,
                 )
 
-            result = summarizer.process_file(
-                str(file_path),
-                progress_callback=progress_handler,
-            )
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(result, encoding="utf-8")
 
-        out_path = _resolve_output_path(file_path, output, mode)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(result, encoding="utf-8")
+            logger.success(f"Summary saved to: {out_path}")
+        except Exception as exc:
+            logger.error(f"Summarization failed for {file_path}: {exc}")
+            raise typer.Exit(code=1)
+        return DONE
 
-        logger.success(f"Summary saved to: {out_path}")
+    try:
+        run_batch(inputs, process_one)
+    finally:
         print_cost_report(summarizer.tracker, api_key=settings.llm.api_key)
-
-    except Exception as exc:
-        logger.error(f"Summarization failed: {exc}")
-        raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":

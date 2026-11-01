@@ -11,6 +11,7 @@ from versline.services import ai
 from versline.services.ai import track_openai_usage
 from versline.services.document_processor import convert_to_markdown
 from versline.services.pricing import TokenTracker
+from versline.services.resume import ChunkResume
 
 MODES = {
     "outline": "summarize_outline_prompt.md",
@@ -424,6 +425,7 @@ class TextSummarizer:
         self,
         file_path: str,
         progress_callback=None,
+        force: bool = False,
     ) -> str:
         """Read *file_path*, summarize it in *self.mode*, and return Markdown."""
         text = self._read_source_text(file_path)
@@ -433,13 +435,23 @@ class TextSummarizer:
 
         if self.didactic:
             return self._process_didactic(text, settings.llm.model, progress_callback)
-        return self._process_chunked(text, settings.llm.model, progress_callback)
+        resume = ChunkResume(
+            "summarize", file_path, text,
+            [self.mode, self.output_lang, self.preserve_terms, self.compression,
+             settings.llm.provider, settings.llm.model, self.user_note],
+        )
+        if force:
+            resume.clear()
+        result = self._process_chunked(text, settings.llm.model, progress_callback, resume)
+        resume.clear()
+        return result
 
-    def _process_chunked(self, text: str, model_name: str, progress_callback) -> str:
+    def _process_chunked(self, text: str, model_name: str, progress_callback, resume: Optional[ChunkResume] = None) -> str:
         """Standard chunked pipeline (default, non-didactic)."""
         chunks = self.split_by_sections(text)
         total = len(chunks)
         results: list[str] = []
+        done = resume.load() if resume else {}
 
         if progress_callback:
             progress_callback(0, total, "Starting summarization…")
@@ -449,11 +461,19 @@ class TextSummarizer:
                 results.append("")
                 continue
 
+            if i in done:
+                results.append(done[i])
+                if progress_callback:
+                    progress_callback(i + 1, total, f"Part {i + 1} already summarized")
+                continue
+
             if progress_callback:
                 progress_callback(i, total, f"Summarizing part {i + 1}/{total}…")
 
             summarized = self.summarize_chunk(chunk, model_name)
             results.append(summarized)
+            if resume:
+                resume.save(i, summarized)
 
             if progress_callback:
                 progress_callback(i + 1, total, f"Completed part {i + 1}")

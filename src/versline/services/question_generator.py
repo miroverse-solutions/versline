@@ -5,7 +5,7 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Sequence, Union
 
 from rich.console import Console
 from rich.panel import Panel
@@ -47,7 +47,7 @@ _FILLER_TOKENS = {
 class QuestionDesigner:
     def __init__(
         self,
-        input_path: str,
+        input_path: Union[str, Sequence[str]],
         output_dir: str,
         provider: Optional[str] = None,
         model: Optional[str] = None,
@@ -69,7 +69,9 @@ class QuestionDesigner:
         user_note: Optional[str] = None,
         answer_length: Optional[str] = None,
     ):
-        self.input_path = Path(input_path)
+        paths = [input_path] if isinstance(input_path, (str, Path)) else list(input_path)
+        self.input_paths = [Path(p) for p in paths]
+        self.input_path = self.input_paths[0]
         self.output_dir = Path(output_dir)
         
         # Resolve settings from global config if not provided
@@ -296,18 +298,31 @@ class QuestionDesigner:
             # Try to read directly if load_prompt fails (though load_prompt handles it)
             raise
 
+    def _collect_input_files(self) -> list:
+        """Files from every input path (folders expanded recursively), de-duplicated, in order."""
+        files, seen = [], set()
+        for path in self.input_paths:
+            if path.is_file():
+                found = [path]
+            elif path.is_dir():
+                found = []
+                for ext in ['.pptx', '.ppt', '.pdf', '.docx', '.md', '.txt']:
+                    found.extend(sorted(path.rglob(f"*{ext}")))
+            else:
+                found = []
+            for f in found:
+                key = f.resolve()
+                if key not in seen:
+                    seen.add(key)
+                    files.append(f)
+        return files
+
     def process(self):
         """Main processing loop."""
-        input_files = []
-        if self.input_path.is_file():
-            input_files = [self.input_path]
-        elif self.input_path.is_dir():
-            # Recursively find supported files
-            for ext in ['.pptx', '.ppt', '.pdf', '.docx', '.md', '.txt']:
-                input_files.extend(self.input_path.rglob(f"*{ext}"))
+        input_files = self._collect_input_files()
         
         if not input_files:
-            console.print(f"[yellow]No supported files found in {self.input_path}[/yellow]")
+            console.print(f"[yellow]No supported files found in {', '.join(str(p) for p in self.input_paths)}[/yellow]")
             return
         
         console.print(Panel(f"Found [bold]{len(input_files)}[/bold] files to process", title="Question Designer"))
@@ -428,19 +443,14 @@ class QuestionDesigner:
         # Anki
         if save_all or "anki" in self.output_formats or "apkg" in self.output_formats:
             anki_path = self.output_dir / f"{base_name}.apkg"
-            deck_name = f"GenQ::{self.input_path.name}::{timestamp}"
+            deck_name = f"GenQ::{self.input_path.name}{'+' + str(len(self.input_paths) - 1) if len(self.input_paths) > 1 else ''}::{timestamp}"
             create_anki_package(questions, str(anki_path), deck_name, self.question_type, css=css_content)
             console.print(f"[green]Saved Anki Deck: {anki_path}[/green]")
 
     def regenerate_from_cache(self):
         """Regenerate outputs from cached data without calling AI."""
-        input_files = []
-        if self.input_path.is_file():
-            input_files = [self.input_path]
-        elif self.input_path.is_dir():
-            for ext in ['.pptx', '.ppt', '.pdf', '.docx', '.md', '.txt']:
-                input_files.extend(self.input_path.rglob(f"*{ext}"))
-                
+        input_files = self._collect_input_files()
+
         all_questions = []
         for file_path in input_files:
             cached_data = self.cache_manager.get(file_path, self.question_type.value, self.language)

@@ -7,6 +7,7 @@ from versline.services import ai
 from versline.services.ai import track_openai_usage
 from versline.core.prompts import load_prompt
 from versline.services.pricing import TokenTracker
+from versline.services.resume import ChunkResume
 from versline.services.document_processor import convert_to_markdown
 
 class TextTranslator:
@@ -160,25 +161,41 @@ class TextTranslator:
             raise ValueError("Input file is empty after text extraction.")
 
         chunks = self.split_text(text)
-        
+
         translated_chunks = []
         total = len(chunks)
-        
+
+        resume = ChunkResume(
+            "translate", file_path, text,
+            [target_language, settings.llm.provider, settings.llm.model, self.user_note],
+        )
+        if force:
+            resume.clear()
+        done = resume.load()
+
         if progress_callback:
             progress_callback(0, total, "Starting translation...")
-            
+
         for i, chunk in enumerate(chunks):
             if not chunk.strip():
                 translated_chunks.append("")
                 continue
-                
+
+            if i in done:
+                translated_chunks.append(done[i])
+                if progress_callback:
+                    progress_callback(i+1, total, f"Part {i+1} already translated")
+                continue
+
             if progress_callback:
                 progress_callback(i, total, f"Translating part {i+1}/{total}...")
-                
+
             translated = self.translate_chunk(chunk, target_language, settings.llm.model)
             translated_chunks.append(translated)
-            
+            resume.save(i, translated)
+
             if progress_callback:
                 progress_callback(i+1, total, f"Completed part {i+1}")
-                
+
+        resume.clear()
         return "\n\n".join(translated_chunks)

@@ -3,7 +3,7 @@ from typing import List, Optional
 import json
 
 import typer
-from versline.commands._common import EXTRA_BODY_HELP, apply_extra_body_option
+from versline.commands._common import EXTRA_BODY_HELP, INTERSPERSED, apply_extra_body_option
 from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn
 from loguru import logger
 
@@ -11,8 +11,9 @@ from versline.config import settings
 from versline.services.qualitative_coding import QualitativeCoder
 from versline.services.pricing import print_cost_report
 from versline.core.prompts import resolve_user_note
+from versline.commands._batch import DONE, SKIPPED, TEXT_EXTENSIONS, expand_inputs, run_batch
 
-app = typer.Typer(help="Qualitative coding for Markdown files with multiple research methods.")
+app = typer.Typer(help="Qualitative coding for Markdown files with multiple research methods.", context_settings=INTERSPERSED)
 
 
 def _extract_codes_from_text(raw_text: str) -> List[str]:
@@ -41,7 +42,7 @@ def _load_codebook_codes(codebook_path: Path) -> List[str]:
 @app.callback(invoke_without_command=True)
 def qualcode_file(
     ctx: typer.Context,
-    input_path: Optional[Path] = typer.Argument(None, help="Path to markdown/text file", exists=True),
+    input_paths: Optional[List[Path]] = typer.Argument(None, help="Markdown/text file(s), folder(s) or glob(s). Options may follow them."),
     output_dir: Path = typer.Option("output", "--output", "-o", help="Output directory"),
     methods: List[str] = typer.Option(["thematic"], "--method", "-m", help="Coding method (repeatable): thematic, grounded, content, framework, colaizzi"),
     formats: List[str] = typer.Option(["json", "markdown"], "--format", help="Output formats (repeatable): json, markdown, csv, segments-csv, detailed-csv"),
@@ -61,7 +62,8 @@ def qualcode_file(
     api_endpoint: Optional[str] = typer.Option(None, "--api-endpoint", help="Custom API endpoint"),
     proxy: Optional[str] = typer.Option(None, "--proxy", help="Proxy URL"),
     extra_body: Optional[str] = typer.Option(None, "--extra-body", help=EXTRA_BODY_HELP),
-    force: bool = typer.Option(False, "--force", "-f", help="Force rerun and ignore progress cache"),
+    force: bool = typer.Option(False, "--force", "-f", help="Force rerun: ignore progress cache and existing outputs"),
+    recursive: bool = typer.Option(False, "--recursive", help="Also search sub-folders of folder inputs"),
     note: Optional[str] = typer.Option(None, "--note", help="Additional instruction to append to the prompt"),
     note_file: Optional[Path] = typer.Option(None, "--note-file", help="Path to a .md or .txt file with an additional instruction"),
 ):
@@ -69,7 +71,7 @@ def qualcode_file(
     if ctx.invoked_subcommand is not None:
         return
 
-    if input_path is None:
+    if not input_paths:
         typer.echo(ctx.get_help())
         raise typer.Exit()
 
@@ -85,6 +87,11 @@ def qualcode_file(
         settings.llm.proxy = proxy
     if extra_body:
         apply_extra_body_option(extra_body)
+
+    inputs = expand_inputs(input_paths, TEXT_EXTENSIONS, recursive=recursive)
+    if not inputs:
+        logger.error("No input files found.")
+        raise typer.Exit(code=1)
 
     try:
         codebook_codes = list(codes)
@@ -110,31 +117,47 @@ def qualcode_file(
             user_note=resolve_user_note(note=note, note_file=str(note_file) if note_file else None),
         )
 
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            transient=False,
-        ) as progress:
-            task = progress.add_task("Starting qualitative coding...", total=100)
+        def process_one(input_path: Path):
+            if not force and any(output_dir.glob(f"{input_path.stem}_qual_*")):
+                logger.info(f"Skipping {input_path}: coded output already exists in {output_dir} (use --force to redo)")
+                return SKIPPED
 
-            def progress_handler(current: int, total: int, message: str):
-                progress.update(task, completed=current, total=total, description=message)
+            logger.info(f"Starting qualitative coding for: {input_path}")
+            try:
+                with Progress(
+                    SpinnerColumn(),
+                    TextColumn("[progress.description]{task.description}"),
+                    BarColumn(),
+                    TaskProgressColumn(),
+                    transient=False,
+                ) as progress:
+                    task = progress.add_task("Starting qualitative coding...", total=100)
 
-            outputs = coder.process_file(str(input_path), progress_callback=progress_handler)
+                    def progress_handler(current: int, total: int, message: str):
+                        progress.update(task, completed=current, total=total, description=message)
 
-        for fmt, path in outputs.items():
-            logger.success(f"Saved {fmt} output: {path}")
+                    outputs = coder.process_file(str(input_path), progress_callback=progress_handler)
+            except Exception as error:
+                logger.error(f"Qualitative coding failed for {input_path}: {error}")
+                raise typer.Exit(code=1)
 
-        if coder.last_parse_failures > 0:
-            logger.warning(
-                f"Completed with {coder.last_parse_failures} parse failure(s). "
-                "Check output quality or rerun with --fail-on-parse-error."
-            )
+            for fmt, path in outputs.items():
+                logger.success(f"Saved {fmt} output: {path}")
 
-        print_cost_report(coder.tracker, api_key=settings.llm.api_key)
+            if coder.last_parse_failures > 0:
+                logger.warning(
+                    f"Completed with {coder.last_parse_failures} parse failure(s). "
+                    "Check output quality or rerun with --fail-on-parse-error."
+                )
+            return DONE
 
+        try:
+            run_batch(inputs, process_one)
+        finally:
+            print_cost_report(coder.tracker, api_key=settings.llm.api_key)
+
+    except typer.Exit:
+        raise
     except Exception as error:
         logger.error(f"Qualitative coding failed: {error}")
         raise typer.Exit(code=1)

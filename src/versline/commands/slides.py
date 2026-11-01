@@ -1,8 +1,8 @@
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 import typer
-from versline.commands._common import EXTRA_BODY_HELP, apply_extra_body_option
+from versline.commands._common import EXTRA_BODY_HELP, INTERSPERSED, apply_extra_body_option
 from loguru import logger
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
@@ -10,15 +10,20 @@ from versline.config import settings
 from versline.services.pricing import print_cost_report
 from versline.services.slides import MarkdownSlideDeckGenerator
 from versline.core.prompts import resolve_user_note
+from versline.commands._batch import DONE, SKIPPED, TEXT_EXTENSIONS, expand_inputs, run_batch
 
-app = typer.Typer(help="Generate immersive HTML/CSS/TypeScript slide decks from Markdown.")
+DECK_COMPLETE_MARKER = ".versline_complete"
+
+app = typer.Typer(help="Generate immersive HTML/CSS/TypeScript slide decks from Markdown.", context_settings=INTERSPERSED)
 
 
 @app.callback(invoke_without_command=True)
 def generate_slides(
     ctx: typer.Context,
-    input_path: Optional[Path] = typer.Argument(None, help="Path to markdown input file", exists=True),
+    input_paths: Optional[List[Path]] = typer.Argument(None, help="Markdown file(s), folder(s) or glob(s). Options may follow them."),
     output_dir: Path = typer.Option("output", "--output", "-o", help="Output directory"),
+    force: bool = typer.Option(False, "--force", "-f", help="Regenerate even if a finished deck for the file already exists"),
+    recursive: bool = typer.Option(False, "--recursive", help="Also search sub-folders of folder inputs"),
     prompt_file: Optional[Path] = typer.Option(None, "--prompt-file", help="Custom prompt markdown file"),
     font_file: Optional[Path] = typer.Option(None, "--font-file", help="Local font file path (.ttf, .otf, .woff, .woff2)"),
     font_family: str = typer.Option("Vazirmatn", "--font-family", help="Font family name used in generated CSS"),
@@ -104,7 +109,7 @@ def generate_slides(
     if ctx.invoked_subcommand is not None:
         return
 
-    if input_path is None:
+    if not input_paths:
         typer.echo(ctx.get_help())
         raise typer.Exit()
 
@@ -131,6 +136,11 @@ def generate_slides(
     if npm_registry:
         settings.slides.npm_registry = npm_registry
 
+    inputs = expand_inputs(input_paths, TEXT_EXTENSIONS, recursive=recursive)
+    if not inputs:
+        logger.error("No input files found.")
+        raise typer.Exit(code=1)
+
     generator = MarkdownSlideDeckGenerator(
         provider=settings.llm.provider,
         model=settings.llm.model,
@@ -151,53 +161,63 @@ def generate_slides(
         npm_registry=settings.slides.npm_registry,
     )
 
+    def process_one(input_path: Path):
+        if not force and any(
+            (deck / DECK_COMPLETE_MARKER).exists()
+            for deck in output_dir.glob(f"{input_path.stem}_slides_*")
+        ):
+            logger.info(f"Skipping {input_path}: a finished deck already exists in {output_dir} (use --force to redo)")
+            return SKIPPED
+
+        logger.info(f"Generating slides for: {input_path}")
+        try:
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                transient=False,
+            ) as progress:
+                task = progress.add_task("Calling LLM…", total=None)
+
+                def on_progress(message: str) -> None:
+                    progress.update(task, description=message)
+
+                result = generator.generate_from_markdown(
+                    input_path=str(input_path),
+                    output_dir=str(output_dir),
+                    build=build,
+                    single_file=single_file,
+                    install_deps=install_deps,
+                    chunk_size=chunk_size,
+                    progress_callback=on_progress,
+                )
+                progress.update(task, description="Slide deck generated ✓")
+
+            (Path(result["deck_dir"]) / DECK_COMPLETE_MARKER).write_text("", encoding="utf-8")
+
+            logger.success(f"Deck directory: {result['deck_dir']}")
+            logger.success(f"HTML: {result['index_html']}")
+            logger.success(f"CSS: {result['style_css']}")
+            logger.success(f"TypeScript: {result['main_ts']}")
+            logger.success(f"Spatial mapping: {result['spatial_mapping']}")
+            logger.success(f"Font file: {result['font_file']}")
+            logger.success(f"Package.json: {result['package_json']}")
+
+            if result.get("impress_js"):
+                logger.success(f"Impress.js: {result['impress_js']}")
+
+            if result.get("reveal_js"):
+                logger.success(f"Reveal.js: {result['reveal_js']}")
+                logger.success(f"Reveal CSS: {result['reveal_css']}")
+                logger.success(f"Reveal theme: {result['reveal_theme_css']}")
+
+            if result.get("dist_dir"):
+                logger.success(f"Vite build output: {result['dist_dir']}")
+        except Exception as error:
+            logger.error(f"Slide generation failed for {input_path}: {error}")
+            raise typer.Exit(code=1)
+        return DONE
+
     try:
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            transient=False,
-        ) as progress:
-            task = progress.add_task("Calling LLM…", total=None)
-
-            def on_progress(message: str) -> None:
-                progress.update(task, description=message)
-
-            result = generator.generate_from_markdown(
-                input_path=str(input_path),
-                output_dir=str(output_dir),
-                build=build,
-                single_file=single_file,
-                install_deps=install_deps,
-                chunk_size=chunk_size,
-                progress_callback=on_progress,
-            )
-            progress.update(task, description="Slide deck generated ✓")
-
-        logger.success(f"Deck directory: {result['deck_dir']}")
-        logger.success(f"HTML: {result['index_html']}")
-        logger.success(f"CSS: {result['style_css']}")
-        logger.success(f"TypeScript: {result['main_ts']}")
-        logger.success(f"Spatial mapping: {result['spatial_mapping']}")
-        logger.success(f"Font file: {result['font_file']}")
-        logger.success(f"Package.json: {result['package_json']}")
-
-        if result.get("impress_js"):
-            logger.success(f"Impress.js: {result['impress_js']}")
-
-        if result.get("reveal_js"):
-            logger.success(f"Reveal.js: {result['reveal_js']}")
-            logger.success(f"Reveal CSS: {result['reveal_css']}")
-            logger.success(f"Reveal theme: {result['reveal_theme_css']}")
-
-        if result.get("dist_dir"):
-            logger.success(f"Vite build output: {result['dist_dir']}")
-
+        run_batch(inputs, process_one)
+    finally:
         print_cost_report(generator.tracker, api_key=settings.llm.api_key)
-
-    except Exception as error:
-        logger.error(f"Slide generation failed: {error}")
-        raise typer.Exit(code=1)
-
-
-if __name__ == "__main__":
-    app()

@@ -23,7 +23,7 @@ versline config --path   # print the config.env path only
 ## Precedence (highest first)
 
 1. Command-line options (`--api-key`, `--model`, `--proxy`, ...)
-2. `versline --env-file /path/.env <command>` (global option, must come before the command)
+2. `versline --env-file /path/.env <command>` (global option; also accepted after the command and its inputs)
 3. Real process environment variables (`VERSLINE_*`)
 4. File named by `VERSLINE_ENV_FILE`
 5. `.env` in the current directory
@@ -33,7 +33,7 @@ In library mode use `reload_settings("/path/.env")` for a guaranteed override fr
 
 ## Global CLI options
 
-Placed before the command name: `versline [OPTIONS] COMMAND ...`
+Written before the command name (`versline [OPTIONS] COMMAND ...`) or after its inputs (`versline COMMAND FILE ... [OPTIONS]`); `-v`, `--env-file` and `--extra-body` work in both positions.
 
 | Option | Description |
 | :--- | :--- |

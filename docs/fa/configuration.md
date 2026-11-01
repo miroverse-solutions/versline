@@ -24,7 +24,7 @@ versline config --path   # فقط مسیر config.env
 ## اولویت منابع (از بالا به پایین)
 
 1. گزینه‌های خط فرمان (`--api-key`، `--model`، `--proxy` و ...)
-2. `versline --env-file /path/.env <command>` (گزینه‌ی سراسری، باید قبل از دستور بیاید)
+2. `versline --env-file /path/.env <command>` (گزینه‌ی سراسری؛ بعد از دستور و ورودی‌ها هم پذیرفته می‌شود)
 3. متغیرهای محیطی واقعی (`VERSLINE_*`)
 4. فایلی که `VERSLINE_ENV_FILE` به آن اشاره می‌کند
 5. فایل `.env` در پوشه‌ی جاری

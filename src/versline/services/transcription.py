@@ -1,3 +1,4 @@
+import hashlib
 import os
 import time
 import json
@@ -17,6 +18,29 @@ from versline.services.pricing import TokenTracker
 
 class ContentBlockedError(RuntimeError):
     """Provider refused the content (policy block); retries are pointless."""
+
+
+def _work_dir_for(file_path: str) -> Path:
+    """Per-file cache directory, keyed by file stem.
+
+    Two different files sharing a stem (e.g. a/talk.mp3 and b/talk.mp3) must not share one cache, so the
+    directory remembers which source it belongs to and a clashing file gets a hash-suffixed directory.
+    Directories created before this marker existed are adopted by the first file that asks for them.
+    """
+    source = str(Path(file_path).resolve())
+    base = Path("work_dir") / Path(file_path).stem
+    marker = base / "source.txt"
+    try:
+        if base.exists() and marker.exists() and marker.read_text(encoding="utf-8") != source:
+            base = Path("work_dir") / f"{Path(file_path).stem}-{hashlib.sha1(source.encode('utf-8')).hexdigest()[:8]}"
+            marker = base / "source.txt"
+        base.mkdir(parents=True, exist_ok=True)
+        if not marker.exists():
+            marker.write_text(source, encoding="utf-8")
+    except OSError as exc:
+        logger.warning(f"Could not record cache source in {base}: {exc}")
+    return base
+
 
 class AudioTranscriber:
     def __init__(self, user_note: str | None = None):
@@ -798,7 +822,7 @@ class AudioTranscriber:
             progress_callback(0, 1, "⏱️ Timestamp annotation...")
         
         from versline.utils.common import align_cheap_to_good_text, align_words_to_good_text
-        ts_dir = Path("work_dir") / Path(file_path).stem / "timestamp_chunks"
+        ts_dir = _work_dir_for(file_path) / "timestamp_chunks"
         ts_dir.mkdir(parents=True, exist_ok=True)
         
         # Strategy 1: Try native segmentation via STT API with verbose_json
@@ -921,7 +945,7 @@ class AudioTranscriber:
         """Internal: the original process_file logic, returning plain text."""
         import shutil
         file_path = str(Path(file_path).resolve())
-        work_dir = Path("work_dir") / Path(file_path).stem
+        work_dir = _work_dir_for(file_path)
         work_dir.mkdir(parents=True, exist_ok=True)
         temp_dir = work_dir / "temp_chunks"
         progress_file = work_dir / "progress.json"

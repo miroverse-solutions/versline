@@ -16,6 +16,45 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 
 
+_GLOBAL_FLAGS = {"-v", "--verbose"}
+_GLOBAL_VALUE_OPTIONS = {"--env-file", "--extra-body"}
+
+
+def hoist_global_options(args: list) -> list:
+    """Move global options written after the subcommand (``versline translate a.md -v``) in front of it.
+
+    The root callback owns -v/--env-file/--extra-body, and click only accepts those before the
+    subcommand name. Everything after a bare ``--`` is left alone.
+    """
+    index = 0
+    while index < len(args) and args[index].startswith("-"):
+        index += 2 if args[index] in _GLOBAL_VALUE_OPTIONS else 1
+    if index >= len(args):
+        return list(args)
+
+    head, command, rest = list(args[:index]), args[index], args[index + 1:]
+    hoisted, kept = [], []
+    position = 0
+    while position < len(rest):
+        token = rest[position]
+        if token == "--":
+            kept.extend(rest[position:])
+            break
+        if token in _GLOBAL_FLAGS:
+            hoisted.append(token)
+        elif token in _GLOBAL_VALUE_OPTIONS and position + 1 < len(rest):
+            hoisted.extend(rest[position:position + 2])
+            position += 1
+        elif token.split("=", 1)[0] in _GLOBAL_VALUE_OPTIONS and "=" in token:
+            hoisted.append(token)
+        else:
+            kept.append(token)
+        position += 1
+    return head + hoisted + [command] + kept
+
+
+sys.argv[1:] = hoist_global_options(sys.argv[1:])
+
 app = typer.Typer(
     name="versline",
     help="[bold green]Miroverse Toolkit[/bold green] CLI and Library for [yellow]Media Transcription, Document Translation, and Question Generation using LLMs.",

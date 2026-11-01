@@ -12,3 +12,8 @@ def apply_extra_body_option(raw: str) -> None:
         settings.llm.extra_body = parse_extra_body(raw)
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="--extra-body")
+
+
+# Click groups stop option parsing at the first positional; processing commands take their inputs first
+# and options after (`versline translate a.md b.md -l fr`), so they opt in to interspersed args.
+INTERSPERSED = {"allow_interspersed_args": True}

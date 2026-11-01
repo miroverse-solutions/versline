@@ -2,7 +2,9 @@
 
 [Index](index.md) · **English** · [فارسی](../fa/commands.md)
 
-Global options (`-v`, `--env-file`, `--extra-body`, `--version`) go **before** the command; see [Configuration](configuration.md#global-cli-options). Run `versline <command> --help` for the authoritative list.
+Global options (`-v`, `--env-file`, `--extra-body`) may be written before or after the command and its inputs; see [Configuration](configuration.md#global-cli-options). Run `versline <command> --help` for the authoritative list.
+
+**Batch mode** (`transcribe`, `translate`, `summarize`, `qualcode`, `slides`, `qude`): give any number of files, folders or glob patterns, with options after them, e.g. `versline translate notes/ extra.md -l French`. Folders are expanded to the files the command understands (`--recursive` also searches sub-folders; files this toolkit generated, such as `*_translated.md`, are ignored). Files already finished are skipped (output exists; use `-f/--force` to redo) and an interrupted file resumes from its saved progress. One failing file does not stop the others; the exit code is 1 if any failed. With several inputs, `-o` is an output **directory**.
 
 **Common LLM options** (available on most commands, override the configured values): `--model`, `--provider` (Google, OpenAI, OpenRouter, AvalAI, OpenAICompatible), `--api-key`, `--api-endpoint`, `--proxy`, `--extra-body`.
 **Prompt notes** (most commands): `--note TEXT` appends an instruction to the prompt; `--note-file FILE` does the same from a `.md`/`.txt` file.
@@ -18,7 +20,7 @@ Global options (`-v`, `--env-file`, `--extra-body`, `--version`) go **before** t
 ## `transcribe`
 
 ```sh
-versline transcribe FILE_OR_URL [OPTIONS]
+versline transcribe FILE_OR_URL_OR_FOLDER... [OPTIONS]
 ```
 
 Audio/video is split with ffmpeg into overlapping chunks (default 900 s, 180 s overlap), each chunk is transcribed by the LLM with context from earlier chunks, then merged. URLs (`http(s)://`) are downloaded to `temp/downloads` first. Progress is cached in `work_dir/<name>/progress.json`, so interrupted runs resume. A cost report is printed at the end.
@@ -45,15 +47,15 @@ Plus the common LLM and prompt-note options.
 ## `translate`
 
 ```sh
-versline translate FILE [-l LANGUAGE] [-o BASE_PATH] [-f]
+versline translate FILE_OR_FOLDER... [-l LANGUAGE] [-o BASE_PATH] [-f]
 ```
 
-`-l/--lang` default `Persian`. `-o` is a base path: **both** a `.md` and a Markdown-stripped `.txt` are written. `-f` ignores the cache. Plus the common options.
+`-l/--lang` default `Persian`. `-o` is a base path: **both** a `.md` and a Markdown-stripped `.txt` are written. Finished chunks are saved in `work_dir/`, so an interrupted translation resumes; `-f` redoes everything. Plus the common options.
 
 ## `summarize`
 
 ```sh
-versline summarize FILE [OPTIONS]
+versline summarize FILE_OR_FOLDER... [OPTIONS]
 ```
 
 | Option | Description | Default |
@@ -72,7 +74,7 @@ Input can be any file supported by the document processor (Markdown, text, PDF, 
 Generate questions and export them.
 
 ```sh
-versline qude INPUT_PATH [OPTIONS]    # file or directory
+versline qude INPUT_PATH... [OPTIONS]    # files and/or directories
 ```
 
 | Option | Description | Default |
@@ -96,7 +98,7 @@ versline qude INPUT_PATH [OPTIONS]    # file or directory
 Qualitative coding of an interview/text file.
 
 ```sh
-versline qualcode INPUT_PATH [OPTIONS]
+versline qualcode INPUT_PATH_OR_FOLDER... [OPTIONS]
 ```
 
 | Option | Description | Default |

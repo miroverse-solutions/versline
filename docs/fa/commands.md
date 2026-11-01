@@ -7,6 +7,8 @@
 **گزینه‌های مشترک LLM** (در بیشتر دستورها؛ مقدار تنظیمات را بازنویسی می‌کنند): `--model`، `--provider` (Google، OpenAI، OpenRouter، AvalAI، OpenAICompatible)، `--api-key`، `--api-endpoint`، `--proxy`، `--extra-body`.
 **یادداشت برای پرامپت** (بیشتر دستورها): `--note TEXT` یک دستور اضافه به پرامپت می‌افزاید؛ `--note-file FILE` همین کار را از فایل `.md`/`.txt` انجام می‌دهد.
 
+**حالت دسته‌ای** (`transcribe`، `translate`، `summarize`، `qualcode`، `slides`، `qude`): هر تعداد فایل، پوشه یا الگوی glob بدهید و گزینه‌ها را بعد از آن‌ها بنویسید؛ مثلاً `versline translate notes/ extra.md -l French`. پوشه‌ها به فایل‌های قابل‌پردازش باز می‌شوند (`--recursive` زیرپوشه‌ها را هم می‌گردد و خروجی‌های تولیدشده مثل `*_translated.md` نادیده گرفته می‌شوند). فایل‌های تمام‌شده رد می‌شوند (برای اجرای دوباره از `-f/--force` استفاده کنید) و فایلی که نیمه‌کاره مانده از پیشرفت ذخیره‌شده ادامه می‌یابد. خطا در یک فایل بقیه را متوقف نمی‌کند و در صورت هر خطا کد خروج ۱ است. با چند ورودی، `-o` یک **پوشه** است.
+
 ## دستورهای تنظیم
 
 | دستور | توضیح |
@@ -18,7 +20,7 @@
 ## `transcribe`
 
 ```sh
-versline transcribe FILE_OR_URL [OPTIONS]
+versline transcribe FILE_OR_URL_OR_FOLDER... [OPTIONS]
 ```
 
 صوت/ویدیو با ffmpeg به تکه‌های هم‌پوشان (پیش‌فرض ۹۰۰ ثانیه با ۱۸۰ ثانیه هم‌پوشانی) تقسیم می‌شود، هر تکه با مدل و با بافت تکه‌های قبلی پیاده می‌شود و در پایان ادغام می‌گردد. لینک‌ها (`http(s)://`) ابتدا در `temp/downloads` دانلود می‌شوند. پیشرفت در `work_dir/<name>/progress.json` ذخیره می‌شود، پس اجرای ناتمام ادامه می‌یابد. در پایان گزارش هزینه چاپ می‌شود.
@@ -45,7 +47,7 @@ versline transcribe FILE_OR_URL [OPTIONS]
 ## `translate`
 
 ```sh
-versline translate FILE [-l LANGUAGE] [-o BASE_PATH] [-f]
+versline translate FILE_OR_FOLDER... [-l LANGUAGE] [-o BASE_PATH] [-f]
 ```
 
 `-l/--lang` پیش‌فرض `Persian`. `-o` مسیر پایه است: **هم** `.md` و **هم** `.txt` (بدون Markdown) نوشته می‌شود. `-f` کش را نادیده می‌گیرد. به‌علاوه‌ی گزینه‌های مشترک.
@@ -53,7 +55,7 @@ versline translate FILE [-l LANGUAGE] [-o BASE_PATH] [-f]
 ## `summarize`
 
 ```sh
-versline summarize FILE [OPTIONS]
+versline summarize FILE_OR_FOLDER... [OPTIONS]
 ```
 
 | گزینه | توضیح | پیش‌فرض |
@@ -72,7 +74,7 @@ versline summarize FILE [OPTIONS]
 تولید سؤال و خروجی گرفتن.
 
 ```sh
-versline qude INPUT_PATH [OPTIONS]    # فایل یا پوشه
+versline qude INPUT_PATH... [OPTIONS]    # فایل‌ها و/یا پوشه‌ها
 ```
 
 | گزینه | توضیح | پیش‌فرض |
@@ -96,7 +98,7 @@ versline qude INPUT_PATH [OPTIONS]    # فایل یا پوشه
 کدگذاری کیفی فایل مصاحبه/متن.
 
 ```sh
-versline qualcode INPUT_PATH [OPTIONS]
+versline qualcode INPUT_PATH_OR_FOLDER... [OPTIONS]
 ```
 
 | گزینه | توضیح | پیش‌فرض |
