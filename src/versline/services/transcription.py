@@ -660,7 +660,7 @@ class AudioTranscriber:
         if speaker_samples is None:
             speaker_samples = {}
 
-        existing_chunks = sorted(temp_dir.glob("chunk_*.*")) if temp_dir.exists() else []
+        existing_chunks = media.usable_cached_chunks(sorted(temp_dir.glob("chunk_*.*"))) if temp_dir.exists() else []
         if existing_chunks:
             logger.info(f"📂 Using {len(existing_chunks)} cached audio chunks (skipping re-split).")
             chunks = [str(p) for p in existing_chunks]
@@ -735,7 +735,7 @@ class AudioTranscriber:
             shutil.rmtree(slices_dir, ignore_errors=True)
             shutil.rmtree(cache_dir, ignore_errors=True)
         cache_dir.mkdir(parents=True, exist_ok=True)
-        existing = sorted(slices_dir.glob("chunk_*.*")) if slices_dir.exists() else []
+        existing = media.usable_cached_chunks(sorted(slices_dir.glob("chunk_*.*"))) if slices_dir.exists() else []
         slices = [str(p) for p in existing] or media.split_audio_with_ffmpeg(file_path, chunk_sec, 0, str(slices_dir))
         if not slices:
             raise RuntimeError("Could not split audio for native timestamping")
@@ -943,7 +943,7 @@ class AudioTranscriber:
         if speaker_samples is None:
             speaker_samples = {}
 
-        existing_chunks = sorted(temp_dir.glob("chunk_*.*")) if temp_dir.exists() else []
+        existing_chunks = media.usable_cached_chunks(sorted(temp_dir.glob("chunk_*.*"))) if temp_dir.exists() else []
         if existing_chunks:
             logger.info(f"📂 Using {len(existing_chunks)} cached audio chunks (skipping re-split).")
             chunks = [str(p) for p in existing_chunks]

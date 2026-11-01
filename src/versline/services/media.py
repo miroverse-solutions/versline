@@ -65,6 +65,23 @@ def extract_audio(src: str, dest: str, bitrate: str = '64k') -> str:
     return dest
 
 
+_CHUNKABLE_EXTS = (".mp3", ".m4a", ".wav", ".ogg", ".opus", ".aac", ".flac", ".wma", ".m4b")
+
+
+def usable_cached_chunks(paths) -> list[str]:
+    """Return cached chunk paths only if all are non-empty; otherwise delete them so they get re-split."""
+    paths = [str(p) for p in paths]
+    if paths and any(os.path.getsize(p) == 0 for p in paths):
+        logger.warning("Cached audio chunks include empty (0-byte) files; re-splitting.")
+        for p in paths:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+        return []
+    return paths
+
+
 def split_audio_with_ffmpeg(file_path: str, chunk_length_sec: int, chunk_overlap_sec: int, temp_dir: str) -> list[str]:
     """Split audio file into specified chunks with overlap using ffmpeg.
     
@@ -78,6 +95,16 @@ def split_audio_with_ffmpeg(file_path: str, chunk_length_sec: int, chunk_overlap
 
     logger.info(f"Processing and splitting file '{os.path.basename(file_path)}'...")
 
+    # Video/unknown containers can't be chunk-copied: extract the audio track as mp3 first
+    if os.path.splitext(file_path)[1].lower() not in _CHUNKABLE_EXTS:
+        extracted = os.path.join(temp_dir, "source_audio.mp3")
+        if not (os.path.exists(extracted) and os.path.getsize(extracted) > 0):
+            logger.info("Extracting audio track before splitting…")
+            extract_audio(file_path, extracted)
+        if os.path.getsize(extracted) == 0:
+            raise RuntimeError(f"ffmpeg produced an empty audio file from '{file_path}'.")
+        file_path = extracted
+
     duration = get_audio_duration(file_path)
     if duration is None:
         return []
@@ -86,8 +113,6 @@ def split_audio_with_ffmpeg(file_path: str, chunk_length_sec: int, chunk_overlap
     
     # Match chunk container to source file so -c copy always works
     src_ext = os.path.splitext(file_path)[1]  # e.g. ".m4a", ".mp3", ".wav"
-    if src_ext.lower() not in (".mp3", ".m4a", ".wav", ".ogg", ".opus", ".aac", ".flac", ".wma", ".m4b"):
-        src_ext = ".mp3"  # fallback for unknown formats
     
     chunk_paths = []
     step_size_sec = chunk_length_sec - chunk_overlap_sec
@@ -118,6 +143,8 @@ def split_audio_with_ffmpeg(file_path: str, chunk_length_sec: int, chunk_overlap
                 stderr=subprocess.PIPE,
                 check=True
             )
+            if not os.path.exists(chunk_path) or os.path.getsize(chunk_path) == 0:
+                raise RuntimeError(f"ffmpeg produced an empty chunk ({chunk_name}) from '{file_path}'.")
             chunk_paths.append(chunk_path)
             # logger.debug(f"Chunk created: {chunk_path}")
             
