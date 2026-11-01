@@ -131,7 +131,8 @@ class TranslateResumeTests(unittest.TestCase):
         self.addCleanup(patcher.stop)
         self.addCleanup(self._tmp.cleanup)
         self.source = self.root / "doc.md"
-        self.source.write_text("\n\n".join(f"paragraph {i} " + "x" * 1500 for i in range(4)), encoding="utf-8")
+        # write_bytes: write_text would turn "\n\n" into CRLF on Windows and the text would no longer split into chunks
+        self.source.write_bytes("\n\n".join(f"paragraph {i} " + "x" * 1500 for i in range(4)).encode("utf-8"))
 
     def make_translator(self):
         translator = TextTranslator()
