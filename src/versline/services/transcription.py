@@ -844,6 +844,8 @@ class AudioTranscriber:
                         "timestamp_method": source or "api_native",
                         "native_duration": native_result.get("duration"),
                         "native_language": native_result.get("language"),
+                        # raw STT words (spoken text, absolute times), e.g. for word-by-word captions
+                        "words": native_result.get("words") or [],
                     }
                     if progress_callback:
                         progress_callback(1, 1, f"✅ Native timestamp: {len(segments)} segments")
