@@ -29,11 +29,19 @@ class TestSttTimestampFallback(unittest.TestCase):
         settings.llm.api_endpoint = "https://api.avalai.ir/v1"
         settings.llm.api_key = "test-key"
         settings.transcription.timestamp_timeout_seconds = 7
+        t = settings.transcription
+        self.orig_stt = (t.timestamp_provider, t.timestamp_api_endpoint, t.timestamp_api_key, t.timestamp_proxy)
+        t.timestamp_provider = ""
+        t.timestamp_api_endpoint = None
+        t.timestamp_api_key = None
+        t.timestamp_proxy = None
 
     def tearDown(self):
         settings.llm.api_endpoint = self.orig_endpoint
         settings.llm.api_key = self.orig_api_key
         settings.transcription.timestamp_timeout_seconds = self.orig_timeout
+        t = settings.transcription
+        t.timestamp_provider, t.timestamp_api_endpoint, t.timestamp_api_key, t.timestamp_proxy = self.orig_stt
 
     def test_falls_back_to_srt_when_verbose_json_times_out(self):
         srt_body = """1
