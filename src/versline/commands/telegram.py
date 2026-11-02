@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from typing import List, Optional
 
@@ -60,6 +61,9 @@ def login(
             console.print("[red]api_id must be a number.[/red]")
             raise typer.Exit(1)
         _save_credentials(api_id.strip(), api_hash.strip())
+        # config.env is only read at import; an empty value from another env file would also shadow it
+        os.environ["VERSLINE_TELEGRAM_API_ID"] = api_id.strip()
+        os.environ["VERSLINE_TELEGRAM_API_HASH"] = api_hash.strip()
         reload_settings()
     source = _make_source(proxy)
     try:

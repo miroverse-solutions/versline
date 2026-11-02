@@ -74,13 +74,13 @@ class LLMSettings(BaseSettings):
         description='Extra JSON merged into every OpenAI-compatible request body (e.g. {"reasoning": {"max_tokens": 1500}})',
     )
 
-    model_config = SettingsConfigDict(env_prefix='VERSLINE_LLM_', env_file='.env', extra='ignore')
+    model_config = SettingsConfigDict(env_prefix='VERSLINE_LLM_', env_file='.env', env_ignore_empty=True, extra='ignore')
 
 class FFmpegSettings(BaseSettings):
     ffmpeg_path: Optional[str] = Field(default=None, description="Path to FFmpeg executable")
     ffprobe_path: Optional[str] = Field(default=None, description="Path to FFprobe executable")
     
-    model_config = SettingsConfigDict(env_prefix='VERSLINE_FFMPEG_', env_file='.env', extra='ignore')
+    model_config = SettingsConfigDict(env_prefix='VERSLINE_FFMPEG_', env_file='.env', env_ignore_empty=True, extra='ignore')
 
 
 class ResourceSettings(BaseSettings):
@@ -88,7 +88,7 @@ class ResourceSettings(BaseSettings):
     max_cpu_cores: int = Field(default=0, description="Maximum CPU cores/threads to use (0 = unlimited)")
     max_gpu_vram_fraction: float = Field(default=0.0, description="Maximum GPU VRAM fraction per device (0.0 = unlimited, e.g. 0.8 = 80%)")
 
-    model_config = SettingsConfigDict(env_prefix='VERSLINE_RESOURCE_', env_file='.env', extra='ignore')
+    model_config = SettingsConfigDict(env_prefix='VERSLINE_RESOURCE_', env_file='.env', env_ignore_empty=True, extra='ignore')
 
 
 class SlidesSettings(BaseSettings):
@@ -97,7 +97,7 @@ class SlidesSettings(BaseSettings):
         description="Custom npm registry URL used during slide deck build (e.g. https://registry.npmmirror.com)",
     )
 
-    model_config = SettingsConfigDict(env_prefix='VERSLINE_SLIDES_', env_file='.env', extra='ignore')
+    model_config = SettingsConfigDict(env_prefix='VERSLINE_SLIDES_', env_file='.env', env_ignore_empty=True, extra='ignore')
 
 
 class TelegramSettings(BaseSettings):
@@ -106,7 +106,7 @@ class TelegramSettings(BaseSettings):
     session_path: Optional[str] = Field(default=None, description="Telethon session file (defaults to the per-user config dir)")
     proxy: Optional[str] = Field(default=None, description="Proxy URL for Telegram (socks5://host:port or http://host:port). Falls back to the LLM proxy")
 
-    model_config = SettingsConfigDict(env_prefix='VERSLINE_TELEGRAM_', env_file='.env', extra='ignore')
+    model_config = SettingsConfigDict(env_prefix='VERSLINE_TELEGRAM_', env_file='.env', env_ignore_empty=True, extra='ignore')
 
 
 class Settings(BaseSettings):

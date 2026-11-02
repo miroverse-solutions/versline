@@ -75,6 +75,24 @@ class TestConfigEnv(unittest.TestCase):
             self.assertEqual(settings.llm.provider, "OpenAICompatible")
             self.assertEqual(settings.llm.model, "gpt-4o-mini")
 
+    def test_empty_values_from_env_example_are_treated_as_unset(self):
+        example = Path(__file__).resolve().parents[1] / ".env.example"
+        for line in example.read_text(encoding="utf-8").splitlines():
+            key, sep, value = line.partition("=")
+            if sep and key.startswith("VERSLINE_") and not value:
+                os.environ[key] = ""
+
+        cwd = os.getcwd()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            os.chdir(tmp_dir)  # keep the repo's own .env out of it
+            try:
+                reload_settings()
+            finally:
+                os.chdir(cwd)
+
+        self.assertIsNone(settings.telegram.api_id)
+        self.assertIsNone(settings.llm.extra_body)
+
 
 if __name__ == "__main__":
     unittest.main()
