@@ -10,6 +10,7 @@ from loguru import logger
 
 from versline.config import settings
 
+from versline.services.ai import MissingAPIKeyError
 from versline.services.channel_archive import obsidian
 from versline.services.channel_archive.filters import FileFilter
 from versline.services.channel_archive.models import ChannelInfo, ChannelPost, MediaItem, PostRecord
@@ -201,7 +202,8 @@ class ChannelArchiver:
             )
             summary.done += 1
             logger.success(f"Post {post.id} → {rel_note.as_posix()}")
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, MissingAPIKeyError):
+            # a missing key fails every post the same way, so stop the run instead
             raise
         except Exception as exc:
             logger.error(f"Post {post.id} failed: {exc}")

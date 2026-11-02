@@ -11,6 +11,32 @@ from pydantic import BaseModel
 class AIResponseParseError(RuntimeError):
     """Raised when an LLM response cannot be parsed as the expected JSON payload."""
 
+
+class MissingAPIKeyError(RuntimeError):
+    """Raised when no API key is configured for the LLM provider (retrying will not help)."""
+
+
+# Env vars the provider SDKs read on their own when no api_key is passed
+_SDK_KEY_ENV_VARS = {
+    "gemini": ("GEMINI_API_KEY", "GOOGLE_API_KEY"),
+    "openai": ("OPENAI_API_KEY",),
+}
+
+
+def require_api_key(llm_settings, sdk: Optional[str] = None) -> None:
+    """Raise MissingAPIKeyError with setup instructions when no API key is available."""
+    provider = getattr(llm_settings, "provider", None) or ""
+    if sdk is None:
+        sdk = "gemini" if provider.lower() in ("google", "gemini") else "openai"
+    if getattr(llm_settings, "api_key", None) or any(os.getenv(v) for v in _SDK_KEY_ENV_VARS.get(sdk, ())):
+        return
+    provider = provider or sdk
+    raise MissingAPIKeyError(
+        f"No API key configured for provider '{provider}'. "
+        "Run `versline init` to save your key, pass --api-key, or set VERSLINE_LLM_API_KEY. "
+        "Check what is saved with `versline config`."
+    )
+
 try:
     from .pricing import TokenTracker
 except ImportError:
@@ -37,6 +63,7 @@ class LLMSettings(BaseModel):
 
 def configure_gemini(llm_settings):
     """Configure Gemini API client with defined settings."""
+    require_api_key(llm_settings, "gemini")
     try:
         from google import genai
         
@@ -288,6 +315,7 @@ def apply_extra_body(client, extra_body: Optional[Dict[str, Any]]):
 
 def configure_openai(llm_settings):
     """Configure OpenAI API client with defined settings."""
+    require_api_key(llm_settings, "openai")
     try:
         from openai import OpenAI
         

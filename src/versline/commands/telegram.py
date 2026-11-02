@@ -166,6 +166,16 @@ def archive(
     if (web and (files_only or file_filter)) and not dry_run:
         console.print("[yellow]--web can't download documents (only voice and small videos); matching files will be reported as skipped.[/yellow]")
 
+    needs_llm = not dry_run and not files_only and (not no_transcribe or add_summary or add_taqrir)
+    if needs_llm:
+        from versline.services.ai import MissingAPIKeyError, require_api_key
+
+        try:
+            require_api_key(settings.llm)
+        except MissingAPIKeyError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(1)
+
     source = _make_source(telegram_proxy, web=web)
     try:
         transcriber = None

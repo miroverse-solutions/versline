@@ -51,6 +51,8 @@ class TextLLM:
                 text = self._once(prompt).strip()
                 if text:
                     return text
+            except ai.MissingAPIKeyError:
+                raise
             except Exception as exc:
                 logger.warning(f"LLM call failed (attempt {attempt + 1}/{max_retries}): {exc}")
             time.sleep(2 * (attempt + 1))

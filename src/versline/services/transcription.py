@@ -242,6 +242,9 @@ class AudioTranscriber:
                     f"(e.g. a non-Gemini model); progress up to the previous chunk is saved."
                 )
                 raise
+            except ai.MissingAPIKeyError as e:
+                logger.error(f"[{chunk_name}] {e}")
+                raise
             except Exception as e:
                 endpoint_hint = getattr(settings.llm, "api_endpoint", None) or "(default)"
                 if attempt < max_retries - 1:
