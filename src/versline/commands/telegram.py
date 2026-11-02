@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 import typer
 from loguru import logger
@@ -88,6 +88,11 @@ def archive(
     until: Optional[str] = typer.Option(None, "--until", help="Only posts up to and including this date"),
     limit: Optional[int] = typer.Option(None, "--limit", help="Process at most N matching posts"),
     types: Optional[str] = typer.Option(None, "--types", help="Comma-separated media types: audio,voice,video,video_note,photo,document,text (default: all)"),
+    ext: Optional[str] = typer.Option(None, "--ext", help="Only files with these extensions, comma-separated (e.g. pdf,docx; 'word' = doc,docx). Taken from the file name, else the mime type"),
+    match: Optional[List[str]] = typer.Option(None, "--match", help="Regex; keep files matching at least one (repeatable). Case-insensitive, Persian-normalized (ي/ك, ZWNJ and _ count as plain letters/spaces)"),
+    exclude: Optional[List[str]] = typer.Option(None, "--exclude", help="Regex; drop files matching any (repeatable). Wins over --match"),
+    match_in: str = typer.Option("name", "--match-in", help="What --match/--exclude test: name (file name), caption (post text) or any (either)"),
+    files_only: bool = typer.Option(False, "--files-only", help="Just save the matching files under their original names: no notes, no transcription, no LLM"),
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output folder (default: output/<channel>); point it at your Obsidian vault"),
     keep_media: bool = typer.Option(False, "--keep-media", help="Save media under attachments/ and embed it in the notes"),
     no_transcribe: bool = typer.Option(False, "--no-transcribe", help="Only save captions/metadata; skip transcription"),
@@ -146,10 +151,21 @@ def archive(
         if bad:
             raise typer.BadParameter(f"Unknown type(s): {', '.join(sorted(bad))}. Choose from: {', '.join(sorted(VALID_TYPES))}")
 
+    from versline.services.channel_archive.filters import FileFilter
+
+    try:
+        file_filter = FileFilter.build(ext, match or [], exclude or [], match_in)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc))
+    if files_only and (add_summary or add_taqrir or reuse_transcripts):
+        raise typer.BadParameter("--files-only can't be combined with --summary, --taqrir or --reuse-transcripts")
+    if (web and (files_only or file_filter)) and not dry_run:
+        console.print("[yellow]--web can't download documents (only voice and small videos); matching files will be reported as skipped.[/yellow]")
+
     source = _make_source(telegram_proxy, web=web)
     try:
         transcriber = None
-        if not no_transcribe and not dry_run:
+        if not no_transcribe and not dry_run and not files_only:
             from versline.services.transcription import AudioTranscriber
 
             user_note = resolve_user_note(note=note, note_file=str(note_file) if note_file else None)
@@ -158,7 +174,7 @@ def archive(
         tracker = transcriber.tracker if transcriber is not None else None
         text_llm = None
         steps = ["media", "transcribe"]
-        if add_summary or add_taqrir:
+        if (add_summary or add_taqrir) and not files_only:
             from versline.services.channel_archive.llm import TextLLM
             from versline.services.pricing import TokenTracker
 
@@ -181,6 +197,7 @@ def archive(
             transcriber=transcriber,
             text_llm=text_llm,
             output_lang=output_lang or "",
+            file_filter=file_filter,
         )
         options = ArchiveOptions(
             out_dir=output,
@@ -192,6 +209,8 @@ def archive(
             dry_run=dry_run,
             force=force,
             reuse_transcripts=reuse_transcripts,
+            file_filter=file_filter,
+            files_only=files_only,
             steps=steps,
         )
         archiver = ChannelArchiver(source, ctx, options)
@@ -218,20 +237,30 @@ def archive(
 
     if dry_run:
         table = Table(title=f"{summary.channel.title}: {len(summary.plans)} matching posts")
-        for column in ("ID", "Date", "Type", "Duration", "Title"):
+        show_files = files_only or file_filter is not None
+        for column in ("ID", "Date", "Type", "Duration", "Title") + (("Files",) if show_files else ()):
             table.add_column(column)
         for plan in summary.plans:
-            table.add_row(
+            row = [
                 str(plan.id),
                 plan.date.astimezone().strftime("%Y-%m-%d %H:%M"),
                 plan.media_type,
                 format_duration(plan.duration) if plan.duration else "",
                 plan.title,
-            )
+            ]
+            if show_files:
+                row.append("\n".join(plan.files))
+            table.add_row(*row)
         console.print(table)
         return
 
-    console.print(f"[bold]Done:[/bold] {summary.done}  skipped: {summary.skipped}  failed: {summary.failed}  → {archiver.out_dir}")
+    if files_only:
+        console.print(
+            f"[bold]Saved:[/bold] {summary.files_saved} files from {summary.done} posts  duplicates: {summary.duplicates}  "
+            f"skipped posts: {summary.skipped}  failed: {summary.failed}  → {archiver.out_dir}"
+        )
+    else:
+        console.print(f"[bold]Done:[/bold] {summary.done}  skipped: {summary.skipped}  failed: {summary.failed}  → {archiver.out_dir}")
     for error in summary.errors:
         console.print(f"[red]  {error}[/red]")
     if tracker is not None and summary.done:

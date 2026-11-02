@@ -11,6 +11,7 @@ from loguru import logger
 from versline.config import settings
 from versline.core.prompts import load_prompt
 from versline.services import media as media_utils
+from versline.services.channel_archive.filters import FileFilter
 from versline.services.channel_archive.models import (
     ChannelInfo,
     ChannelPost,
@@ -38,6 +39,7 @@ class StepContext:
     transcriber: Any = None  # object with process_file(); created lazily by the command
     text_llm: Any = None  # object with generate(prompt); needed by the summary/taqrir steps
     output_lang: str = ""  # language for summary/taqrir; empty = same as the content
+    file_filter: Optional[FileFilter] = None  # when set, only matching media items are downloaded
     progress: Callable[[str], None] = lambda message: None
 
 
@@ -71,7 +73,10 @@ class MediaStep:
     def run(self, post: ChannelPost, record: PostRecord, ctx: StepContext) -> None:
         files: Dict[int, Path] = record.work.setdefault("files", {})
         dest_dir = ctx.out_dir / "attachments" if ctx.keep_media else ctx.temp_dir
+        allowed = set(ctx.file_filter.matching_indices(post)) if ctx.file_filter else None
         for index, item in enumerate(post.media):
+            if allowed is not None and index not in allowed:
+                continue
             needs_transcript = ctx.transcribe and item.transcribable and not record.work.get("reused_transcript")
             wanted = ctx.keep_media or needs_transcript
             if not wanted:

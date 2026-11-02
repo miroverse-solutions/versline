@@ -3,6 +3,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from versline.services.channel_archive.filters import FileFilter
 from versline.services.channel_archive.models import ChannelInfo, ChannelPost, MediaItem
 from versline.services.channel_archive.pipeline import ArchiveOptions, ChannelArchiver
 from versline.services.channel_archive.steps import StepContext, clean_transcript
@@ -208,6 +209,94 @@ class TestPipeline(unittest.TestCase):
         self.assertIn("transcript of", note)
         self.assertIn("SUMMARY TEXT", note)
         self.assertIn("TAQRIR TEXT", note)
+
+
+class FileSource(FakeSource):
+    """Writes each item's source_ref (bytes) as the downloaded file, with the extension of its file name."""
+
+    def download(self, post, item, dest_dir, stem, progress_callback=None):
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        suffix = Path(item.file_name).suffix if item.file_name else ""
+        path = dest_dir / f"{stem}{suffix}"
+        path.write_bytes(item.source_ref)
+        self.downloads.append(path)
+        return path
+
+
+def doc_post(pid, day, name, data=b"pdf-bytes", text=""):
+    return ChannelPost(id=pid, date=BASE + timedelta(days=day), text=text,
+                       media=[MediaItem(kind="document", file_name=name, size=len(data), source_ref=data)])
+
+
+class TestFileFilterPipeline(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.out = self.tmp / "out"
+
+    def run_archive(self, posts, flt=None, files_only=False, **opts):
+        source = FileSource(posts)
+        ctx = StepContext(source=source, channel=None, out_dir=None, temp_dir=self.tmp / "tmp", file_filter=flt,
+                          transcribe=False, keep_media=opts.pop("keep_media", False))
+        options = ArchiveOptions(out_dir=self.out, temp_dir=ctx.temp_dir, file_filter=flt, files_only=files_only, **opts)
+        summary = ChannelArchiver(source, ctx, options).run("@testchan")
+        return summary, source
+
+    def test_regular_archive_keeps_only_posts_with_matching_files(self):
+        posts = [doc_post(1, 0, "جزوه_فقه.pdf"), doc_post(2, 1, "عکس.zip"), ChannelPost(id=3, date=BASE, text="متن")]
+        flt = FileFilter.build(ext="pdf", match=["جزوه"])
+        summary, _ = self.run_archive(posts, flt, keep_media=True)
+        self.assertEqual(summary.done, 1)
+        self.assertEqual(len(list((self.out / "posts").glob("*.md"))), 1)
+
+    def test_album_downloads_only_matching_item(self):
+        album = ChannelPost(id=5, date=BASE, media=[
+            MediaItem(kind="photo", size=1, source_ref=b"img"),
+            MediaItem(kind="document", file_name="a.pdf", size=3, source_ref=b"pdf"),
+        ])
+        _, source = self.run_archive([album], FileFilter.build(ext="pdf"), keep_media=True)
+        self.assertEqual([p.name for p in source.downloads], ["testchan_5_2.pdf"])
+
+    def test_dry_run_lists_matching_file_names(self):
+        flt = FileFilter.build(ext="pdf")
+        summary, source = self.run_archive([doc_post(1, 0, "a.pdf"), doc_post(2, 1, "b.zip")], flt, dry_run=True)
+        self.assertEqual([(p.id, p.files) for p in summary.plans], [(1, ["a.pdf"])])
+        self.assertEqual(source.downloads, [])
+
+    def test_files_only_saves_original_names_without_notes(self):
+        posts = [doc_post(1, 0, "جزوه فقه.pdf", b"one"), doc_post(2, 1, "draft.pdf", b"two"), doc_post(3, 2, "x.zip", b"three")]
+        flt = FileFilter.build(ext="pdf", exclude=["draft"])
+        summary, source = self.run_archive(posts, flt, files_only=True)
+        self.assertEqual((summary.done, summary.files_saved, summary.duplicates), (1, 1, 0))
+        self.assertEqual(sorted(p.name for p in self.out.iterdir()), [".versline-files.json", "جزوه فقه.pdf"])
+        self.assertEqual((self.out / "جزوه فقه.pdf").read_bytes(), b"one")
+        self.assertFalse((self.out / "posts").exists())
+        self.assertTrue(all(not p.exists() for p in source.downloads))  # nothing left in temp
+        self.assertFalse((self.out / ".versline-channel.json").exists())
+
+    def test_files_only_rerun_skips_and_duplicates_are_detected(self):
+        posts = [doc_post(1, 0, "a.pdf", b"same"), doc_post(2, 1, "a.pdf", b"same")]
+        summary, _ = self.run_archive(posts, files_only=True)
+        self.assertEqual((summary.files_saved, summary.duplicates), (1, 1))
+        summary, source = self.run_archive(posts, files_only=True)
+        self.assertEqual((summary.done, summary.skipped, source.downloads), (0, 2, []))
+
+    def test_files_only_same_name_different_size_gets_suffix(self):
+        posts = [doc_post(1, 0, "a.pdf", b"short"), doc_post(2, 1, "a.pdf", b"a longer file")]
+        summary, _ = self.run_archive(posts, files_only=True)
+        self.assertEqual(summary.files_saved, 2)
+        self.assertEqual(sorted(p.name for p in self.out.glob("*.pdf")), ["a (post 2).pdf", "a.pdf"])
+
+    def test_files_only_skips_undownloadable_and_oversized(self):
+        item = MediaItem(kind="document", file_name="web.pdf", downloadable=False)
+        posts = [ChannelPost(id=1, date=BASE, media=[item]), doc_post(2, 1, "big.pdf", b"x" * 10)]
+        source = FileSource(posts)
+        ctx = StepContext(source=source, channel=None, out_dir=None, temp_dir=self.tmp / "tmp", transcribe=False,
+                          max_size_mb=1e-6)
+        options = ArchiveOptions(out_dir=self.out, temp_dir=ctx.temp_dir, files_only=True)
+        summary = ChannelArchiver(source, ctx, options).run("@testchan")
+        self.assertEqual((summary.done, summary.skipped, summary.files_saved), (0, 2, 0))
+        self.assertEqual(source.downloads, [])
+
 
 if __name__ == "__main__":
     unittest.main()

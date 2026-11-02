@@ -5,13 +5,14 @@ from pathlib import Path
 from typing import Dict, Optional
 
 MANIFEST_NAME = ".versline-channel.json"
+FILES_MANIFEST_NAME = ".versline-files.json"  # --files-only keeps its own manifest
 
 
 class ChannelState:
     """Per-channel manifest: which posts are done/failed, so reruns skip finished work."""
 
-    def __init__(self, root: Path):
-        self.path = root / MANIFEST_NAME
+    def __init__(self, root: Path, name: str = MANIFEST_NAME):
+        self.path = root / name
         self.posts: Dict[str, dict] = {}
         self.channel: dict = {}
         if self.path.is_file():

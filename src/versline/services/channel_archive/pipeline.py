@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -10,9 +11,10 @@ from loguru import logger
 from versline.config import settings
 
 from versline.services.channel_archive import obsidian
-from versline.services.channel_archive.models import ChannelInfo, ChannelPost, PostRecord
+from versline.services.channel_archive.filters import FileFilter
+from versline.services.channel_archive.models import ChannelInfo, ChannelPost, MediaItem, PostRecord
 from versline.services.channel_archive.sources.base import ChannelSource
-from versline.services.channel_archive.state import ChannelState
+from versline.services.channel_archive.state import FILES_MANIFEST_NAME, ChannelState
 from versline.services.channel_archive.steps import DEFAULT_STEPS, STEPS, PostStep, StepContext, clean_transcript
 from versline.utils.common import sanitize_filename
 
@@ -29,6 +31,8 @@ class ArchiveOptions:
     dry_run: bool = False
     force: bool = False
     reuse_transcripts: bool = False  # re-process archived posts, but keep the transcripts already in their notes
+    file_filter: Optional[FileFilter] = None  # keep only posts with a media item that passes (and only those items)
+    files_only: bool = False  # save the matching files under their own names: no notes, no index, no LLM
 
 
 @dataclass
@@ -38,6 +42,7 @@ class PostPlan:
     media_type: str
     duration: Optional[float]
     title: str
+    files: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -46,6 +51,8 @@ class ArchiveSummary:
     done: int = 0
     skipped: int = 0
     failed: int = 0
+    files_saved: int = 0
+    duplicates: int = 0
     plans: List[PostPlan] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
 
@@ -65,7 +72,14 @@ class ChannelArchiver:
 
     def _wanted(self, post: ChannelPost) -> bool:
         types = self.options.types
-        return types is None or post.media_type in types
+        if types is not None and post.media_type not in types:
+            return False
+        flt = self.options.file_filter
+        return flt is None or bool(flt.matching_indices(post))
+
+    def _selected(self, post: ChannelPost) -> List[int]:
+        flt = self.options.file_filter
+        return flt.matching_indices(post) if flt else list(range(len(post.media)))
 
     @staticmethod
     def _duration(post: ChannelPost) -> Optional[float]:
@@ -124,7 +138,7 @@ class ChannelArchiver:
         self.ctx.channel = channel
         self.out_dir = opts.out_dir or Path(settings.output_directory) / channel.slug
         self.ctx.out_dir = self.out_dir
-        state = ChannelState(self.out_dir)
+        state = ChannelState(self.out_dir, FILES_MANIFEST_NAME) if opts.files_only else ChannelState(self.out_dir)
         count = 0
 
         try:
@@ -133,9 +147,12 @@ class ChannelArchiver:
                     continue
                 title = obsidian.make_title(post)
                 if opts.dry_run:
-                    summary.plans.append(PostPlan(post.id, post.date, post.media_type, self._duration(post), title))
+                    names = [post.media[i].file_name or post.media[i].kind for i in self._selected(post)]
+                    summary.plans.append(PostPlan(post.id, post.date, post.media_type, self._duration(post), title, names))
                 elif state.is_done(post.id) and not (opts.force or opts.reuse_transcripts):
                     summary.skipped += 1
+                elif opts.files_only:
+                    self._save_files(channel, post, title, state, summary)
                 else:
                     self._process(channel, post, title, state, summary)
                 count += 1
@@ -147,7 +164,8 @@ class ChannelArchiver:
             if not opts.dry_run:
                 state.channel = {"title": channel.title, "username": channel.username, "id": channel.channel_id}
                 state.save()
-                self._write_index(channel, state)
+                if not opts.files_only:
+                    self._write_index(channel, state)
         return summary
 
     def _process(self, channel: ChannelInfo, post: ChannelPost, title: str, state: ChannelState, summary: ArchiveSummary) -> None:
@@ -194,6 +212,71 @@ class ChannelArchiver:
         finally:
             self._cleanup(record)
             state.save()
+
+    def _save_files(self, channel: ChannelInfo, post: ChannelPost, title: str, state: ChannelState, summary: ArchiveSummary) -> None:
+        """--files-only: download the selected items to temp, then move them into the output folder under their own names."""
+        saved: List[str] = []
+        duplicates = 0
+        try:
+            for index in self._selected(post):
+                item = post.media[index]
+                if not item.downloadable:
+                    logger.warning(f"Post {post.id}: {item.kind} can't be downloaded from this source; skipping it.")
+                    continue
+                max_mb = self.ctx.max_size_mb
+                if max_mb and item.size and item.size > max_mb * 1024 * 1024:
+                    logger.warning(f"Post {post.id}: media is {item.size / 1048576:.0f} MB, over --max-size; skipping it.")
+                    continue
+                stem = sanitize_filename(f"{channel.slug}_{post.id}" + (f"_{index + 1}" if len(post.media) > 1 else ""))
+                self.ctx.progress(f"Downloading {item.file_name or item.kind} (post {post.id})…")
+                temp_path = self.source.download(post, item, self.ctx.temp_dir, stem)
+                final = self._place_file(temp_path, item, post, stem)
+                if final is None:
+                    duplicates += 1
+                else:
+                    saved.append(final.name)
+                    logger.success(f"Post {post.id} → {final.name}")
+        except KeyboardInterrupt:
+            raise
+        except Exception as exc:
+            logger.error(f"Post {post.id} failed: {exc}")
+            state.set(post.id, status="failed", error=str(exc), title=title, files=saved,
+                      date=post.date.astimezone().isoformat(timespec="seconds"))
+            summary.failed += 1
+            summary.errors.append(f"{post.id}: {exc}")
+            summary.files_saved += len(saved)
+            summary.duplicates += duplicates
+            state.save()
+            return
+        summary.files_saved += len(saved)
+        summary.duplicates += duplicates
+        if not saved and not duplicates:
+            summary.skipped += 1  # nothing could be fetched (not downloadable / too large); not recorded, so a later run retries
+            return
+        state.set(post.id, status="done", title=title, files=saved,
+                  date=post.date.astimezone().isoformat(timespec="seconds"))
+        summary.done += 1
+        state.save()
+
+    def _place_file(self, temp_path: Path, item: MediaItem, post: ChannelPost, stem: str) -> Optional[Path]:
+        """Move a downloaded file into out_dir. Returns None when an identical file (same name and size) is already there."""
+        name = sanitize_filename(item.file_name) if item.file_name else ""
+        if name in ("", ".", ".."):
+            name = f"{stem}{temp_path.suffix}"
+        self.out_dir.mkdir(parents=True, exist_ok=True)
+        size = temp_path.stat().st_size
+        base = Path(name)
+        dest = self.out_dir / name
+        attempt = 0
+        while dest.exists():
+            if dest.stat().st_size == size:
+                temp_path.unlink(missing_ok=True)
+                return None
+            attempt += 1
+            tag = f" (post {post.id})" if attempt == 1 else f" (post {post.id}-{attempt})"
+            dest = self.out_dir / f"{base.stem}{tag}{base.suffix}"
+        shutil.move(str(temp_path), str(dest))
+        return dest
 
     def _write_index(self, channel: ChannelInfo, state: ChannelState) -> None:
         entries = list(state.posts.values())

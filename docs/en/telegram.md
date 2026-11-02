@@ -57,9 +57,25 @@ versline telegram archive [OPTIONS] CHANNEL
 | `--since`, `--until` | `YYYY-MM-DD[ HH:MM]`, Gregorian or Shamsi (`1404-07-01`; years < 1700 are Shamsi; Persian digits and `/` accepted). A date without time covers the whole day; `--until` is inclusive. | whole channel |
 | `--limit N` | At most N matching posts | no limit |
 | `--types` | Comma list of `audio,voice,video,video_note,photo,document,text` | all |
-| `--dry-run` | Table of matching posts (ID, date, type, duration, title); writes nothing | off |
+| `--dry-run` | Table of matching posts (ID, date, type, duration, title, plus the matching files when a file filter is used); writes nothing | off |
 
 A post's type is the type of its **first** media item (album starting with a photo = `photo`); without media = `text`. Only voice, audio, video and video_note are transcribed; other types get caption and metadata.
+
+### Filtering files
+
+Pick documents by extension and by name (or caption). Works in the normal archive (with `--keep-media`, only matching files are downloaded) and in `--files-only` mode.
+
+| Option | Description | Default |
+| :--- | :--- | :--- |
+| `--ext` | Comma list of extensions, e.g. `pdf,docx`; `word` = `doc,docx`. Taken from the file name, else the mime type | any |
+| `--match REGEX` | Keep files matching **at least one** pattern (repeatable) | any |
+| `--exclude REGEX` | Drop files matching **any** pattern (repeatable); wins over `--match` | none |
+| `--match-in` | What the patterns test: `name` (file name), `caption` (post text) or `any` (either) | `name` |
+| `--files-only` | Save the matching files under their original names in the output folder: no notes, no transcription, no LLM. Cannot be combined with `--summary`, `--taqrir`, `--reuse-transcripts` | off |
+
+Patterns are Python regexes, case-insensitive; a plain word works as is. Persian text is normalized on both sides first: `ي/ك` → `ی/ک`, tatweel and diacritics dropped, ZWNJ and `_` count as spaces, so `--match "جزوه فقه"` finds `جزوه_فقه.pdf`. The filter works per file: in an album with a PDF and a photo, only the PDF is kept. Combine freely with `--since/--until`, `--limit`, `--types`, `--max-size`; use `--dry-run` to preview (a *Files* column lists the matches).
+
+`--files-only` keeps its own manifest (`.versline-files.json`), so reruns skip finished posts and don't interfere with a normal archive in the same folder. A file whose name and size match one already in the folder is skipped as a duplicate; the same name with a different size is saved as `name (post <id>).ext`. Documents need logged-in mode: with `--web` they are reported as skipped.
 
 ### Output
 
@@ -116,6 +132,12 @@ versline telegram archive @news --web --types text --summary --taqrir
 
 # Add summary/taqrir to already archived posts without re-transcribing
 versline telegram archive @lectures --since 1404-07-01 --summary --taqrir --reuse-transcripts -o ~/Vault/Telegram/lectures
+
+# Only PDF/Word files whose name contains "جزوه" but not "پیش‌نویس" or "draft"
+versline telegram archive @chan --files-only --ext pdf,word --match "جزوه" --exclude "پیش‌نویس|draft" -o ~/Downloads/chan
+
+# Preview PDFs whose caption or name says "جلسه <number>"
+versline telegram archive @chan --files-only --ext pdf --match 'جلسه\s*\d+' --match-in any --dry-run
 
 # Only spoken content, skip files over 200 MB, English summaries
 versline telegram archive @lectures --types audio,voice,video --max-size 200 --summary --output-lang English
