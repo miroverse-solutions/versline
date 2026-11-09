@@ -11,7 +11,7 @@
 | `config.py`، `userconfig.py` | گروه‌های تنظیمات pydantic-settings (llm، transcription، ffmpeg، resource، slides، telegram)، بارگذاری env، پوشه‌ی تنظیمات کاربر |
 | `services/` | منطق اصلی: `transcription`، `translation`، `summarizer`، `question_generator`، `qualitative_coding`، `research_writing`، `slides`، `document_processor`، `export`، `media`، `network`، `ai` (کلاینت سرویس‌دهنده‌ها، تلاش مجدد)، `pricing` (پایش توکن/هزینه) |
 | `services/channel_archive/` | بایگانی تلگرام: `sources/` (`telegram` با Telethon، `telegram_web` با httpx و BeautifulSoup)، `steps.py` (رسانه، پیاده‌سازی، خلاصه، تقریر)، `pipeline.py`، `obsidian.py`، `state.py` (فایل وضعیت)، `llm.py` (تولیدکننده‌ی متن تک‌پرامپتی)، `models.py` |
-| `services/organize/` | سازمان‌دهی آرشیو (فقط کتابخانهٔ استاندارد): `catalog.py` (SQLite با مسیرهای نسبی به ریشهٔ درایو)، `scanner.py` (پیمایش افزایشی)، `hashing.py` (SHA-256)، `dupes.py` (تکراری‌ها و پوشه‌های زائد)، `reports.py` (Markdown/CSV)، `kinds.py`، `normalize.py`. طراحی: [organize-design.md](organize-design.md) |
+| `services/organize/` | سازمان‌دهی آرشیو (فقط کتابخانهٔ استاندارد): `catalog.py` (SQLite با مسیرهای نسبی به ریشهٔ درایو)، `scanner.py` (پیمایش افزایشی)، `hashing.py` (SHA-256)، `dupes.py` (تکراری‌ها و پوشه‌های زائد)، `reports.py` (Markdown/CSV)، `rules.py` (قالب rules.txt و taxonomy.txt)، `planner.py` (برنامه، dedupe، برخورد نام)، `applier.py` (apply/verify/revert-moves با دفتر)، `kinds.py`، `normalize.py`. طراحی: [organize-design.md](organize-design.md) |
 | `core/` | ثابت‌ها، نوع‌ها، بارگذاری پرامپت، محدودیت منابع |
 | `mcp/server.py` | ابزارهای MCP |
 | `resources/prompts`، `resources/assets` | پرامپت‌ها، فونت وزیرمتن و فایل‌های اسلاید |
