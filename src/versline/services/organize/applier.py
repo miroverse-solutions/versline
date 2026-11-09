@@ -7,7 +7,6 @@ Safety rules:
 """
 from __future__ import annotations
 
-import csv
 import hashlib
 import os
 import shutil
@@ -127,13 +126,23 @@ def _move_file(src: Path, dst: Path) -> None:
     os.rename(fs_path(src), fs_path(dst))
 
 
-def _log_move(path: Path, src: str, dst: str, event: str) -> None:
-    new = not path.exists()
-    with open(path, "a", encoding="utf-8-sig" if new else "utf-8", newline="") as handle:
-        writer = csv.writer(handle)
-        if new:
-            writer.writerow(["at", "event", "from", "to"])
-        writer.writerow([now_iso(), event, src, dst])
+def export_moves(catalog: Catalog, dest_root: Path) -> Path:
+    """Rewrite ``logs/moves.csv`` from the ``applied`` table (the source of truth), so an interrupted run can
+    never leave it incomplete. Paths are relative to the drive root, valid on Windows and Linux alike."""
+    ensure_applied_table(catalog)
+    try:
+        dest_rel = Path(os.path.relpath(str(dest_root), str(catalog.base))).as_posix()
+    except ValueError:
+        dest_rel = str(dest_root)
+    roots = {r["label"]: r["path"] for r in catalog.roots()}
+    rows = []
+    for key, dest, status, at in catalog.conn.execute(
+            "SELECT key, dest, status, at FROM applied WHERE action='move' ORDER BY at, key"):
+        label, _, relpath = key.partition("/")
+        rows.append((at, status, f"{roots.get(label, label)}/{relpath}", f"{dest_rel}/{dest}"))
+    path = catalog.workspace / "logs" / "moves.csv"
+    write_csv(path, ["at", "status", "from", "to"], rows)
+    return path
 
 
 def apply_plan(catalog: Catalog, plan: List[dict], dest_root: Path, only: Optional[str] = None,
@@ -177,7 +186,6 @@ def apply_plan(catalog: Catalog, plan: List[dict], dest_root: Path, only: Option
         raise OSError(f"Not enough free space: copies need {human_size(copy_bytes)} (+2 GB margin), "
                       f"{human_size(free)} free.")
 
-    moves_log = catalog.workspace / "logs" / "moves.csv"
     status = ApplyProgress(0, len(todo), 0, copy_bytes, "")
     last_commit = time.monotonic()
 
@@ -200,7 +208,6 @@ def apply_plan(catalog: Catalog, plan: List[dict], dest_root: Path, only: Option
                     _move_file(src, dst)
                     conn.execute("UPDATE applied SET status='done', at=? WHERE key=?", (now_iso(), key))
                     conn.commit()
-                    _log_move(moves_log, str(src), str(dst), "move")
                     result.moved += 1
                 else:
                     digest = _copy_file(src, dst, hashes.get(key), bump)
@@ -222,6 +229,8 @@ def apply_plan(catalog: Catalog, plan: List[dict], dest_root: Path, only: Option
                 last_commit = time.monotonic()
     finally:
         conn.commit()
+        if result.moved or only in (None, MOVE):
+            export_moves(catalog, dest_root)
     return result
 
 
@@ -248,11 +257,12 @@ def revert_moves(catalog: Catalog, dest_root: Path, dry_run: bool = False) -> Di
             os.rename(fs_path(dst), fs_path(src))
             conn.execute("UPDATE applied SET status='reverted', at=? WHERE key=?", (now_iso(), key))
             conn.commit()
-            _log_move(catalog.workspace / "logs" / "moves.csv", str(dst), str(src), "revert")
             counts["reverted"] += 1
         except OSError as exc:
             counts["errors"] += 1
             logger.warning(f"revert failed for {key}: {exc}")
+    if not dry_run:
+        export_moves(catalog, dest_root)
     return counts
 
 

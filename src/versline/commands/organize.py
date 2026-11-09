@@ -207,6 +207,11 @@ def _load_ruleset(catalog, rules: Optional[Path]):
         console.print(f"[red]No rules file at {path}.[/red] See docs/fa/organize.md for the format.")
         raise typer.Exit(1)
     ruleset = load_rules(path)
+    from versline.services.organize.rules import load_assignments
+
+    assigned = load_assignments(catalog.workspace / "assignments.csv", ruleset)
+    if assigned:
+        console.print(f"assignments.csv: {assigned:,} per-file destinations")
     for error in ruleset.errors:
         console.print(f"[yellow]rules.txt {error}[/yellow]")
     return ruleset

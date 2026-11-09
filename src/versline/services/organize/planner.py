@@ -79,8 +79,11 @@ def build_plan(catalog: Catalog, ruleset: RuleSet, taxonomy: Optional[List[str]]
 
     rows: List[PlanRow] = []
     for index, (label, relpath, size, kind, digest) in enumerate(files, 1):
-        rule, rest = ruleset.match(label, relpath)
-        if rule:
+        assigned = ruleset.assignment(label, relpath)
+        rule, rest = (None, "") if assigned else ruleset.match(label, relpath)
+        if assigned:
+            dest, rule_label = f"{assigned[0]}/{relpath.rsplit('/', 1)[-1]}", f"assign:{assigned[1]}"
+        elif rule:
             dest, rule_label = f"{rule.dest}/{rest}", rule.label
         else:
             dest, rule_label = f"{ruleset.default}/{label}/{relpath}", "default"
@@ -89,7 +92,7 @@ def build_plan(catalog: Catalog, ruleset: RuleSet, taxonomy: Optional[List[str]]
         parent = f"{label}/{relpath.rpartition('/')[0]}".rstrip("/")
         if is_media:
             dest = ruleset.media_dest(dest)
-        elif ratios.get(parent, 0.0) >= ruleset.media_folder_ratio:
+        elif not assigned and ratios.get(parent, 0.0) >= ruleset.media_folder_ratio:  # an explicit assignment wins
             new_dest = ruleset.media_dest(dest)
             if new_dest != dest:
                 notes.append("with-media")
@@ -195,6 +198,7 @@ def write_plan_summary(rows: List[PlanRow], stats: dict, ruleset: RuleSet, path:
         entry[1] += row.size
         entry[2 if row.action == MOVE else 3] += 1
     rule_dest = {r.label: r.dest for r in ruleset.rules}
+    rule_dest.update({f"assign:{by}": "(assignments.csv)" for _, by in ruleset.assignments.values()})
     parts.append("## بر اساس قاعده\n\n" + _md_table(
         ["قاعده (شماره خط: منبع)", "مقصد", "فایل", "حجم", "move", "copy"],
         [(k, rule_dest.get(k, ruleset.default), f"{v[0]:,}", human_size(v[1]), f"{v[2]:,}", f"{v[3]:,}")

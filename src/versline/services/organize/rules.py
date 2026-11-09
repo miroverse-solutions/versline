@@ -14,11 +14,15 @@ A rule's left side is a source path prefix ``<source label>/<folder or file>``; 
 and the rest of the path is kept under the destination. Matching ignores Arabic/Persian ي/ك differences and
 extra spaces. A rule naming a single file puts that file directly into the destination folder.
 
+assignments.csv — per-file decisions that win over rules (columns ``root, path, dest, by, note``; ``dest`` is the
+destination *folder*, the file keeps its name). Written by a person, an assistant or (later) ``classify --llm``.
+
 taxonomy.txt — one destination folder per line, optionally ``| description``. Used to warn about rules that point
 outside the agreed structure (and, later, as the category list for AI classification).
 """
 from __future__ import annotations
 
+import csv
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -49,10 +53,17 @@ class RuleSet:
     media_kinds: Tuple[str, ...] = ("audio", "video")
     media_folder_ratio: float = 0.8
     errors: List[str] = field(default_factory=list)
+    assignments: Dict[str, Tuple[str, str]] = field(default_factory=dict)  # key(root/path) -> (dest folder, by)
     _index: Dict[str, Rule] = field(default_factory=dict, repr=False)
 
     def build_index(self) -> None:
         self._index = {_key(rule.prefix): rule for rule in self.rules}
+
+    def assignment(self, label: str, relpath: str) -> Optional[Tuple[str, str]]:
+        """Per-file destination folder from assignments.csv, if any: ``(dest_folder, by)``."""
+        if not self.assignments:
+            return None
+        return self.assignments.get(_key(f"{label}/{relpath}"))
 
     def match(self, label: str, relpath: str) -> Tuple[Optional[Rule], str]:
         """Longest rule matching ``label/relpath`` and the remaining path to keep under its destination."""
@@ -141,6 +152,29 @@ def parse_rules(text: str) -> RuleSet:
 
 def load_rules(path: Path) -> RuleSet:
     return parse_rules(Path(path).read_text(encoding="utf-8-sig"))
+
+
+ASSIGNMENT_HEADER = ["root", "path", "dest", "by", "note"]
+
+
+def load_assignments(path: Path, ruleset: RuleSet) -> int:
+    """Read assignments.csv into ``ruleset.assignments``; returns the number loaded. Bad rows go to errors."""
+    path = Path(path)
+    if not path.is_file():
+        return 0
+    with open(path, encoding="utf-8-sig", newline="") as handle:
+        reader = csv.DictReader(handle)
+        missing = [c for c in ("root", "path", "dest") if c not in (reader.fieldnames or [])]
+        if missing:
+            ruleset.errors.append(f"{path.name}: missing columns {missing}")
+            return 0
+        for number, row in enumerate(reader, 2):
+            root, rel, dest = (row.get("root") or "").strip(), (row.get("path") or "").strip(), _clean_path(row.get("dest") or "")
+            if not (root and rel and dest):
+                ruleset.errors.append(f"{path.name} line {number}: root, path and dest are required")
+                continue
+            ruleset.assignments[_key(f"{root}/{rel}")] = (dest, (row.get("by") or "").strip() or "manual")
+    return len(ruleset.assignments)
 
 
 def load_taxonomy(path: Path) -> List[str]:

@@ -102,6 +102,17 @@ class PlanApplyTests(unittest.TestCase):
         self.assertEqual(rows[("old", "پروژه/voice.mp3")].dest, "۳-نوشته‌ها و پروژه‌ها/پروژه/voice.mp3")
         self.assertEqual(rows[("old", "دانلود/x.docx")].dest, "۹-بایگانی خام/old/دانلود/x.docx")
 
+    def test_assignments_win_over_rules(self):
+        from versline.services.organize.rules import load_assignments
+        path = self.workspace / "assignments.csv"
+        path.write_text("root,path,dest,by,note\nold,دانلود/x.docx,۱-کتابخانه/تاریخ,claude,\n"
+                        "lib,فقه/درس/جلسه 1.mp3,۱-کتابخانه/اخلاق و عبادات,claude,\n", encoding="utf-8-sig")
+        self.assertEqual(load_assignments(path, self.rules), 2)
+        rows, _, _ = self.plan()
+        self.assertEqual((rows[("old", "دانلود/x.docx")].dest, rows[("old", "دانلود/x.docx")].rule),
+                         ("۱-کتابخانه/تاریخ/x.docx", "assign:claude"))
+        self.assertEqual(rows[("lib", "فقه/درس/جلسه 1.mp3")].dest, "۲-صوت و تصویر/اخلاق و عبادات/جلسه 1.mp3")
+
     def test_collision_keeps_plain_name_for_priority_source(self):
         self.rules = parse_rules(RULES.replace("@root_priority lib | old", "@root_priority old | lib"))
         rows, _, _ = self.plan()
@@ -122,7 +133,11 @@ class PlanApplyTests(unittest.TestCase):
         self.assertTrue((self.drive / "lib" / "فقه" / "كتب" / "a.pdf").exists())  # copies leave sources alone
         self.assertEqual((self.dest / "۱-کتابخانه" / "اصول و فقه" / "کتب" / "a (2).pdf").read_bytes(),
                          b"other book with same dest")
-        self.assertTrue((self.workspace / "logs" / "moves.csv").is_file())
+        with open(self.workspace / "logs" / "moves.csv", encoding="utf-8-sig", newline="") as handle:
+            logged = list(csv.DictReader(handle))
+        self.assertEqual(len(logged), 2)
+        self.assertIn("lib/فقه/درس/جلسه 1.mp3", [r["from"] for r in logged])
+        self.assertIn("مرتب/۲-صوت و تصویر/اصول و فقه/درس/جلسه 1.mp3", [r["to"] for r in logged])
 
         again = apply_plan(self.catalog, plan, self.dest)  # resumable / idempotent
         self.assertEqual((again.moved, again.copied, again.skipped), (0, 0, 7))
@@ -134,6 +149,8 @@ class PlanApplyTests(unittest.TestCase):
         self.assertEqual(reverted["reverted"], 2)
         self.assertTrue((self.drive / "lib" / "فقه" / "درس" / "جلسه 1.mp3").exists())
         self.assertFalse(moved.exists())
+        with open(self.workspace / "logs" / "moves.csv", encoding="utf-8-sig", newline="") as handle:
+            self.assertEqual({r["status"] for r in csv.DictReader(handle)}, {"reverted"})
 
     def test_existing_different_file_is_never_overwritten(self):
         _, plan, _ = self.plan()

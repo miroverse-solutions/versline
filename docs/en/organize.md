@@ -66,7 +66,8 @@ Linux can be continued on Windows under any drive letter.
 `rules.txt` maps source prefixes to destination folders (`source label/folder => destination/folder`); the longest
 matching prefix wins and sub-folders are kept. Directives: `@dest_root`, `@default` (unmatched files),
 `@root_priority` (which duplicate keeps the plain name), `@media from => to` (re-root audio/video destinations),
-`@media_kinds`, `@media_folder_ratio` (other files in a media-heavy folder follow the media). `taxonomy.txt` lists
+`@media_kinds`, `@media_folder_ratio` (other files in a media-heavy folder follow the media). Per-file decisions go in an optional `assignments.csv` (columns `root,path,dest,by,note`; `dest` is the
+destination folder), which wins over every rule. `taxonomy.txt` lists
 the agreed destination folders; `plan` warns about rules pointing elsewhere.
 
 `plan` writes `plan/plan_summary.md` (read this first) and `plan/plan.csv` (one row per file; set `approved` to
@@ -77,7 +78,7 @@ the agreed destination folders; `plan` warns about rules pointing elsewhere.
 `apply` runs moves first, then copies (written to `.part`, SHA-256 checked, then renamed). It checks free space,
 asks for confirmation (`--yes` to skip), never overwrites an existing file, and resumes where it stopped.
 `verify` writes `reports/verify.md` and `coverage.csv`; `revert-moves` puts every moved file back (the journal is
-also in `logs/moves.csv`). Full details: section 6.7–6.8 of the design document.
+also exported to `logs/moves.csv`, rebuilt from the database after every run, paths relative to the drive root). Full details: section 6.7–6.8 of the design document.
 
 ## Workspace
 
