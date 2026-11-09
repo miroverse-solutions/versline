@@ -64,7 +64,7 @@ app = typer.Typer(
 
 # Setup commands are light; the processing commands pull in pandas, openai, markitdown etc. (seconds of
 # import time, much more on a first Windows run), so skip them when only a setup command is requested.
-_LIGHT_COMMANDS = {"init", "config", "update", "--version"}
+_LIGHT_COMMANDS = {"init", "config", "update", "organize", "--version"}
 if not (len(sys.argv) > 1 and sys.argv[1] in _LIGHT_COMMANDS):
     from versline.commands import transcribe, translate, qude, qualcode, slides, summarize, research, telegram
 
@@ -76,6 +76,11 @@ if not (len(sys.argv) > 1 and sys.argv[1] in _LIGHT_COMMANDS):
     app.add_typer(summarize.app, name="summarize", help="[cyan]Summarize files[/cyan] (outline, detailed, or slides mode).")
     app.add_typer(research.app, name="research", help="[cyan]Write research sections[/cyan] with a staged outline-to-full pipeline.")
     app.add_typer(telegram.app, name="telegram", help="[cyan]Archive a Telegram channel[/cyan] (captions + transcripts) as Obsidian notes.")
+
+# organize uses only the standard library + typer/rich, so it is registered as a light command.
+from versline.commands import organize  # noqa: E402
+
+app.add_typer(organize.app, name="organize", help="[cyan]Organize a large archive[/cyan]: catalogue, find duplicates, plan a clean copy (read-only on sources).")
 
 app.command("init", help="[cyan]First-time setup[/cyan]: choose a provider and save your API key.")(setup.init_command)
 app.command("config", help="[cyan]Show saved settings[/cyan] (API keys are masked).")(setup.config_command)

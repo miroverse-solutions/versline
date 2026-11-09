@@ -86,3 +86,11 @@ python -m versline.cli [COMMAND] [ARGS]
 1.  **Never hardcode prompts** in Python files. Move them to `resources/prompts`.
 2.  **Respect `settings`**: Always check `versline.config.settings` for API keys and Proxies before falling back to defaults.
 3.  **Logging**: Use `loguru` (`from loguru import logger`) instead of standard `logging`.
+
+## 🗂️ `organize` (archive organizer)
+- Design and roadmap: `docs/fa/organize-design.md` (read it before changing `services/organize/`). User guide: `docs/{fa,en}/organize.md`.
+- Sources are strictly read-only: never delete, move or rename anything under a scanned root. New structures are built by copy/hardlink from an approved `plan.csv` only.
+- Keep `services/organize/` standard-library only (+ loguru) and `commands/organize.py` free of heavy imports: `organize` is registered as a light command in `cli.py`.
+- Catalog paths are stored relative to the workspace's parent (drive root) with `/` separators; open files through `normalize.fs_path` (long-path safe on Windows).
+- SQLite uses `journal_mode=TRUNCATE` (works where file deletion is not allowed); CSV reports are written `utf-8-sig` for Excel.
+- Every long step must be resumable: persist results as you go and skip finished work on rerun.

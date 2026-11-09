@@ -16,6 +16,7 @@ Versline is a command-line toolkit and Python library by Miroverse Solutions. It
 | `research` | Staged academic writing of a "findings" chapter |
 | `slides` | Generate HTML/TypeScript slide decks from Markdown |
 | `telegram` | Archive a Telegram channel into Obsidian notes (with transcripts, summaries, taqrir) |
+| `organize` | Catalogue a large drive/archive, find duplicate files and (in development) build a clean structure; read-only on sources, no API key |
 | `init`, `config`, `update` | First-time setup, show saved settings, self-update |
 
 Supported LLM providers: **Google (Gemini), OpenAI, OpenRouter, AvalAI, and any OpenAI-compatible endpoint**.
@@ -26,6 +27,7 @@ Supported LLM providers: **Google (Gemini), OpenAI, OpenRouter, AvalAI, and any 
 2. [Configuration](configuration.md)
 3. [Command reference](commands.md)
 4. [Telegram channel archive](telegram.md)
+   - [Organizing a file archive](organize.md) · [Design (Persian)](../fa/organize-design.md)
 5. [Python library and MCP server](library.md)
 6. [Architecture and development](architecture.md)
 7. [Troubleshooting](troubleshooting.md)

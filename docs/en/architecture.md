@@ -7,10 +7,11 @@
 | Path | Role |
 | :--- | :--- |
 | `cli.py` | Typer app, global options, update notice. Heavy modules are imported lazily so `init/config/update/--version` start fast |
-| `commands/` | Thin CLI wrappers (`transcribe`, `translate`, `summarize`, `qude`, `qualcode`, `research`, `slides`, `telegram`, `setup`) |
+| `commands/` | Thin CLI wrappers (`transcribe`, `translate`, `summarize`, `qude`, `qualcode`, `research`, `slides`, `telegram`, `organize`, `setup`) |
 | `config.py`, `userconfig.py` | pydantic-settings groups (llm, transcription, ffmpeg, resource, slides, telegram), env loading, per-user config folder |
 | `services/` | Business logic: `transcription`, `translation`, `summarizer`, `question_generator`, `qualitative_coding`, `research_writing`, `slides`, `document_processor`, `export`, `media`, `network`, `ai` (provider clients, retries), `pricing` (token/cost tracking) |
 | `services/channel_archive/` | Telegram archive: `sources/` (`telegram` via Telethon, `telegram_web` via httpx + BeautifulSoup), `steps.py` (media, transcribe, summary, taqrir), `pipeline.py`, `obsidian.py`, `state.py` (manifest), `llm.py` (single-prompt text generator), `models.py` |
+| `services/organize/` | Archive organizer (standard library only): `catalog.py` (SQLite, root paths relative to the drive root), `scanner.py` (incremental walk), `hashing.py` (SHA-256), `dupes.py` (duplicates, redundant folders), `reports.py` (Markdown/CSV), `kinds.py`, `normalize.py`. Design: [organize-design.md](../fa/organize-design.md) |
 | `core/` | Constants, types, prompt loading, resource limits |
 | `mcp/server.py` | MCP tools |
 | `resources/prompts`, `resources/assets` | Bundled prompts, Vazirmatn font, slide assets |

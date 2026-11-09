@@ -187,6 +187,10 @@ versline research -i study.json --stage full --approved-outline-file output/ch4_
 
 `telegram login`، `telegram logout`، `telegram archive CHANNEL`. توضیح کامل در [بایگانی کانال تلگرام](telegram.md).
 
+## `organize`
+
+`organize scan SOURCE...`، `organize stats`، `organize dupes`، `organize export`، `organize status`. بدون هوش مصنوعی و فقط‌خواندنی روی منابع. توضیح کامل در [سازمان‌دهی آرشیو فایل‌ها](organize.md) و [سند طراحی](organize-design.md).
+
 ## موجود نیست
 
 `download` در سورس هست (`commands/download.py`) ولی در خط فرمان **ثبت نشده است**. برای دانلود یک لینک، آن را مستقیم به `versline transcribe` بدهید.

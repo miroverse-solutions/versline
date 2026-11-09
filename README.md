@@ -10,6 +10,7 @@
 - 🌐 **ترجمه‌ی** متن و سند
 - 📄 **خلاصه‌سازی** مقاله، کتاب و جزوه
 - 📣 **بایگانی کانال تلگرام** به‌صورت یادداشت‌های Obsidian (با متن پیاده‌شده‌ی صوت‌ها، خلاصه و تقریر)
+- 🗂️ **سازمان‌دهی هارد و آرشیو بزرگ**: فهرست کامل فایل‌ها و پیدا کردن تکراری‌ها، بدون دست زدن به فایل‌ها و بدون کلید API
 - ❓ ساخت **سؤال و فلش‌کارت**، 🎞️ ساخت **اسلاید**، 🧩 **کدگذاری کیفی** و 🎓 **نگارش فصل یافته‌ها**
 
 > برای استفاده به یک **کلید API** از یکی از این سرویس‌ها نیاز دارید: Google (Gemini)، OpenAI، OpenRouter یا AvalAI.
@@ -110,6 +111,17 @@ versline telegram archive @نام_کانال --since 1404-07-01 --summary --taqr
 - تاریخ را می‌توانید شمسی بنویسید (مثل `1404-07-01`).
 - اگر اجرا قطع شد، دوباره همان دستور را بزنید؛ پست‌های تمام‌شده تکرار نمی‌شوند.
 
+### 🗂️ سازمان‌دهی هارد و آرشیو
+
+```sh
+# از ریشهٔ هارد اجرا کنید؛ فایل‌های شما تغییر نمی‌کنند
+versline organize scan "کتابخانه" "دانلودها"
+versline organize dupes      # گزارش تکراری‌ها در _versline_organize/reports
+versline organize export     # فهرست کامل برای Excel
+```
+
+این دستورها کلید API لازم ندارند. اگر قطع شد، دوباره همان دستور را بزنید.
+
 ### 🔄 به‌روزرسانی
 
 ```sh
@@ -129,6 +141,7 @@ versline update
 | `versline translate` | ترجمه‌ی فایل |
 | `versline summarize` | خلاصه‌سازی |
 | `versline telegram` | بایگانی کانال تلگرام |
+| `versline organize` | فهرست‌برداری هارد و پیدا کردن فایل‌های تکراری |
 | `versline qude` | ساخت سؤال و فلش‌کارت (CSV، Anki، HTML) |
 | `versline qualcode` | کدگذاری کیفی مصاحبه‌ها |
 | `versline research` | نگارش مرحله‌ای فصل یافته‌ها |
@@ -162,6 +175,7 @@ versline update
 | تنظیمات | [تنظیمات](docs/fa/configuration.md) | [Configuration](docs/en/configuration.md) |
 | دستورها | [مرجع دستورها](docs/fa/commands.md) | [Command reference](docs/en/commands.md) |
 | تلگرام | [بایگانی تلگرام](docs/fa/telegram.md) | [Telegram archive](docs/en/telegram.md) |
+| سازمان‌دهی آرشیو | [راهنما](docs/fa/organize.md) · [طراحی](docs/fa/organize-design.md) | [Organize guide](docs/en/organize.md) |
 | برنامه‌نویسان | [کتابخانه و MCP](docs/fa/library.md) · [معماری](docs/fa/architecture.md) | [Library & MCP](docs/en/library.md) · [Architecture](docs/en/architecture.md) |
 
 ---

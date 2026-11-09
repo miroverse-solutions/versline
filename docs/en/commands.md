@@ -187,6 +187,10 @@ Plus the common LLM and prompt-note options.
 
 `telegram login`, `telegram logout`, `telegram archive CHANNEL`. Fully documented in [Telegram channel archive](telegram.md).
 
+## `organize`
+
+`organize scan SOURCE...`, `organize stats`, `organize dupes`, `organize export`, `organize status`. No AI, read-only on sources. Fully documented in [Organizing a file archive](organize.md).
+
 ## Not available
 
 `download` exists in the source (`commands/download.py`) but is **not registered** in the CLI. To download a URL, pass it directly to `versline transcribe`.
