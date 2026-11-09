@@ -89,7 +89,7 @@ python -m versline.cli [COMMAND] [ARGS]
 
 ## 🗂️ `organize` (archive organizer)
 - Design and roadmap: `docs/fa/organize-design.md` (read it before changing `services/organize/`). User guide: `docs/{fa,en}/organize.md`.
-- Sources are strictly read-only: never delete, move or rename anything under a scanned root. New structures are built by copy/hardlink from an approved `plan.csv` only.
+- Only `apply` may change sources, and only by same-drive moves of `@media_kinds` from an approved `plan.csv`, journaled (`applied` table status `moving` before the rename, `logs/moves.csv`) and reversible with `revert-moves`. Never delete or overwrite; everything else is copied.
 - Keep `services/organize/` standard-library only (+ loguru) and `commands/organize.py` free of heavy imports: `organize` is registered as a light command in `cli.py`.
 - Catalog paths are stored relative to the workspace's parent (drive root) with `/` separators; open files through `normalize.fs_path` (long-path safe on Windows).
 - SQLite uses `journal_mode=TRUNCATE` (works where file deletion is not allowed); CSV reports are written `utf-8-sig` for Excel.

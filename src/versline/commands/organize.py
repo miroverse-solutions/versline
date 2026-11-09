@@ -1,6 +1,7 @@
-"""`versline organize`: catalogue a large archive, find duplicates and (later) build a clean copy.
+"""`versline organize`: catalogue a large archive, find duplicates and rebuild it in a clean structure.
 
-Read-only on the sources. Design: docs/fa/organize-design.md · guide: docs/fa/organize.md
+scan/stats/dupes/export/plan/verify only read the sources. apply copies files (sources untouched) and moves
+audio/video on the same drive (journaled, reversible with revert-moves). Design: docs/fa/organize-design.md
 """
 from __future__ import annotations
 
@@ -14,7 +15,7 @@ from rich.console import Console
 from rich.progress import BarColumn, DownloadColumn, Progress, SpinnerColumn, TextColumn, TimeRemainingColumn
 from rich.table import Table
 
-app = typer.Typer(help="Catalogue a large file archive, find duplicates and plan a clean structure (sources stay untouched).")
+app = typer.Typer(help="Catalogue a large file archive, find duplicates and rebuild it in a clean structure (copies; audio/video moved, reversibly).")
 console = Console()
 
 WORKSPACE_HELP = ("Workspace folder holding the catalog and reports. Default: _versline_organize at the root of the "
@@ -190,5 +191,184 @@ def status(workspace: Optional[Path] = typer.Option(None, "-w", "--workspace", h
         console.print(table)
         errors = conn.execute("SELECT COUNT(*) FROM scan_errors").fetchone()[0]
         console.print(f"Errors recorded: {errors:,} · reports in {catalog.workspace / 'reports'}")
+    finally:
+        _close(catalog)
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# plan / apply / verify / revert-moves
+# ---------------------------------------------------------------------------------------------------------------
+
+def _load_ruleset(catalog, rules: Optional[Path]):
+    from versline.services.organize.rules import load_rules
+
+    path = rules or catalog.workspace / "rules.txt"
+    if not path.is_file():
+        console.print(f"[red]No rules file at {path}.[/red] See docs/fa/organize.md for the format.")
+        raise typer.Exit(1)
+    ruleset = load_rules(path)
+    for error in ruleset.errors:
+        console.print(f"[yellow]rules.txt {error}[/yellow]")
+    return ruleset
+
+
+def _plan_path(catalog, plan: Optional[Path]) -> Path:
+    return plan or catalog.workspace / "plan" / "plan.csv"
+
+
+def _read_plan_or_exit(path: Path):
+    from versline.services.organize.planner import read_plan
+
+    if not path.is_file():
+        console.print(f"[red]No plan at {path}. Run 'versline organize plan' first.[/red]")
+        raise typer.Exit(1)
+    try:
+        return read_plan(path)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("plan")
+def plan_command(
+    workspace: Optional[Path] = typer.Option(None, "-w", "--workspace", help=WORKSPACE_HELP),
+    rules: Optional[Path] = typer.Option(None, "--rules", help="Rules file (default: <workspace>/rules.txt)."),
+):
+    """Build plan/plan.csv and plan/plan_summary.md from the catalog and rules.txt. Changes no files."""
+    from versline.services.organize.planner import build_plan, write_plan, write_plan_summary
+    from versline.services.organize.reports import human_size
+    from versline.services.organize.rules import load_taxonomy
+
+    catalog = _open_catalog(_resolve_workspace(workspace))
+    try:
+        ruleset = _load_ruleset(catalog, rules)
+        taxonomy = load_taxonomy(catalog.workspace / "taxonomy.txt")
+        rows, stats = build_plan(catalog, ruleset, taxonomy)
+        plan_dir = catalog.workspace / "plan"
+        write_plan(rows, plan_dir / "plan.csv")
+        write_plan_summary(rows, stats, ruleset, plan_dir / "plan_summary.md")
+        table = Table(title="Plan (nothing executed yet)")
+        for column in ("action", "files", "size"):
+            table.add_column(column)
+        totals = {}
+        for row in rows:
+            entry = totals.setdefault(row.action, [0, 0])
+            entry[0] += 1
+            entry[1] += row.size
+        for action, (count, size) in sorted(totals.items()):
+            table.add_row(action, f"{count:,}", human_size(size))
+        console.print(table)
+        logger.info(f"plan built: { {k: v[0] for k, v in totals.items()} }")
+        console.print(f"Review: {plan_dir / 'plan_summary.md'} and {plan_dir / 'plan.csv'}")
+    finally:
+        _close(catalog)
+
+
+@app.command("apply")
+def apply_command(
+    workspace: Optional[Path] = typer.Option(None, "-w", "--workspace", help=WORKSPACE_HELP),
+    plan: Optional[Path] = typer.Option(None, "--plan", help="Plan CSV (default: <workspace>/plan/plan.csv)."),
+    rules: Optional[Path] = typer.Option(None, "--rules", help="Rules file, for @dest_root."),
+    only: Optional[str] = typer.Option(None, "--only", help="Run only 'move' or only 'copy' rows."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen; change nothing."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Do not ask for confirmation."),
+    skip_unclassified: bool = typer.Option(False, "--skip-unclassified",
+                                           help="Leave files without a rule (bound for the @default archive) for later."),
+):
+    """Execute the approved plan: move audio/video (same-drive rename, journaled) and copy the rest (SHA-256 checked).
+    Resumable: rerun to continue. Never overwrites or deletes."""
+    import shutil
+
+    from versline.services.organize.applier import apply_plan
+    from versline.services.organize.reports import human_size
+
+    if only not in (None, "move", "copy"):
+        raise typer.BadParameter("--only must be 'move' or 'copy'")
+    catalog = _open_catalog(_resolve_workspace(workspace))
+    try:
+        ruleset = _load_ruleset(catalog, rules)
+        dest_root = catalog.base.joinpath(*ruleset.dest_root.split("/"))
+        rows = _read_plan_or_exit(_plan_path(catalog, plan))
+        preview = apply_plan(catalog, rows, dest_root, only=only, dry_run=True, skip_unclassified=skip_unclassified)
+        free = shutil.disk_usage(str(catalog.base)).free
+        console.print(f"Destination: [bold]{dest_root}[/bold]\n"
+                      f"To move: {preview.moved:,} files · to copy: {preview.copied:,} files "
+                      f"({human_size(preview.bytes_copied)}) · already done / not approved: {preview.skipped:,} · "
+                      f"free space: {human_size(free)}")
+        if dry_run or (preview.moved + preview.copied) == 0:
+            return
+        if not yes and not typer.confirm("Proceed?"):
+            raise typer.Exit(1)
+        logger.info(f"apply started (only={only})")
+        columns = (SpinnerColumn(), TextColumn("{task.description}"), BarColumn(), DownloadColumn(),
+                   TimeRemainingColumn())
+        with Progress(*columns, console=console, transient=True) as bar:
+            task = bar.add_task("apply", total=max(preview.bytes_copied, 1))
+
+            def on_progress(state):
+                bar.update(task, completed=state.done_bytes,
+                           description=f"{state.done_files:,}/{state.total_files:,} {state.current[-50:]}")
+
+            try:
+                result = apply_plan(catalog, rows, dest_root, only=only, progress=on_progress,
+                                    skip_unclassified=skip_unclassified)
+            except (OSError, ValueError) as exc:
+                console.print(f"[red]{exc}[/red]")
+                raise typer.Exit(1)
+        logger.info(f"apply finished: {result}")
+        console.print(f"[green]moved {result.moved:,}[/green] · [green]copied {result.copied:,}[/green] "
+                      f"({human_size(result.bytes_copied)}) · errors {result.errors:,}. "
+                      "Run 'versline organize verify' next.")
+        if result.errors:
+            raise typer.Exit(1)
+    finally:
+        _close(catalog)
+
+
+@app.command("verify")
+def verify_command(
+    workspace: Optional[Path] = typer.Option(None, "-w", "--workspace", help=WORKSPACE_HELP),
+    plan: Optional[Path] = typer.Option(None, "--plan", help="Plan CSV (default: <workspace>/plan/plan.csv)."),
+    rules: Optional[Path] = typer.Option(None, "--rules", help="Rules file, for @dest_root."),
+    deep: bool = typer.Option(False, "--deep", help="Re-hash every copied file (slow)."),
+):
+    """Check every plan row against the destination and write reports/verify.md + coverage.csv."""
+    from versline.services.organize.applier import verify
+
+    catalog = _open_catalog(_resolve_workspace(workspace))
+    try:
+        ruleset = _load_ruleset(catalog, rules)
+        dest_root = catalog.base.joinpath(*ruleset.dest_root.split("/"))
+        counts = verify(catalog, _read_plan_or_exit(_plan_path(catalog, plan)), dest_root, deep=deep)
+        for state, count in sorted(counts.items(), key=lambda kv: -kv[1]):
+            console.print(f"{state:<32} {count:>8,}")
+        console.print(f"Report: {catalog.workspace / 'reports' / 'verify.md'}")
+    finally:
+        _close(catalog)
+
+
+@app.command("revert-moves")
+def revert_moves_command(
+    workspace: Optional[Path] = typer.Option(None, "-w", "--workspace", help=WORKSPACE_HELP),
+    rules: Optional[Path] = typer.Option(None, "--rules", help="Rules file, for @dest_root."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Only count what would be moved back."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Do not ask for confirmation."),
+):
+    """Move every moved audio/video file back to where it was. Copies are not touched."""
+    from versline.services.organize.applier import revert_moves
+
+    catalog = _open_catalog(_resolve_workspace(workspace))
+    try:
+        ruleset = _load_ruleset(catalog, rules)
+        dest_root = catalog.base.joinpath(*ruleset.dest_root.split("/"))
+        preview = revert_moves(catalog, dest_root, dry_run=True)
+        console.print(f"Files to move back: {preview['reverted']:,}")
+        if dry_run or not preview["reverted"]:
+            return
+        if not yes and not typer.confirm("Move them back?"):
+            raise typer.Exit(1)
+        counts = revert_moves(catalog, dest_root)
+        logger.info(f"revert-moves: {counts}")
+        console.print(f"Reverted {counts['reverted']:,}, errors {counts['errors']:,}.")
     finally:
         _close(catalog)

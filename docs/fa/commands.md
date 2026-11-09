@@ -189,7 +189,7 @@ versline research -i study.json --stage full --approved-outline-file output/ch4_
 
 ## `organize`
 
-`organize scan SOURCE...`، `organize stats`، `organize dupes`، `organize export`، `organize status`. بدون هوش مصنوعی و فقط‌خواندنی روی منابع. توضیح کامل در [سازمان‌دهی آرشیو فایل‌ها](organize.md) و [سند طراحی](organize-design.md).
+`organize scan SOURCE...`، `stats`، `dupes`، `export`، `status`، `plan`، `apply`، `verify`، `revert-moves`. بدون هوش مصنوعی؛ همه جز `apply` فقط‌خواندنی‌اند (`apply` کپی می‌کند و صوت/ویدیو را با امکان بازگشت جابه‌جا می‌کند). توضیح کامل در [سازمان‌دهی آرشیو فایل‌ها](organize.md) و [سند طراحی](organize-design.md).
 
 ## موجود نیست
 

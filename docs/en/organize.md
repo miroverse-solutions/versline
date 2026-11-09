@@ -4,12 +4,12 @@
 
 `versline organize` is for large, messy drives: tens of thousands of books, notes, audio, video and scanned pages
 piled up over years from several sources. It first builds a **complete catalogue**, then finds **duplicates**, and
-(in development) builds a **clean structure next to the existing data**.
+builds a **plan** from rules you control, and after your approval builds a **clean structure next to the existing data**.
 
-> **Your files are never touched.** No command deletes, moves or renames anything in the source folders. Every
-> output goes to a separate `_versline_organize` folder.
+> **Nothing is deleted or overwritten.** Every command except `apply` is read-only. `apply` **copies** files and
+> **moves** only audio/video (configurable) on the same drive; every move is journaled and `revert-moves` undoes it.
 >
-> **No API key needed.** The current steps use no AI.
+> **No API key needed.** No step uses AI.
 
 ## Steps
 
@@ -20,7 +20,12 @@ piled up over years from several sources. It first builds a **complete catalogue
 | 3. Duplicates | `versline organize dupes` | ✅ |
 | 4. Excel export of every file | `versline organize export` | ✅ |
 | Status | `versline organize status` | ✅ |
-| 5. Classify, plan, copy, verify | `classify`, `plan`, `apply`, `verify` | ⏳ in development (see the design doc) |
+| 5. Destination structure and rules | `taxonomy.txt`, `rules.txt` in the workspace | ✅ |
+| 6. Plan (preview, changes nothing) | `versline organize plan` | ✅ |
+| 7. Execute: copy + move media | `versline organize apply [--dry-run] [--only move\|copy] [--yes]` | ✅ |
+| 8. Verify and coverage report | `versline organize verify [--deep]` | ✅ |
+| Undo the moves | `versline organize revert-moves` | ✅ |
+| AI rule suggestions | `classify --llm` | ⏳ |
 
 ## Quick start
 
@@ -56,6 +61,24 @@ Linux can be continued on Windows under any drive letter.
 | `export [-w WS]` | Writes `reports/files.csv` (every file with kind, size, date, SHA-256 when computed, copy count). UTF-8 with BOM so Excel shows Persian correctly. |
 | `status [-w WS]` | Summary of sources, counts, hashes and last scan time. |
 
+## Rules, plan, apply
+
+`rules.txt` maps source prefixes to destination folders (`source label/folder => destination/folder`); the longest
+matching prefix wins and sub-folders are kept. Directives: `@dest_root`, `@default` (unmatched files),
+`@root_priority` (which duplicate keeps the plain name), `@media from => to` (re-root audio/video destinations),
+`@media_kinds`, `@media_folder_ratio` (other files in a media-heavy folder follow the media). `taxonomy.txt` lists
+the agreed destination folders; `plan` warns about rules pointing elsewhere.
+
+`plan` writes `plan/plan_summary.md` (read this first) and `plan/plan.csv` (one row per file; set `approved` to
+`no` to exclude a row; save from Excel as "CSV UTF-8"). Actions: `move` (audio/video, same-drive rename),
+`copy`, `skip_duplicate` (identical content copied elsewhere), `skip_junk`.
+
+`apply --skip-unclassified` leaves files without a rule (bound for the `@default` archive) for a later run.
+`apply` runs moves first, then copies (written to `.part`, SHA-256 checked, then renamed). It checks free space,
+asks for confirmation (`--yes` to skip), never overwrites an existing file, and resumes where it stopped.
+`verify` writes `reports/verify.md` and `coverage.csv`; `revert-moves` puts every moved file back (the journal is
+also in `logs/moves.csv`). Full details: section 6.7–6.8 of the design document.
+
 ## Workspace
 
 ```
@@ -73,6 +96,6 @@ Do not delete it: it holds all progress. Losing it only means re-scanning and re
   drive).
 - A few files may fail with "Operation not supported" on Linux (cloud-only OneDrive placeholders or special NTFS
   files). They are listed in `reports/scan_errors.csv`; check them on Windows.
-- Hard links for the planned copy step need NTFS.
+- `move` only works within one drive, so `@dest_root` must be on the same drive as the sources.
 - Everything is in open formats (SQLite, CSV, Markdown), so the work can continue without Versline; see section 11
   of the design document.

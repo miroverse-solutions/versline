@@ -189,7 +189,7 @@ Plus the common LLM and prompt-note options.
 
 ## `organize`
 
-`organize scan SOURCE...`, `organize stats`, `organize dupes`, `organize export`, `organize status`. No AI, read-only on sources. Fully documented in [Organizing a file archive](organize.md).
+`organize scan SOURCE...`, `stats`, `dupes`, `export`, `status`, `plan`, `apply`, `verify`, `revert-moves`. No AI; everything but `apply` is read-only (`apply` copies, and moves audio/video reversibly). Fully documented in [Organizing a file archive](organize.md).
 
 ## Not available
 
