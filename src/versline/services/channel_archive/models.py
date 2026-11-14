@@ -50,6 +50,11 @@ class ChannelPost:
     grouped_id: Optional[int] = None
     forwarded_from: Optional[str] = None
     edit_date: Optional[datetime] = None
+    parts: List["ChannelPost"] = field(default_factory=list)  # set when several posts were merged into this one
+
+    @property
+    def part_ids(self) -> List[int]:
+        return [part.id for part in self.parts] or [self.id]
 
     @property
     def media_type(self) -> str:

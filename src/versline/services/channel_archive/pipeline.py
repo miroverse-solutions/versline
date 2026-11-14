@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import shutil
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable, List, Optional, Set
 
@@ -13,6 +13,7 @@ from versline.config import settings
 from versline.services.ai import MissingAPIKeyError
 from versline.services.channel_archive import obsidian
 from versline.services.channel_archive.filters import FileFilter
+from versline.services.channel_archive.merge import DEFAULT_MAX_GAP, group_parts
 from versline.services.channel_archive.models import ChannelInfo, ChannelPost, MediaItem, PostRecord
 from versline.services.channel_archive.sources.base import ChannelSource
 from versline.services.channel_archive.state import FILES_MANIFEST_NAME, ChannelState
@@ -33,6 +34,8 @@ class ArchiveOptions:
     force: bool = False
     reuse_transcripts: bool = False  # re-process archived posts, but keep the transcripts already in their notes
     file_filter: Optional[FileFilter] = None  # keep only posts with a media item that passes (and only those items)
+    merge_parts: bool = False  # merge posts split across several messages (⬇️ … ⬆️, «ادامه دارد») into one note
+    merge_gap: timedelta = DEFAULT_MAX_GAP  # max time between parts of one item
     files_only: bool = False  # save the matching files under their own names: no notes, no index, no LLM
 
 
@@ -44,6 +47,7 @@ class PostPlan:
     duration: Optional[float]
     title: str
     files: List[str] = field(default_factory=list)
+    parts: List[int] = field(default_factory=list)
 
 
 @dataclass
@@ -77,6 +81,15 @@ class ChannelArchiver:
             return False
         flt = self.options.file_filter
         return flt is None or bool(flt.matching_indices(post))
+
+    @staticmethod
+    def _is_done(state: ChannelState, post: ChannelPost) -> bool:
+        if not state.is_done(post.id):
+            return False
+        entry = state.get(post.id) or {}
+        if post.parts:
+            return entry.get("parts") == post.part_ids
+        return not entry.get("merged_into") and not entry.get("parts")
 
     def _selected(self, post: ChannelPost) -> List[int]:
         flt = self.options.file_filter
@@ -114,6 +127,9 @@ class ChannelArchiver:
                 "archived_at": datetime.now().astimezone(),
             }
         )
+        if post.parts:
+            record.frontmatter["post_ids"] = post.part_ids
+            record.frontmatter["part_urls"] = [p.url for p in post.parts if p.url]
         if post.text.strip():
             record.sections["caption"] = post.text
         return record
@@ -141,16 +157,20 @@ class ChannelArchiver:
         self.ctx.out_dir = self.out_dir
         state = ChannelState(self.out_dir, FILES_MANIFEST_NAME) if opts.files_only else ChannelState(self.out_dir)
         count = 0
+        posts = self.source.iter_posts(channel, opts.since, opts.until)
+        if opts.merge_parts and not opts.files_only:
+            posts = group_parts(posts, opts.merge_gap)
 
         try:
-            for post in self.source.iter_posts(channel, opts.since, opts.until):
+            for post in posts:
                 if not self._wanted(post):
                     continue
                 title = obsidian.make_title(post)
                 if opts.dry_run:
                     names = [post.media[i].file_name or post.media[i].kind for i in self._selected(post)]
-                    summary.plans.append(PostPlan(post.id, post.date, post.media_type, self._duration(post), title, names))
-                elif state.is_done(post.id) and not (opts.force or opts.reuse_transcripts):
+                    summary.plans.append(PostPlan(post.id, post.date, post.media_type, self._duration(post), title, names,
+                                                  post.part_ids if post.parts else []))
+                elif self._is_done(state, post) and not (opts.force or opts.reuse_transcripts):
                     summary.skipped += 1
                 elif opts.files_only:
                     self._save_files(channel, post, title, state, summary)
@@ -172,6 +192,8 @@ class ChannelArchiver:
     def _process(self, channel: ChannelInfo, post: ChannelPost, title: str, state: ChannelState, summary: ArchiveSummary) -> None:
         opts = self.options
         previous = state.get(post.id)
+        if previous and previous.get("merged_into"):
+            previous = None  # this post's note is the merged one; don't overwrite it
         rel_note = (
             Path(previous["note"])
             if previous and previous.get("note")
@@ -187,19 +209,35 @@ class ChannelArchiver:
                     record.frontmatter["transcription_model"] = old[1]
                 record.work["reused_transcript"] = True
                 logger.info(f"Post {post.id}: reusing the transcript from its existing note")
+        old_notes: List[Path] = []
+        if post.parts:
+            old_notes = self._old_part_notes(post, state, rel_note)
+            if not opts.force and not record.work.get("reused_transcript"):
+                self._reuse_part_transcripts(post, state, record)
         try:
             for step in self.steps:
                 step.run(post, record, self.ctx)
             obsidian.write_text_atomic(self.out_dir / rel_note, obsidian.render_note(record, title))
+            date_iso = post.date.astimezone().isoformat(timespec="seconds")
+            extra = {"parts": post.part_ids} if post.parts else {}
             state.set(
                 post.id,
                 status="done",
                 note=rel_note.as_posix(),
                 title=title,
                 media_type=post.media_type,
-                date=post.date.astimezone().isoformat(timespec="seconds"),
+                date=date_iso,
                 duration=round(self._duration(post)) if self._duration(post) else None,
+                **extra,
             )
+            for part in post.parts[1:]:
+                state.set(part.id, status="done", merged_into=post.id, note=rel_note.as_posix(), title=title,
+                          media_type=part.media_type, date=part.date.astimezone().isoformat(timespec="seconds"))
+            for old in old_notes:
+                try:
+                    (self.out_dir / old).unlink()
+                except OSError:
+                    pass
             summary.done += 1
             logger.success(f"Post {post.id} → {rel_note.as_posix()}")
         except (KeyboardInterrupt, MissingAPIKeyError):
@@ -214,6 +252,46 @@ class ChannelArchiver:
         finally:
             self._cleanup(record)
             state.save()
+
+    def _old_part_notes(self, post: ChannelPost, state: ChannelState, rel_note: Path) -> List[Path]:
+        """Notes we wrote earlier for the parts as separate posts (to delete once the merged note exists)."""
+        found: List[Path] = []
+        for part in post.parts:
+            entry = state.get(part.id)
+            if not entry or not entry.get("note") or entry.get("merged_into") or entry.get("parts"):
+                continue
+            note = Path(entry["note"])
+            if note != rel_note and note not in found and (self.out_dir / note).is_file():
+                found.append(note)
+        return found
+
+    def _reuse_part_transcripts(self, post: ChannelPost, state: ChannelState, record: PostRecord) -> None:
+        """Take transcripts from the parts' existing separate notes so merging doesn't transcribe again."""
+        if not self.ctx.transcribe:
+            return
+        texts: List[str] = []
+        model = None
+        for part in post.parts:
+            if not any(item.transcribable for item in part.media):
+                continue
+            entry = state.get(part.id)
+            if not entry or entry.get("merged_into") or entry.get("parts") or not entry.get("note"):
+                return
+            old = obsidian.read_note_transcript(self.out_dir / entry["note"])
+            if not old:
+                return
+            texts.append(clean_transcript(old[0]))
+            model = model or old[1]
+        if not texts:
+            return
+        record.sections["transcript"] = (
+            texts[0] if len(texts) == 1 else "\n\n".join(f"### {i}\n\n{t}" for i, t in enumerate(texts, 1))
+        )
+        record.frontmatter["transcribed"] = True
+        if model:
+            record.frontmatter["transcription_model"] = model
+        record.work["reused_transcript"] = True
+        logger.info(f"Post {post.id}: reusing transcripts from the parts' existing notes")
 
     def _save_files(self, channel: ChannelInfo, post: ChannelPost, title: str, state: ChannelState, summary: ArchiveSummary) -> None:
         """--files-only: download the selected items to temp, then move them into the output folder under their own names."""

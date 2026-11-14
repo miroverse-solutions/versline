@@ -146,7 +146,13 @@ def render_note(record: PostRecord, title: str) -> str:
         parts += [f"## {LABELS['attachments']}", ""]
         parts += [f"![[{path}]]" for path in record.attachments]
         parts.append("")
-    if record.post.url:
+    if len(record.post.parts) > 1:
+        links = [
+            f"[{LABELS['source']} {i}]({part.url})" for i, part in enumerate(record.post.parts, 1) if part.url
+        ]
+        if links:
+            parts += ["---", " · ".join(links), ""]
+    elif record.post.url:
         parts += ["---", f"[{LABELS['source']}]({record.post.url})", ""]
     return "\n".join(parts)
 
@@ -181,6 +187,12 @@ def _cell(text: str) -> str:
     return text.replace("|", "\\|").replace("\n", " ")
 
 
+def _type_cell(entry: dict) -> str:
+    kind = entry.get("media_type", "")
+    parts = entry.get("parts") or []
+    return f"{kind} ×{len(parts)}" if len(parts) > 1 else kind
+
+
 def render_index(
     channel: ChannelInfo,
     entries: Iterable[dict],
@@ -188,7 +200,7 @@ def render_index(
     range_to: Optional[str],
 ) -> str:
     """Index note built from manifest entries (done posts only), oldest first."""
-    done = sorted((e for e in entries if e.get("status") == "done"), key=lambda e: e.get("date", ""))
+    done = sorted((e for e in entries if e.get("status") == "done" and not e.get("merged_into")), key=lambda e: e.get("date", ""))
     frontmatter = {
         "title": channel.title,
         "source": "telegram",
@@ -206,6 +218,6 @@ def render_index(
         stem = Path(entry["note"]).with_suffix("").as_posix()
         link = f"[[{stem}\\|{_cell(entry.get('title') or stem)}]]"
         duration = format_duration(entry["duration"]) if entry.get("duration") else ""
-        lines.append(f"| {entry.get('date', '')[:10]} | {link} | {entry.get('media_type', '')} | {duration} |")
+        lines.append(f"| {entry.get('date', '')[:10]} | {link} | {_type_cell(entry)} | {duration} |")
     lines.append("")
     return "\n".join(lines)

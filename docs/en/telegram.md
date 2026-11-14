@@ -86,6 +86,17 @@ Patterns are Python regexes, case-insensitive; a plain word works as is. Persian
 | `--max-size MB` | Skip larger media (recorded in `skipped_media`) | no limit |
 | `--no-transcribe` | Captions and metadata only | off |
 
+### Multi-part posts
+
+Long items are often split across consecutive posts. With `--merge-parts` such a chain becomes **one note**.
+
+| Option | Description | Default |
+| :--- | :--- | :--- |
+| `--merge-parts` | Merge a post into the previous one when they were sent within the gap and the previous ends with a continuation marker (`⬇️`, `👇`, `ادامه دارد`, `ادامه در پست بعد`) **or** the next starts with one (`⬆️`, `👆`, `ادامه`, `ادامه‌ی پست قبل`) | off |
+| `--merge-gap MIN` | Max minutes between parts | 15 |
+
+The marker lines are removed and the texts joined; media of all parts is kept (and transcribed) in order. The note is named after the first part, its frontmatter has `post_ids` and `part_urls`, and the footer links every part. In `.versline-channel.json` the first post gets `parts: [...]` and the others `merged_into`. Parts archived earlier as separate notes are merged on the next run with the flag: their old notes are deleted and their transcripts reused, so nothing is transcribed again. A chain cut by `--until` is merged on a later run that covers the whole chain. Ignored with `--files-only`.
+
 ### Extra sections (LLM)
 
 | Option | Description |

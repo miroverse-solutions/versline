@@ -1,4 +1,5 @@
 import os
+from datetime import timedelta
 from pathlib import Path
 from typing import List, Optional
 
@@ -103,6 +104,8 @@ def archive(
     max_size: Optional[float] = typer.Option(None, "--max-size", help="Skip media larger than this many MB"),
     force: bool = typer.Option(False, "--force", "-f", help="Re-process posts already archived (and ignore the transcription cache)"),
     reuse_transcripts: bool = typer.Option(False, "--reuse-transcripts", help="Re-process already archived posts (captions, tags, --summary, --taqrir...) but keep the transcripts in their existing notes instead of transcribing again"),
+    merge_parts: bool = typer.Option(False, "--merge-parts", help="Merge posts split across several messages (⬇️ … ⬆️, «ادامه دارد») into one note; already archived parts are merged too"),
+    merge_gap: float = typer.Option(15, "--merge-gap", help="With --merge-parts: max minutes between the parts of one item"),
     dry_run: bool = typer.Option(False, "--dry-run", help="List matching posts without downloading or writing anything"),
     add_summary: bool = typer.Option(False, "--summary", help="Add an LLM-written summary at the top of each note"),
     add_taqrir: bool = typer.Option(False, "--taqrir", help="Add a taqrir: the talk (or a long text post) rewritten as a structured, formulated exposition, after the transcript/caption"),
@@ -163,6 +166,8 @@ def archive(
         raise typer.BadParameter(str(exc))
     if files_only and (add_summary or add_taqrir or reuse_transcripts):
         raise typer.BadParameter("--files-only can't be combined with --summary, --taqrir or --reuse-transcripts")
+    if merge_parts and files_only:
+        console.print("[yellow]--merge-parts is ignored with --files-only.[/yellow]")
     if (web and (files_only or file_filter)) and not dry_run:
         console.print("[yellow]--web can't download documents (only voice and small videos); matching files will be reported as skipped.[/yellow]")
 
@@ -225,6 +230,8 @@ def archive(
             reuse_transcripts=reuse_transcripts,
             file_filter=file_filter,
             files_only=files_only,
+            merge_parts=merge_parts,
+            merge_gap=timedelta(minutes=merge_gap),
             steps=steps,
         )
         archiver = ChannelArchiver(source, ctx, options)
@@ -256,7 +263,7 @@ def archive(
             table.add_column(column)
         for plan in summary.plans:
             row = [
-                str(plan.id),
+                "+".join(str(i) for i in plan.parts) if plan.parts else str(plan.id),
                 plan.date.astimezone().strftime("%Y-%m-%d %H:%M"),
                 plan.media_type,
                 format_duration(plan.duration) if plan.duration else "",
