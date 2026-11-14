@@ -23,7 +23,7 @@ from versline.config import settings
 from .ai import AIClient
 from .pricing import lookup_avalai_cost, print_cost_report
 from .document_processor import get_file_processor
-from .export import save_to_csv, save_to_html
+from .export import save_to_csv, save_to_html, save_to_markdown
 from versline.utils.anki import create_anki_package
 from versline.utils.cache import CacheManager
 from versline.core.prompts import load_prompt
@@ -92,6 +92,7 @@ class QuestionDesigner:
         self.pages_per_batch = pages_per_batch
         self.words_per_batch = words_per_batch
         self.output_formats = [f.strip().lower() for f in output_formats.split(',')]
+        self.markdown_outputs: List[Path] = []
         self.style_path = style_path
         self.prompt_path = prompt_path
         self.force = force
@@ -440,6 +441,13 @@ class QuestionDesigner:
             save_to_html(questions, html_path, title=f"Generated Questions ({self.question_type.value})")
             console.print(f"[green]Saved HTML: {html_path}[/green]")
         
+        # Markdown sheet (not part of "all"; used by --formats md and --export)
+        if "md" in self.output_formats or "markdown" in self.output_formats:
+            md_path = self.output_dir / f"{base_name}.md"
+            save_to_markdown(questions, md_path, title=f"سؤالات ({self.question_type.value})")
+            self.markdown_outputs.append(md_path)
+            console.print(f"[green]Saved Markdown: {md_path}[/green]")
+
         # Anki
         if save_all or "anki" in self.output_formats or "apkg" in self.output_formats:
             anki_path = self.output_dir / f"{base_name}.apkg"

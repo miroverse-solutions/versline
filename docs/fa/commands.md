@@ -191,6 +191,10 @@ versline research -i study.json --stage full --approved-outline-file output/ch4_
 
 `organize scan SOURCE...`، `stats`، `dupes`، `export`، `status`، `plan`، `apply`، `verify`، `revert-moves`. بدون هوش مصنوعی؛ همه جز `apply` فقط‌خواندنی‌اند (`apply` کپی می‌کند و صوت/ویدیو را با امکان بازگشت جابه‌جا می‌کند). توضیح کامل در [سازمان‌دهی آرشیو فایل‌ها](organize.md) و [سند طراحی](organize-design.md).
 
+## خروجی Word/PDF
+
+`export فایل... [--to docx,pdf]` هر Markdown را تبدیل می‌کند؛ همه‌ی دستورهای بالا (جز `slides`) گزینه‌ی `--export docx,pdf` و `--export-frontmatter/--no-export-frontmatter` هم دارند. [راهنما](export.md).
+
 ## موجود نیست
 
 `download` در سورس هست (`commands/download.py`) ولی در خط فرمان **ثبت نشده است**. برای دانلود یک لینک، آن را مستقیم به `versline transcribe` بدهید.

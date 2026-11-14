@@ -71,6 +71,14 @@ def _close(catalog) -> None:
     catalog.close()
 
 
+def _export_reports(paths, export, export_frontmatter, workspace) -> None:
+    if export is None:
+        return
+    from versline.commands._export import run_exports
+
+    run_exports(paths, export, export_frontmatter, {"type": "organize report", "workspace": str(workspace)}, force=True)
+
+
 @app.command("scan")
 def scan(
     sources: List[Path] = typer.Argument(..., help="Source folders to catalogue (never modified)."),
@@ -110,15 +118,22 @@ def scan(
 
 
 @app.command("stats")
-def stats(workspace: Optional[Path] = typer.Option(None, "-w", "--workspace", help=WORKSPACE_HELP)):
+def stats(
+    workspace: Optional[Path] = typer.Option(None, "-w", "--workspace", help=WORKSPACE_HELP),
+    export: Optional[str] = typer.Option(None, "--export", "-X", help="Also export the .md report to Word/PDF: docx, pdf, 'docx,pdf' or all (needs versline[export])."),
+    export_frontmatter: Optional[bool] = typer.Option(None, "--export-frontmatter/--no-export-frontmatter", help="Show a metadata table under the title in exported files."),
+):
     """Write reports/stats.md (sizes by source and kind, scanned-book and software folders, errors)."""
     from versline.services.organize.reports import write_stats
 
     catalog = _open_catalog(_resolve_workspace(workspace))
     try:
-        console.print(f"Report: {write_stats(catalog)}")
+        report = write_stats(catalog)
+        console.print(f"Report: {report}")
     finally:
         _close(catalog)
+    _export_reports([report], export, export_frontmatter, report.parent.parent)
+    _export_reports([report], export, export_frontmatter, report.parent.parent)
 
 
 @app.command("dupes")
@@ -126,6 +141,8 @@ def dupes(
     workspace: Optional[Path] = typer.Option(None, "-w", "--workspace", help=WORKSPACE_HELP),
     min_size: str = typer.Option("1", "--min-size", help="Ignore files smaller than this (e.g. 1, 100KB, 1MB)."),
     folder_ratio: float = typer.Option(0.9, "--folder-ratio", help="Share of a folder's bytes that must exist elsewhere to call it redundant."),
+    export: Optional[str] = typer.Option(None, "--export", "-X", help="Also export the .md report to Word/PDF: docx, pdf, 'docx,pdf' or all (needs versline[export])."),
+    export_frontmatter: Optional[bool] = typer.Option(None, "--export-frontmatter/--no-export-frontmatter", help="Show a metadata table under the title in exported files."),
 ):
     """Find identical files (size → partial hash → full SHA-256). Resumable; writes reports/duplicates.md/.csv."""
     from versline.services.organize.dupes import duplicate_groups, find_duplicates, redundant_folders
@@ -238,6 +255,8 @@ def _read_plan_or_exit(path: Path):
 def plan_command(
     workspace: Optional[Path] = typer.Option(None, "-w", "--workspace", help=WORKSPACE_HELP),
     rules: Optional[Path] = typer.Option(None, "--rules", help="Rules file (default: <workspace>/rules.txt)."),
+    export: Optional[str] = typer.Option(None, "--export", "-X", help="Also export the .md report to Word/PDF: docx, pdf, 'docx,pdf' or all (needs versline[export])."),
+    export_frontmatter: Optional[bool] = typer.Option(None, "--export-frontmatter/--no-export-frontmatter", help="Show a metadata table under the title in exported files."),
 ):
     """Build plan/plan.csv and plan/plan_summary.md from the catalog and rules.txt. Changes no files."""
     from versline.services.organize.planner import build_plan, write_plan, write_plan_summary
@@ -267,6 +286,7 @@ def plan_command(
         console.print(f"Review: {plan_dir / 'plan_summary.md'} and {plan_dir / 'plan.csv'}")
     finally:
         _close(catalog)
+    _export_reports([plan_dir / "plan_summary.md"], export, export_frontmatter, plan_dir.parent)
 
 
 @app.command("apply")
@@ -336,6 +356,8 @@ def verify_command(
     plan: Optional[Path] = typer.Option(None, "--plan", help="Plan CSV (default: <workspace>/plan/plan.csv)."),
     rules: Optional[Path] = typer.Option(None, "--rules", help="Rules file, for @dest_root."),
     deep: bool = typer.Option(False, "--deep", help="Re-hash every copied file (slow)."),
+    export: Optional[str] = typer.Option(None, "--export", "-X", help="Also export the .md report to Word/PDF: docx, pdf, 'docx,pdf' or all (needs versline[export])."),
+    export_frontmatter: Optional[bool] = typer.Option(None, "--export-frontmatter/--no-export-frontmatter", help="Show a metadata table under the title in exported files."),
 ):
     """Check every plan row against the destination and write reports/verify.md + coverage.csv."""
     from versline.services.organize.applier import verify
@@ -347,9 +369,11 @@ def verify_command(
         counts = verify(catalog, _read_plan_or_exit(_plan_path(catalog, plan)), dest_root, deep=deep)
         for state, count in sorted(counts.items(), key=lambda kv: -kv[1]):
             console.print(f"{state:<32} {count:>8,}")
-        console.print(f"Report: {catalog.workspace / 'reports' / 'verify.md'}")
+        verify_report = catalog.workspace / "reports" / "verify.md"
+        console.print(f"Report: {verify_report}")
     finally:
         _close(catalog)
+    _export_reports([verify_report], export, export_frontmatter, verify_report.parent.parent)
 
 
 @app.command("revert-moves")

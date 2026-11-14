@@ -1,5 +1,6 @@
 import json
 import typer
+from versline.commands._export import export_frontmatter_option, export_option, run_exports
 from versline.commands._common import EXTRA_BODY_HELP, INTERSPERSED, apply_extra_body_option
 from typing import List, Optional
 from pathlib import Path
@@ -33,6 +34,8 @@ def transcribe_file(
     extra_body: Optional[str] = typer.Option(None, "--extra-body", help=EXTRA_BODY_HELP),
     compress: bool = typer.Option(False, "--compress", help="Re-encode audio to mono low-bitrate mp3 before splitting, so chunks stay small (avoids provider payload-size limits)"),
     compress_kbps: int = typer.Option(32, "--compress-kbps", help="Bitrate in kbps used by --compress"),
+    export: Optional[str] = export_option(),
+    export_frontmatter: Optional[bool] = export_frontmatter_option(),
     # Advanced options
     prompt_file: Optional[Path] = typer.Option(None, help="Custom system prompt file"),
     json_output: bool = typer.Option(False, "--json", "-j", help="Output in JSON format (using predefined schema)"),
@@ -119,12 +122,16 @@ def transcribe_file(
         name = Path(media_path).with_suffix(".json" if as_json else ".md").name
         return (output if output else Path(settings.output_directory)) / name
 
+    produced: List[Path] = []
+
     def process_one(item):
         # Local files can be checked for finished output before any work; URLs only after download.
         if not is_url(str(item)) and not force:
             expected = output_path_for(Path(item), json_output or timestamped)
             if output_is_complete(expected):
                 logger.info(f"Skipping {item}: {expected} already exists (use --force to redo)")
+                if expected.suffix == ".md":
+                    produced.append(expected)
                 return SKIPPED
 
         if is_url(str(item)):
@@ -190,6 +197,8 @@ def transcribe_file(
                 f.write(content)
 
             logger.success(f"Transcription saved to: {output_path}")
+            if Path(output_path).suffix == ".md":
+                produced.append(Path(output_path))
 
             if isinstance(full_text, dict) and full_text.get("text"):
                 text_path = Path(output_path).with_suffix(".md")
@@ -197,6 +206,7 @@ def transcribe_file(
                     text_path = Path(output_path).with_name(f"{Path(output_path).stem}_full.md")
                 text_path.write_text(full_text["text"], encoding="utf-8")
                 logger.success(f"Full transcription text saved to: {text_path}")
+                produced.append(text_path)
         except Exception as e:
             logger.error(f"Transcription failed for {resolved_path}: {e}")
             raise typer.Exit(code=1)
@@ -206,6 +216,10 @@ def transcribe_file(
         run_batch(inputs, process_one)
     finally:
         print_cost_report(transcriber.tracker, api_key=settings.llm.api_key)
+
+    run_exports(produced, export, export_frontmatter, {
+        "type": "transcript", "model": settings.llm.model, "provider": settings.llm.provider,
+    }, force=force)
 
 
 if __name__ == "__main__":

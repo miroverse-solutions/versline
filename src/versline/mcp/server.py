@@ -148,6 +148,26 @@ def translate(
 
 
 @mcp.tool(
+    name="export_documents",
+    description="Export Markdown files/folders to Word (.docx) and/or PDF, Persian/RTL aware. formats: docx, pdf, 'docx,pdf' or all.",
+)
+def export_documents(
+    path: str,
+    formats: str = "docx,pdf",
+    *,
+    output: Optional[str] = None,
+    front_matter: bool = True,
+    recursive: bool = False,
+) -> str:
+    cmd = ["export", path, "--to", formats, "--front-matter" if front_matter else "--no-front-matter"]
+    if output:
+        cmd += ["--output", output]
+    if recursive:
+        cmd += ["--recursive"]
+    return _versline_subprocess(*cmd)
+
+
+@mcp.tool(
     name="summarize",
     description="Summarize a file in multiple modes: outline, detailed, slides, or didactic.",
 )

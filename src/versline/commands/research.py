@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import typer
+from versline.commands._export import export_frontmatter_option, export_option, run_exports
 from versline.commands._common import EXTRA_BODY_HELP, apply_extra_body_option
 from loguru import logger
 from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn
@@ -301,6 +302,8 @@ def write_research_section(
             "file is used: [outline_stem].revision-history.json."
         ),
     ),
+    export: Optional[str] = export_option(),
+    export_frontmatter: Optional[bool] = export_frontmatter_option(),
 ):
     if ctx.invoked_subcommand is not None:
         return
@@ -412,6 +415,10 @@ def write_research_section(
     except Exception as exc:
         logger.error(f"Research writing failed: {exc}")
         raise typer.Exit(code=1)
+
+    run_exports([out_path], export, export_frontmatter, {
+        "type": "research", "section": section, "stage": stage, "model": settings.llm.model,
+    }, force=True)
 
 
 if __name__ == "__main__":

@@ -185,11 +185,15 @@ Plus the common LLM and prompt-note options.
 
 ## `telegram`
 
-`telegram login`, `telegram logout`, `telegram archive CHANNEL`. Fully documented in [Telegram channel archive](telegram.md).
+`telegram login`, `telegram logout`, `telegram archive CHANNEL`, `telegram pack ARCHIVE`. Fully documented in [Telegram channel archive](telegram.md).
 
 ## `organize`
 
 `organize scan SOURCE...`, `stats`, `dupes`, `export`, `status`, `plan`, `apply`, `verify`, `revert-moves`. No AI; everything but `apply` is read-only (`apply` copies, and moves audio/video reversibly). Fully documented in [Organizing a file archive](organize.md).
+
+## Export (Word/PDF)
+
+`export FILES... [--to docx,pdf]` converts any Markdown; every module above (except `slides`) also takes `--export docx,pdf` and `--export-frontmatter/--no-export-frontmatter`. See [Word and PDF export](export.md).
 
 ## Not available
 

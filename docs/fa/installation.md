@@ -72,6 +72,15 @@ make build                   # python -m build، خروجی در dist/
 pip install dist/versline-*.whl
 ```
 
+## خروجی Word/PDF (اختیاری)
+
+```sh
+pip install "versline[export]"     # پایتون ۳.۱۱+
+versline export --install-browser  # یک بار، برای PDF
+```
+
+[راهنما](export.md).
+
 ## تکمیل خودکار دستورها
 
 ```sh

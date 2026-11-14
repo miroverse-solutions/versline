@@ -72,6 +72,15 @@ make build                   # python -m build, output in dist/
 pip install dist/versline-*.whl
 ```
 
+## Word/PDF export (optional)
+
+```sh
+pip install "versline[export]"     # Python 3.11+
+versline export --install-browser  # one time, for PDF
+```
+
+See [Word and PDF export](export.md).
+
 ## Shell completion
 
 ```sh

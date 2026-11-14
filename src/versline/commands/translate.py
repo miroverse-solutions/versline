@@ -1,4 +1,5 @@
 import typer
+from versline.commands._export import export_frontmatter_option, export_option, run_exports
 from versline.commands._common import EXTRA_BODY_HELP, INTERSPERSED, apply_extra_body_option
 import re
 from typing import List, Optional
@@ -54,6 +55,8 @@ def translate_file(
     api_endpoint: Optional[str] = typer.Option(None, help="Custom API Endpoint"),
     proxy: Optional[str] = typer.Option(None, help="Proxy URL"),
     extra_body: Optional[str] = typer.Option(None, "--extra-body", help=EXTRA_BODY_HELP),
+    export: Optional[str] = export_option(),
+    export_frontmatter: Optional[bool] = export_frontmatter_option(),
     force: bool = typer.Option(False, "--force", "-f", help="Re-translate even if the output already exists (ignore saved progress)"),
     recursive: bool = typer.Option(False, "--recursive", help="Also search sub-folders of folder inputs"),
     note: Optional[str] = typer.Option(None, "--note", help="Additional instruction to append to the prompt"),
@@ -94,10 +97,13 @@ def translate_file(
     user_note = resolve_user_note(note=note, note_file=str(note_file) if note_file else None)
     translator = TextTranslator(user_note=user_note)
 
+    produced: List[Path] = []
+
     def process_one(file_path: Path):
         md_output_path, txt_output_path = _resolve_output_paths(file_path, output, output_is_dir)
         if not force and output_is_complete(md_output_path, txt_output_path):
             logger.info(f"Skipping {file_path}: {md_output_path} already exists (use --force to redo)")
+            produced.append(md_output_path)
             return SKIPPED
 
         logger.info(f"Starting translation for: {file_path}")
@@ -131,6 +137,7 @@ def translate_file(
                 txt_file.write(txt_content)
 
             logger.success(f"Markdown translation saved to: {md_output_path}")
+            produced.append(md_output_path)
             logger.success(f"Text translation saved to: {txt_output_path}")
         except Exception as e:
             logger.error(f"Translation failed for {file_path}: {e}")
@@ -141,6 +148,10 @@ def translate_file(
         run_batch(inputs, process_one)
     finally:
         print_cost_report(translator.tracker, api_key=settings.llm.api_key)
+
+    run_exports(produced, export, export_frontmatter, {
+        "type": "translation", "target_language": target_lang, "model": settings.llm.model,
+    }, force=force)
 
 if __name__ == "__main__":
     app()

@@ -1,4 +1,5 @@
 import typer
+from versline.commands._export import export_frontmatter_option, export_option, run_exports
 from versline.commands._common import EXTRA_BODY_HELP, INTERSPERSED, apply_extra_body_option
 from typing import List, Optional
 from pathlib import Path
@@ -82,6 +83,8 @@ def summarize_file(
     ),    output: Optional[Path] = typer.Option(
         None, "--output", "-o", help="Output .md file path (a directory when several inputs are given)"
     ),
+    export: Optional[str] = export_option(),
+    export_frontmatter: Optional[bool] = export_frontmatter_option(),
     force: bool = typer.Option(False, "--force", "-f", help="Re-summarize even if the output already exists (ignore saved progress)"),
     recursive: bool = typer.Option(False, "--recursive", help="Also search sub-folders of folder inputs"),
     model: Optional[str] = typer.Option(None, help="LLM model to use (overrides config)"),
@@ -153,10 +156,13 @@ def summarize_file(
         user_note=resolve_user_note(note=note, note_file=str(note_file) if note_file else None),
     )
 
+    produced: List[Path] = []
+
     def process_one(file_path: Path):
         out_path = _resolve_output_path(file_path, output, mode, output_is_dir)
         if not force and output_is_complete(out_path):
             logger.info(f"Skipping {file_path}: {out_path} already exists (use --force to redo)")
+            produced.append(out_path)
             return SKIPPED
 
         logger.info(f"Starting summarization [{mode}{'|didactic' if didactic else ''}{'|' + str(compression) + '%' if compression else ''}] for: {file_path}")
@@ -186,6 +192,7 @@ def summarize_file(
             out_path.write_text(result, encoding="utf-8")
 
             logger.success(f"Summary saved to: {out_path}")
+            produced.append(out_path)
         except Exception as exc:
             logger.error(f"Summarization failed for {file_path}: {exc}")
             raise typer.Exit(code=1)
@@ -195,6 +202,11 @@ def summarize_file(
         run_batch(inputs, process_one)
     finally:
         print_cost_report(summarizer.tracker, api_key=settings.llm.api_key)
+
+    run_exports(produced, export, export_frontmatter, {
+        "type": "summary", "mode": mode, "model": settings.llm.model,
+        "compression": f"{compression}%" if compression else None,
+    }, force=force)
 
 
 if __name__ == "__main__":

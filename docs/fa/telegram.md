@@ -132,6 +132,36 @@ versline telegram archive [OPTIONS] CHANNEL
 
 فرادادهی همیشگی: `title, source, channel, channel_title, post_id, url, date, date_shamsi, media_type, tags, aliases, archived_at`؛ در صورت وجود: `duration, file_name, views, forwards, forwarded_from, album_size, transcribed, transcription_model, summary_model, taqrir_model, skipped_media`. هشتگ‌ها به `tags` تبدیل می‌شوند (نیم‌فاصله یا فاصله داخل هشتگ به `_` بدل می‌شود؛ `telegram` همیشه اضافه است). یادداشت فهرست شامل `type: channel-index`، `post_count`، `range_from`، `range_to`، `updated` و جدولی از پیوندهای داخلی است. حرف‌های اضافه‌ی مدل مثل شروع «بله، حتماً…» یا پایان «[---پایان فایل صوتی---]» از متن حذف می‌شود.
 
+## بسته‌ی کامل و مرتب
+
+`versline telegram pack پوشه_آرشیو` یک آرشیو تمام‌شده را بدون اتصال به اینترنت به یک بسته‌ی قابل‌اشتراک تبدیل می‌کند (چیزی دوباره دانلود نمی‌شود). نیاز به `versline[export]` دارد.
+
+```text
+<output>/<channel>_pack/<channel>_<from>_<to>/
+├── README.md, README.pdf            کانال، بازه‌ی زمانی، تعداد پست، مجموع مدت صوت، محتوای بسته
+├── <عنوان کانال>.docx / .pdf        «کتاب»: جلد، فهرست مطالب، فصل‌بندی بر اساس ماه شمسی، هر پست در صفحه‌ی جدید
+├── posts/docx/…  posts/pdf/…        برای هر پست یک فایل Word و یک PDF
+├── notes/                           یادداشت‌های Markdown و فهرست (قابل‌باز در Obsidian)، با پیوست‌ها
+├── catalog.csv, catalog.xlsx        هر پست یک ردیف: تاریخ، عنوان، نوع، مدت، بازدید، پیوند، مسیر یادداشت/Word/PDF، پیوست‌ها
+<output>/<channel>_pack/<channel>_<from>_<to>.zip   همه‌ی موارد بالا در یک فایل
+```
+
+| گزینه | معنی |
+| :--- | :--- |
+| `--output`، `-o` | پوشه‌ای که بسته در آن ساخته می‌شود |
+| `--to docx,pdf` | قالب کتاب و فایل‌های تک‌پست |
+| `--front-matter` / `--no-front-matter` | جدول مشخصات زیر جلد و عنوان هر پست |
+| `--per-post` / `--no-per-post` | یک فایل برای هر پست (پیش‌فرض: روشن) |
+| `--media` / `--no-media` | کپی پیوست‌ها در `notes/` (پیش‌فرض: روشن) |
+| `--toc` / `--no-toc` | فهرست مطالب در کتاب: لینک‌های قابل‌کلیک، گروه‌بندی‌شده بر اساس ماه شمسی (پیش‌فرض: روشن) |
+| `--zip` / `--no-zip` | ساخت ZIP (پیش‌فرض: روشن) |
+| `--since`، `--until` | محدود کردن به بازه‌ی تاریخ (میلادی یا شمسی) |
+| `--force`، `-f` | ساخت دوباره‌ی فایل‌های تک‌پستِ به‌روز |
+
+پست‌های چندبخشیِ ادغام‌شده یک بار می‌آیند. اجرای دوباره ارزان است: فایل‌های تک‌پستِ به‌روز رد می‌شوند و کتاب، فهرست، README و ZIP دوباره ساخته می‌شوند.
+
+در `archive` می‌شود یک‌جا انجام داد: `--pack` بعد از بایگانی بسته‌ی کامل را می‌سازد و `--export docx,pdf` فقط فایل‌های تک‌پست را در `<output>/exports/` می‌نویسد.
+
 ## نمونه‌ها
 
 ```sh

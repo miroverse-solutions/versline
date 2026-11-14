@@ -109,6 +109,17 @@ class TelegramSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix='VERSLINE_TELEGRAM_', env_file='.env', env_ignore_empty=True, extra='ignore')
 
 
+class ExportSettings(BaseSettings):
+    formats: str = Field(default="", description="Default --export formats for every command (docx, pdf, docx,pdf or all); empty = no export")
+    front_matter: bool = Field(default=True, description="Show document metadata as a table under the title in Word/PDF output")
+    page_format: str = Field(default="A4", description="Page size for exports (A4, Letter, ...)")
+    margin: str = Field(default="15mm", description="Page margin for exports (e.g. 15mm, 1in)")
+    font_size: int = Field(default=12, description="Body font size in points for Word output")
+    landscape: bool = Field(default=False, description="Landscape pages for exports")
+
+    model_config = SettingsConfigDict(env_prefix='VERSLINE_EXPORT_', env_file='.env', env_ignore_empty=True, extra='ignore')
+
+
 class Settings(BaseSettings):
     llm: LLMSettings = Field(default_factory=LLMSettings)
     transcription: TranscriptionSettings = Field(default_factory=TranscriptionSettings)
@@ -116,6 +127,7 @@ class Settings(BaseSettings):
     resource: ResourceSettings = Field(default_factory=ResourceSettings)
     slides: SlidesSettings = Field(default_factory=SlidesSettings)
     telegram: TelegramSettings = Field(default_factory=TelegramSettings)
+    export: ExportSettings = Field(default_factory=ExportSettings)
 
     # Common settings
     output_directory: Path = Field(default=Path("output"), description="Default output directory")
@@ -173,6 +185,7 @@ def reload_settings(env_file: Optional[Path] = None, *, override_env: bool = Tru
     settings.ffmpeg = refreshed_settings.ffmpeg
     settings.resource = refreshed_settings.resource
     settings.slides = refreshed_settings.slides
+    settings.export = refreshed_settings.export
     settings.telegram = refreshed_settings.telegram
     settings.output_directory = refreshed_settings.output_directory
     settings.temp_directory = refreshed_settings.temp_directory

@@ -177,3 +177,32 @@ def save_to_html(
     
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(html)
+
+
+def questions_to_markdown(questions: list[dict], title: str = "سؤالات") -> str:
+    """Render questions as a printable Markdown sheet: questions first, then an answer key after a page break."""
+    labels = {"option_a": "الف", "option_b": "ب", "option_c": "ج", "option_d": "د"}
+    correct_labels = {"a": "الف", "b": "ب", "c": "ج", "d": "د"}
+    lines = [f"# {title}", ""]
+    for number, q in enumerate(questions, 1):
+        lines += [f"**{number}.** {q.get('question', '')}".strip(), ""]
+        for key, label in labels.items():
+            if q.get(key):
+                lines.append(f"- {label}) {q[key]}")
+        if any(q.get(k) for k in labels):
+            lines.append("")
+    lines += ['<div class="page-break"></div>', "", "## پاسخنامه", ""]
+    for number, q in enumerate(questions, 1):
+        if q.get("correct_answer"):
+            correct = str(q["correct_answer"]).strip()
+            line = f"**{number}.** {correct_labels.get(correct.lower(), correct)}"
+            if q.get("explanation"):
+                line += f" — {q['explanation']}"
+        else:
+            line = f"**{number}.** {q.get('answer', '')}"
+        lines += [line.strip(), ""]
+    return "\n".join(lines)
+
+
+def save_to_markdown(questions: list[dict], output_path, title: str = "سؤالات") -> None:
+    Path(output_path).write_text(questions_to_markdown(questions, title), encoding="utf-8")

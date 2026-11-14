@@ -124,6 +124,9 @@ def archive(
     chunk_size: int = typer.Option(900, help="Chunk size in seconds"),
     overlap: int = typer.Option(180, help="Overlap size in seconds"),
     skip_blocked: bool = typer.Option(False, "--skip-blocked", help="Skip chunks blocked by the provider instead of failing the post"),
+    export: Optional[str] = typer.Option(None, "--export", "-X", help="Also export each post to Word/PDF under <output>/exports/: docx, pdf, 'docx,pdf' or all (needs versline[export])"),
+    export_frontmatter: Optional[bool] = typer.Option(None, "--export-frontmatter/--no-export-frontmatter", help="Show each post's metadata as a table under its title in exported files (default: on)"),
+    make_pack: bool = typer.Option(False, "--pack", help="After archiving, build the complete pack (book, per-post files, catalog, notes, README, ZIP); same as running `telegram pack` on the output"),
 ):
     """Download a channel's posts in a date range and save each as an Obsidian note with frontmatter and transcript."""
     from versline.services.channel_archive.obsidian import parse_date_arg
@@ -288,5 +291,81 @@ def archive(
         from versline.services.pricing import print_cost_report
 
         print_cost_report(tracker, api_key=settings.llm.api_key)
+    if (export or make_pack) and not dry_run and not files_only:
+        _post_archive(archiver.out_dir, export, export_frontmatter, make_pack)
     if summary.failed:
         raise typer.Exit(code=1)
+
+
+def _post_archive(out_dir: Path, export: Optional[str], front_matter: Optional[bool], make_pack: bool) -> None:
+    from versline.services import docexport
+    from versline.services.channel_archive import pack as pack_service
+
+    try:
+        if make_pack:
+            opts = _pack_options(export, front_matter, None, None, True, True, True, False, None, True)
+            _run_pack(out_dir, opts)
+        else:
+            exp = docexport.ExportOptions.from_settings(formats=export, front_matter=front_matter)
+            opts = pack_service.PackOptions(formats=exp.formats, front_matter=exp.front_matter)
+            _, posts = pack_service.collect_posts(out_dir)
+            results = pack_service.export_posts(out_dir, posts, out_dir / "exports", opts)
+            done = sum(1 for r in results if r.ok and not r.skipped)
+            console.print(f"[bold]Exported:[/bold] {done} files → {out_dir / 'exports'}")
+            for r in results:
+                if not r.ok:
+                    console.print(f"[red]  {r.output.name}: {r.error}[/red]")
+    except (docexport.ExportError, ValueError, FileNotFoundError) as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1)
+
+
+def _pack_options(to, front_matter, since, until, per_post, media, make_zip, force, out_dir, toc=True):
+    from versline.services import docexport
+    from versline.services.channel_archive import pack as pack_service
+    from versline.services.channel_archive.obsidian import parse_date_arg
+
+    exp = docexport.ExportOptions.from_settings(formats=to if to is not None else "docx,pdf", front_matter=front_matter)
+    return pack_service.PackOptions(
+        formats=exp.formats, front_matter=exp.front_matter, per_post=per_post, media=media, make_zip=make_zip,
+        since=parse_date_arg(since) if since else None, until=parse_date_arg(until, end=True) if until else None,
+        force=force, out_dir=out_dir, toc=toc, page_format=exp.page_format, margin=exp.margin, font_size=exp.font_size,
+    )
+
+
+def _run_pack(archive_dir: Path, opts) -> None:
+    from versline.services.channel_archive import pack as pack_service
+
+    result = pack_service.build_pack(archive_dir, opts, log=lambda m: console.print(f"[dim]{m}[/dim]"))
+    console.print(f"[bold]Pack:[/bold] {result.posts} posts → {result.root}")
+    if result.zip_path:
+        console.print(f"[bold]ZIP:[/bold] {result.zip_path}")
+    for failure in result.failures:
+        console.print(f"[red]  {failure}[/red]")
+    if result.failures:
+        raise typer.Exit(1)
+
+
+@app.command("pack")
+def pack(
+    archive_dir: Path = typer.Argument(..., exists=True, file_okay=False, help="An archive folder made by `telegram archive` (contains .versline-channel.json)"),
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Folder to create the pack in (default: output/<channel>_pack)"),
+    to: str = typer.Option("docx,pdf", "--to", "-t", help="Formats for the book and per-post files: docx, pdf, 'docx,pdf' or all"),
+    front_matter: Optional[bool] = typer.Option(None, "--front-matter/--no-front-matter", help="Show post metadata as a table under each title (default: on)"),
+    per_post: bool = typer.Option(True, "--per-post/--no-per-post", help="Also write one Word/PDF file per post"),
+    media: bool = typer.Option(True, "--media/--no-media", help="Include saved attachments (audio, images...) in the notes folder"),
+    make_zip: bool = typer.Option(True, "--zip/--no-zip", help="Pack everything into one ZIP file"),
+    toc: bool = typer.Option(True, "--toc/--no-toc", help="Table of contents (clickable links, grouped by Shamsi month) in the Word/PDF book"),
+    since: Optional[str] = typer.Option(None, "--since", help="Only posts from this date (Gregorian or Shamsi)"),
+    until: Optional[str] = typer.Option(None, "--until", help="Only posts up to and including this date"),
+    force: bool = typer.Option(False, "--force", "-f", help="Re-export per-post files that are already up to date"),
+):
+    """Build a tidy, complete pack from a finished archive: one book (Word/PDF), per-post files, catalog, notes and README, as a folder and a ZIP."""
+    from versline.services import docexport
+
+    try:
+        opts = _pack_options(to, front_matter, since, until, per_post, media, make_zip, force, output, toc)
+        _run_pack(archive_dir, opts)
+    except (docexport.ExportError, ValueError, FileNotFoundError) as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1)

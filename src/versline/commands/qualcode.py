@@ -3,6 +3,7 @@ from typing import List, Optional
 import json
 
 import typer
+from versline.commands._export import export_frontmatter_option, export_option, run_exports
 from versline.commands._common import EXTRA_BODY_HELP, INTERSPERSED, apply_extra_body_option
 from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn
 from loguru import logger
@@ -62,6 +63,8 @@ def qualcode_file(
     api_endpoint: Optional[str] = typer.Option(None, "--api-endpoint", help="Custom API endpoint"),
     proxy: Optional[str] = typer.Option(None, "--proxy", help="Proxy URL"),
     extra_body: Optional[str] = typer.Option(None, "--extra-body", help=EXTRA_BODY_HELP),
+    export: Optional[str] = export_option(),
+    export_frontmatter: Optional[bool] = export_frontmatter_option(),
     force: bool = typer.Option(False, "--force", "-f", help="Force rerun: ignore progress cache and existing outputs"),
     recursive: bool = typer.Option(False, "--recursive", help="Also search sub-folders of folder inputs"),
     note: Optional[str] = typer.Option(None, "--note", help="Additional instruction to append to the prompt"),
@@ -117,9 +120,12 @@ def qualcode_file(
             user_note=resolve_user_note(note=note, note_file=str(note_file) if note_file else None),
         )
 
+        produced: List[Path] = []
+
         def process_one(input_path: Path):
             if not force and any(output_dir.glob(f"{input_path.stem}_qual_*")):
                 logger.info(f"Skipping {input_path}: coded output already exists in {output_dir} (use --force to redo)")
+                produced.extend(sorted(output_dir.glob(f"{input_path.stem}_qual_*.md")))
                 return SKIPPED
 
             logger.info(f"Starting qualitative coding for: {input_path}")
@@ -143,6 +149,8 @@ def qualcode_file(
 
             for fmt, path in outputs.items():
                 logger.success(f"Saved {fmt} output: {path}")
+                if fmt in ("markdown", "central-concepts"):
+                    produced.append(Path(path))
 
             if coder.last_parse_failures > 0:
                 logger.warning(
@@ -155,6 +163,10 @@ def qualcode_file(
             run_batch(inputs, process_one)
         finally:
             print_cost_report(coder.tracker, api_key=settings.llm.api_key)
+
+        run_exports(produced, export, export_frontmatter, {
+            "type": "qualitative-coding", "model": settings.llm.model, "methods": methods,
+        }, force=force)
 
     except typer.Exit:
         raise

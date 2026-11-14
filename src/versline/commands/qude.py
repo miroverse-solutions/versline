@@ -1,4 +1,5 @@
 import typer
+from versline.commands._export import export_frontmatter_option, export_option, run_exports
 from versline.commands._common import EXTRA_BODY_HELP, INTERSPERSED, apply_extra_body_option
 from typing import List, Optional
 from pathlib import Path
@@ -39,6 +40,8 @@ def main(
     pages_per_batch: int = typer.Option(DEFAULT_PAGES_PER_BATCH, "--pages-per-batch", help="Number of pages per batch (PDF/DOCX)"),
     words_per_batch: int = typer.Option(DEFAULT_WORDS_PER_BATCH, "--words-per-batch", help="Number of words per batch (Markdown/Text)"),
 
+    export: Optional[str] = export_option(),
+    export_frontmatter: Optional[bool] = export_frontmatter_option(),
     force: bool = typer.Option(False, "--force", "-f", help="Force regeneration (ignore cache)"),
     debug: bool = typer.Option(False, "--debug", help="Enable debug mode"),
     no_cache: bool = typer.Option(False, "--no-cache", help="Disable caching"),
@@ -82,7 +85,7 @@ def main(
         slides_per_batch=slides_per_batch,
         pages_per_batch=pages_per_batch,
         words_per_batch=words_per_batch,
-        output_formats=formats,
+        output_formats=f"{formats},md" if export else formats,
         style_path=str(style) if style else None,
         prompt_path=str(prompt_file) if prompt_file else None,
         force=force,
@@ -96,3 +99,7 @@ def main(
         designer.regenerate_from_cache()
     else:
         designer.process()
+
+    run_exports(designer.markdown_outputs, export, export_frontmatter, {
+        "type": f"questions ({question_type})", "model": model, "language": language,
+    }, force=True)

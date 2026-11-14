@@ -41,7 +41,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: python -m pip install . pyinstaller
+      - run: python -m pip install ".[export]" pyinstaller
       - run: python packaging/build.py
       - name: Smoke test
         run: dist-bin\versline\versline.exe --version

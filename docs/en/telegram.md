@@ -132,6 +132,36 @@ Each note: frontmatter, `# title` (first meaningful caption line without hashtag
 
 Frontmatter always has `title, source, channel, channel_title, post_id, url, date, date_shamsi, media_type, tags, aliases, archived_at`; when applicable `duration, file_name, views, forwards, forwarded_from, album_size, transcribed, transcription_model, summary_model, taqrir_model, skipped_media`. Hashtags become `tags` (ZWNJ/space inside a hashtag becomes `_`; `telegram` is always added). The index note has `type: channel-index`, `post_count`, `range_from`, `range_to`, `updated` and a table of wikilinks. Model chatter such as an opening «بله، حتماً…» or closing «[---پایان فایل صوتی---]» is stripped from transcripts.
 
+## Pack: a complete, tidy package
+
+`versline telegram pack ARCHIVE_DIR` turns a finished archive into a shareable package, offline (nothing is downloaded again). Needs `versline[export]`.
+
+```text
+<output>/<channel>_pack/<channel>_<from>_<to>/
+├── README.md, README.pdf            channel, date range, post count, total audio length, what is where
+├── <Channel title>.docx / .pdf      the "book": cover, table of contents, chapters by Shamsi month, each post on a new page
+├── posts/docx/…  posts/pdf/…        one Word and one PDF file per post
+├── notes/                           the Markdown notes + index (open as an Obsidian vault), with attachments
+├── catalog.csv, catalog.xlsx        one row per post: dates, title, type, length, views, link, note/Word/PDF paths, attachments
+<output>/<channel>_pack/<channel>_<from>_<to>.zip   everything above in one file
+```
+
+| Option | Meaning |
+| :--- | :--- |
+| `--output`, `-o` | Folder to create the pack in |
+| `--to docx,pdf` | Formats of the book and per-post files |
+| `--front-matter` / `--no-front-matter` | Metadata table under the cover and each post title |
+| `--per-post` / `--no-per-post` | One file per post (default on) |
+| `--media` / `--no-media` | Copy attachments into `notes/` (default on) |
+| `--toc` / `--no-toc` | Table of contents in the book: clickable links, grouped by Shamsi month (default on) |
+| `--zip` / `--no-zip` | Create the ZIP (default on) |
+| `--since`, `--until` | Limit to a date range (Gregorian or Shamsi) |
+| `--force`, `-f` | Rebuild per-post files that are up to date |
+
+Merged multi-part posts appear once. Rerunning is cheap: up-to-date per-post files are skipped; the book, catalog, README and ZIP are rebuilt.
+
+With `archive` you can do it in one go: `--pack` builds the full pack after archiving, and `--export docx,pdf` only writes per-post files to `<output>/exports/`.
+
 ## Recipes
 
 ```sh

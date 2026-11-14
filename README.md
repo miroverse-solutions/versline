@@ -144,6 +144,7 @@ versline update
 | `versline summarize` | خلاصه‌سازی |
 | `versline telegram` | بایگانی کانال تلگرام |
 | `versline organize` | فهرست‌برداری هارد و پیدا کردن فایل‌های تکراری |
+| `versline export` | خروجی Word و PDF از فایل‌های Markdown (همه‌ی دستورها هم `--export` دارند) |
 | `versline qude` | ساخت سؤال و فلش‌کارت (CSV، Anki، HTML) |
 | `versline qualcode` | کدگذاری کیفی مصاحبه‌ها |
 | `versline research` | نگارش مرحله‌ای فصل یافته‌ها |
@@ -177,6 +178,7 @@ versline update
 | تنظیمات | [تنظیمات](docs/fa/configuration.md) | [Configuration](docs/en/configuration.md) |
 | دستورها | [مرجع دستورها](docs/fa/commands.md) | [Command reference](docs/en/commands.md) |
 | تلگرام | [بایگانی تلگرام](docs/fa/telegram.md) | [Telegram archive](docs/en/telegram.md) |
+| خروجی Word/PDF | [راهنما](docs/fa/export.md) | [Export guide](docs/en/export.md) |
 | سازمان‌دهی آرشیو | [راهنما](docs/fa/organize.md) · [طراحی](docs/fa/organize-design.md) | [Organize guide](docs/en/organize.md) |
 | برنامه‌نویسان | [کتابخانه و MCP](docs/fa/library.md) · [معماری](docs/fa/architecture.md) | [Library & MCP](docs/en/library.md) · [Architecture](docs/en/architecture.md) |
 

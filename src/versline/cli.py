@@ -64,7 +64,7 @@ app = typer.Typer(
 
 # Setup commands are light; the processing commands pull in pandas, openai, markitdown etc. (seconds of
 # import time, much more on a first Windows run), so skip them when only a setup command is requested.
-_LIGHT_COMMANDS = {"init", "config", "update", "organize", "--version"}
+_LIGHT_COMMANDS = {"init", "config", "update", "organize", "export", "--version"}
 if not (len(sys.argv) > 1 and sys.argv[1] in _LIGHT_COMMANDS):
     from versline.commands import transcribe, translate, qude, qualcode, slides, summarize, research, telegram
 
@@ -76,6 +76,11 @@ if not (len(sys.argv) > 1 and sys.argv[1] in _LIGHT_COMMANDS):
     app.add_typer(summarize.app, name="summarize", help="[cyan]Summarize files[/cyan] (outline, detailed, or slides mode).")
     app.add_typer(research.app, name="research", help="[cyan]Write research sections[/cyan] with a staged outline-to-full pipeline.")
     app.add_typer(telegram.app, name="telegram", help="[cyan]Archive a Telegram channel[/cyan] (captions + transcripts) as Obsidian notes.")
+
+# export only imports MdPersia when it actually converts, so it is a light command too.
+from versline.commands import export as export_cmd  # noqa: E402
+
+app.add_typer(export_cmd.app, name="export", help="[cyan]Export Markdown to Word/PDF[/cyan] (Persian/RTL aware, with or without metadata table).")
 
 # organize uses only the standard library + typer/rich, so it is registered as a light command.
 from versline.commands import organize  # noqa: E402
