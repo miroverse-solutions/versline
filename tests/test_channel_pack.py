@@ -108,6 +108,7 @@ class PackTests(unittest.TestCase):
         self.assertIn("| مدت | 00:01:00 |", md)
         self.assertNotIn("| مشخصه", pack.build_book_markdown(info, posts, front_matter=False))
 
+    @unittest.skipIf(pack._heading_ids("# x") is None, "needs the optional MdPersia export extra")
     def test_toc_links_point_at_real_heading_ids(self):
         # a duplicate title gets a "-1" id suffix; the TOC must link to it, not to the first one
         info, posts = pack.collect_posts(self.archive)
