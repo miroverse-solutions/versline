@@ -162,7 +162,7 @@ def update_command():
     if not uv:
         console.print("[red]uv was not found.[/red] Re-run the install command from the README to update.")
         raise typer.Exit(1)
-    result = subprocess.run([uv, "tool", "install", "--force", "--python", "3.12", wheel_url])
+    result = subprocess.run([uv, "tool", "install", "--force", "--python", "3.12", f"versline[export] @ {wheel_url}"])
     if result.returncode != 0:
         raise typer.Exit(result.returncode)
     console.print("[green]Done.[/green] Run 'versline --version' to confirm.")

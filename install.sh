@@ -24,7 +24,7 @@ if [ -z "${WHEEL_URL:-}" ]; then
 fi
 
 echo "Installing $WHEEL_URL"
-uv tool install --force --python 3.12 "$WHEEL_URL"
+uv tool install --force --python 3.12 "versline[export] @ $WHEEL_URL"
 uv tool update-shell >/dev/null 2>&1 || true
 
 echo
