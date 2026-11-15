@@ -31,6 +31,8 @@ versline --version
 versline init      # choose provider, API key, model (once)
 ```
 
+To use Versline inside Obsidian, run `versline obsidian install` to add the Versobs plugin (see [Obsidian plugin](obsidian.md)).
+
 ffmpeg is resolved automatically (see [Configuration](configuration.md#media)). On the Windows console Persian text may look broken; open the output files in an editor instead.
 
 ### Update

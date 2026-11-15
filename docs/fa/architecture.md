@@ -35,7 +35,7 @@
 make test      # python -m pytest tests -q
 ```
 
-۲۱ فایل آزمون، شامل تنظیمات، محدودیت منابع، پیاده‌سازی (انتخاب سرویس‌دهنده، بازگشت STT، هم‌ترازی کلمات)، خلاصه‌ساز، اسلاید، qude، qualcode، research، هزینه و بایگانی تلگرام (`test_channel_obsidian.py`، `test_channel_pipeline.py`، `test_channel_web.py`). CI روی Ubuntu، Windows و macOS با Python 3.12 اجرا می‌شود.
+۳۵ فایل آزمون، شامل تنظیمات، محدودیت منابع، پیاده‌سازی (انتخاب سرویس‌دهنده، بازگشت STT، هم‌ترازی کلمات)، خلاصه‌ساز، اسلاید، qude، qualcode، research، هزینه، bridge (`test_bridge.py`)، نصب‌کننده‌ی افزونه (`test_obsidian_install.py`) و بایگانی تلگرام (`test_channel_obsidian.py`، `test_channel_pipeline.py`، `test_channel_web.py`). CI روی Ubuntu، Windows و macOS با Python 3.12 اجرا می‌شود.
 
 ## انتشار
 

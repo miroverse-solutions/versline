@@ -133,7 +133,6 @@ def stats(
     finally:
         _close(catalog)
     _export_reports([report], export, export_frontmatter, report.parent.parent)
-    _export_reports([report], export, export_frontmatter, report.parent.parent)
 
 
 @app.command("dupes")

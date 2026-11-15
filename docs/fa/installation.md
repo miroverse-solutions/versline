@@ -31,6 +31,8 @@ versline --version
 versline init      # انتخاب سرویس، کلید API و مدل (فقط یک بار)
 ```
 
+برای استفاده از Versline درون Obsidian دستور `versline obsidian install` را اجرا کنید تا افزونه‌ی Versobs نصب شود (بخش [افزونه‌ی Obsidian](obsidian.md)).
+
 ffmpeg خودکار پیدا می‌شود (بخش [تنظیمات](configuration.md#media)). در کنسول ویندوز ممکن است متن فارسی درست نمایش داده نشود؛ فایل‌های خروجی را در یک ویرایشگر باز کنید.
 
 ### به‌روزرسانی

@@ -37,7 +37,7 @@ Writes are atomic (temp file then replace); failed posts are retried on the next
 make test      # python -m pytest tests -q
 ```
 
-21 test files cover config, resource limits, transcription (provider resolution, STT fallback, word alignment), summarizer, slides, qude, qualcode, research, pricing, and the Telegram archive (`test_channel_obsidian.py`, `test_channel_pipeline.py`, `test_channel_web.py`). CI runs on Ubuntu, Windows and macOS with Python 3.12.
+35 test files cover config, resource limits, transcription (provider resolution, STT fallback, word alignment), summarizer, slides, qude, qualcode, research, pricing, the bridge (`test_bridge.py`), the plugin installer (`test_obsidian_install.py`), and the Telegram archive (`test_channel_obsidian.py`, `test_channel_pipeline.py`, `test_channel_web.py`). CI runs on Ubuntu, Windows and macOS with Python 3.12.
 
 ## Releasing
 

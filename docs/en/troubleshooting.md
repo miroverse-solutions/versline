@@ -25,3 +25,9 @@
 - **Nothing for a date range**: check with `--dry-run`; dates use local time, Shamsi years (< 1700) are converted.
 - **Titles/tags look old after an update**: re-run with `--reuse-transcripts` (or `--force`).
 - **Telegram rate limiting in web mode**: Versline backs off automatically; re-run later to resume.
+
+## Obsidian plugin
+
+- **"No vault found"**: open the vault in Obsidian once, or pass `--vault PATH` to `versline obsidian install`.
+- **GitHub rate limit reached**: try again later or set `GITHUB_TOKEN`; behind a filter use `--proxy`.
+- **Plugin not listed in Obsidian**: enable it in Settings → Community plugins (turn off Restricted mode); after an update reload Obsidian.
