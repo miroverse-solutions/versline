@@ -16,6 +16,27 @@ from versline.utils.common import find_best_text_overlap_point
 from versline.services.pricing import TokenTracker
 
 
+def _provider_error_detail(exc: Exception) -> str:
+    """Extract the upstream provider's real error from an OpenAI-SDK error body.
+
+    OpenRouter wraps upstream failures as a generic "Provider returned error";
+    the actual reason (and which provider failed) lives in ``error.metadata``.
+    """
+    body = getattr(exc, "body", None)
+    if not isinstance(body, dict):
+        return ""
+    err = body.get("error") if isinstance(body.get("error"), dict) else body
+    meta = err.get("metadata") if isinstance(err, dict) else None
+    if not isinstance(meta, dict):
+        return ""
+    parts = []
+    if meta.get("provider_name"):
+        parts.append(f"provider={meta['provider_name']}")
+    if meta.get("raw"):
+        parts.append(f"raw={str(meta['raw'])[:500]}")
+    return f" [{', '.join(parts)}]" if parts else ""
+
+
 class ContentBlockedError(RuntimeError):
     """Provider refused the content (policy block); retries are pointless."""
 
@@ -656,7 +677,10 @@ class AudioTranscriber:
             return content
         except Exception as e:
             endpoint = getattr(client, "base_url", "unknown")
-            logger.error(f"API call failed — {type(e).__name__}: {e} (endpoint={endpoint}, model={model_name})")
+            logger.error(
+                f"API call failed — {type(e).__name__}: {e}{_provider_error_detail(e)} "
+                f"(endpoint={endpoint}, model={model_name})"
+            )
             raise
 
     def process_file(self, file_path: str, chunk_length=900, overlap=180, progress_callback=None, force=False):
