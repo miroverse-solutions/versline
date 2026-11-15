@@ -18,6 +18,7 @@
 | `export` | خروجی Word و PDF از Markdown (یا خروجی هر دستور با `--export`)، با یا بدون جدول مشخصات |
 | `telegram` | بایگانی کانال تلگرام به‌صورت یادداشت‌های Obsidian (با متن پیاده‌شده، خلاصه و تقریر) |
 | `organize` | فهرست‌برداری از هارد/آرشیو بزرگ، پیدا کردن فایل‌های تکراری و ساخت ساختار مرتب با قاعده (کپی، و جابه‌جایی برگشت‌پذیر صوت/ویدیو)؛ بدون کلید API |
+| `obsidian`، `bridge` | نصب/به‌روزرسانی افزونه‌ی Obsidian یعنی Versobs در والت؛ رابط JSON مورد استفاده‌ی آن |
 | `init`، `config`، `update` | تنظیم اولیه، نمایش تنظیمات ذخیره‌شده، به‌روزرسانی |
 
 سرویس‌دهنده‌های پشتیبانی‌شده: **Google (Gemini)، OpenAI، OpenRouter، AvalAI و هر سرویس سازگار با OpenAI**.
@@ -29,7 +30,7 @@
 3. [مرجع دستورها](commands.md)
 4. [بایگانی کانال تلگرام](telegram.md) · [خروجی Word/PDF](export.md)
    - [سازمان‌دهی آرشیو فایل‌ها](organize.md) · [سند طراحی](organize-design.md)
-5. [کتابخانه‌ی پایتون و سرور MCP](library.md)
+5. [کتابخانه‌ی پایتون، سرور MCP و پروتکل bridge](library.md) · [افزونه‌ی Obsidian](obsidian.md)
 6. [معماری و توسعه](architecture.md)
 7. [رفع اشکال](troubleshooting.md)
 

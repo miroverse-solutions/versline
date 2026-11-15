@@ -7,7 +7,7 @@
 | Path | Role |
 | :--- | :--- |
 | `cli.py` | Typer app, global options, update notice. Heavy modules are imported lazily so `init/config/update/--version` start fast |
-| `commands/` | Thin CLI wrappers (`transcribe`, `translate`, `summarize`, `qude`, `qualcode`, `research`, `slides`, `telegram`, `organize`, `setup`) |
+| `commands/` | Thin CLI wrappers (`transcribe`, `translate`, `summarize`, `qude`, `qualcode`, `research`, `slides`, `telegram`, `organize`, `setup`, `bridge`, `obsidian`) |
 | `config.py`, `userconfig.py` | pydantic-settings groups (llm, transcription, ffmpeg, resource, slides, telegram), env loading, per-user config folder |
 | `services/` | Business logic: `transcription`, `translation`, `summarizer`, `question_generator`, `qualitative_coding`, `research_writing`, `slides`, `document_processor`, `export`, `media`, `network`, `ai` (provider clients, retries), `pricing` (token/cost tracking) |
 | `services/channel_archive/` | Telegram archive: `sources/` (`telegram` via Telethon, `telegram_web` via httpx + BeautifulSoup), `steps.py` (media, transcribe, summary, taqrir), `pipeline.py`, `obsidian.py`, `state.py` (manifest), `llm.py` (single-prompt text and image generator), `models.py`, `discussion.py` (`telegram taqrir`: message log, media to text, map/reduce taqrir, `.versline-taqrir.json` cache) |
@@ -15,6 +15,8 @@
 | `services/organize/` | Archive organizer (standard library only): `catalog.py` (SQLite, root paths relative to the drive root), `scanner.py` (incremental walk), `hashing.py` (SHA-256), `dupes.py` (duplicates, redundant folders), `reports.py` (Markdown/CSV), `rules.py` (rules.txt/taxonomy.txt), `planner.py` (plan, dedupe, name collisions), `applier.py` (journaled apply/verify/revert-moves), `kinds.py`, `normalize.py`. Design: [organize-design.md](../fa/organize-design.md) |
 | `core/` | Constants, types, prompt loading, resource limits |
 | `mcp/server.py` | MCP tools |
+| `bridge/` | JSON interface (`versline bridge`): `protocol.py` (NDJSON events, `JobContext`, prompts/cancel over stdin), `registry.py` (`@tool`, `F(...)` fields with en/fa labels and UI hints, manifest), `adapter.py` (runs the CLI command functions in-process with Rich progress, cost report and prompts turned into events), `runner.py`, `tools/` (one module per area) |
+| `services/obsidian_plugin.py`, `services/releases.py` | Versobs plugin installer (`versline obsidian`), GitHub release lookup/download shared with `versline update` |
 | `resources/prompts`, `resources/assets` | Bundled prompts, Vazirmatn font, slide assets |
 
 Providers: Google (google-genai with context caching), OpenAI, OpenRouter, AvalAI (exact cost lookup), OpenAI-compatible. API calls retry automatically; token usage and cost are tracked and printed at the end of a run.

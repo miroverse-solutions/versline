@@ -16,6 +16,8 @@ Global options (`-v`, `--env-file`, `--extra-body`) may be written before or aft
 | `versline init` | Interactive first-time setup; writes the per-user `config.env` |
 | `versline config [--show] [--path]` | Show saved settings (secrets masked) or just the file path |
 | `versline update` | Update to the latest GitHub release |
+| `versline obsidian vaults/install/status` | Install or update the Versobs Obsidian plugin in a vault; see [Obsidian plugin](obsidian.md) |
+| `versline bridge info/run` | JSON interface for other programs; see [Bridge protocol](library.md#bridge-protocol) |
 
 ## `transcribe`
 

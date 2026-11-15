@@ -137,6 +137,17 @@ class TelegramSource:
         except OSError:
             pass
 
+    def account_name(self) -> Optional[str]:
+        """Display name of the logged-in account, or None when the session is not authorized (no prompts)."""
+        async def _who():
+            await self._client.connect()
+            if not await self._client.is_user_authorized():
+                return None
+            me = await self._client.get_me()
+            return " ".join(filter(None, [me.first_name, me.last_name])) or str(me.id)
+
+        return self._run(_who())
+
     def _connect(self) -> None:
         async def _c():
             await self._client.connect()

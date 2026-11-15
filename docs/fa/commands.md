@@ -16,6 +16,8 @@
 | `versline init` | تنظیم تعاملی اولیه؛ `config.env` کاربر را می‌نویسد |
 | `versline config [--show] [--path]` | نمایش تنظیمات (رازها پوشانده) یا فقط مسیر فایل |
 | `versline update` | به‌روزرسانی به آخرین انتشار GitHub |
+| `versline obsidian vaults/install/status` | نصب یا به‌روزرسانی افزونه‌ی Versobs در والت Obsidian؛ [افزونه‌ی Obsidian](obsidian.md) |
+| `versline bridge info/run` | رابط JSON برای برنامه‌های دیگر؛ [پروتکل bridge](library.md#پروتکل-bridge) |
 
 ## `transcribe`
 

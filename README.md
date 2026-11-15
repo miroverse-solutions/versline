@@ -155,6 +155,8 @@ versline update
 | `versline qualcode` | کدگذاری کیفی مصاحبه‌ها |
 | `versline research` | نگارش مرحله‌ای فصل یافته‌ها |
 | `versline slides` | ساخت اسلاید از Markdown |
+| `versline obsidian install` | نصب/به‌روزرسانی افزونه‌ی Obsidian یعنی [Versobs](docs/fa/obsidian.md) در والت |
+| `versline bridge` | رابط JSON برای برنامه‌های دیگر (مورد استفاده‌ی افزونه‌ی Obsidian) |
 
 برای راهنمای هر دستور بنویسید: `versline <دستور> --help` (مثلاً `versline transcribe --help`).
 
@@ -185,6 +187,7 @@ versline update
 | دستورها | [مرجع دستورها](docs/fa/commands.md) | [Command reference](docs/en/commands.md) |
 | تلگرام | [بایگانی تلگرام](docs/fa/telegram.md) | [Telegram archive](docs/en/telegram.md) |
 | خروجی Word/PDF | [راهنما](docs/fa/export.md) | [Export guide](docs/en/export.md) |
+| افزونه‌ی Obsidian | [Versobs](docs/fa/obsidian.md) | [Versobs](docs/en/obsidian.md) |
 | سازمان‌دهی آرشیو | [راهنما](docs/fa/organize.md) · [طراحی](docs/fa/organize-design.md) | [Organize guide](docs/en/organize.md) |
 | برنامه‌نویسان | [کتابخانه و MCP](docs/fa/library.md) · [معماری](docs/fa/architecture.md) | [Library & MCP](docs/en/library.md) · [Architecture](docs/en/architecture.md) |
 

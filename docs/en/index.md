@@ -18,6 +18,7 @@ Versline is a command-line toolkit and Python library by Miroverse Solutions. It
 | `telegram` | Archive a Telegram channel into Obsidian notes (with transcripts, summaries, taqrir) |
 | `export` | Export Markdown (or any module's output, via `--export`) to Word and PDF, with or without a metadata table |
 | `organize` | Catalogue a large drive/archive, find duplicate files and build a clean structure from rules (copies, reversible moves of audio/video); no API key |
+| `obsidian`, `bridge` | Install/update the Versobs Obsidian plugin in a vault; JSON interface used by it |
 | `init`, `config`, `update` | First-time setup, show saved settings, self-update |
 
 Supported LLM providers: **Google (Gemini), OpenAI, OpenRouter, AvalAI, and any OpenAI-compatible endpoint**.
@@ -29,7 +30,7 @@ Supported LLM providers: **Google (Gemini), OpenAI, OpenRouter, AvalAI, and any 
 3. [Command reference](commands.md)
 4. [Telegram channel archive](telegram.md) · [Word/PDF export](export.md)
    - [Organizing a file archive](organize.md) · [Design (Persian)](../fa/organize-design.md)
-5. [Python library and MCP server](library.md)
+5. [Python library, MCP server and bridge protocol](library.md) · [Obsidian plugin](obsidian.md)
 6. [Architecture and development](architecture.md)
 7. [Troubleshooting](troubleshooting.md)
 

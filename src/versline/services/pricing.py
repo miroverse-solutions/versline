@@ -229,6 +229,41 @@ def lookup_avalai_cost(
 from rich.console import Console
 from rich.table import Table
 
+def cost_summary(
+    tracker: TokenTracker,
+    api_key: Optional[str] = None,
+    proxy: Optional[str] = None,
+) -> Dict[str, object]:
+    """Machine-readable version of print_cost_report (used by the bridge); never raises."""
+    summary: Dict[str, object] = {
+        "input_tokens": tracker.total_input_tokens,
+        "output_tokens": tracker.total_output_tokens,
+        "cached_tokens": tracker.total_cached_tokens,
+        "usd": round(tracker.total_cost_usd, 6) if tracker.total_cost_usd else None,
+        "irt": None,
+        "error": None,
+    }
+    try:
+        valid_ids, _invalid = _split_uuid_ids(tracker.avalai_request_ids)
+        lookup_api_key = api_key or settings.llm.api_key
+        if valid_ids and lookup_api_key:
+            lookup_proxy = proxy or settings.llm.proxy or os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY")
+            report = lookup_avalai_cost(
+                valid_ids, lookup_api_key, proxy=lookup_proxy,
+                lookup_url=_derive_avalai_lookup_url(settings.llm.api_endpoint),
+            )
+            if report.error:
+                if report.error != "No API key":
+                    summary["error"] = str(report.error)
+            else:
+                summary["irt"] = report.total_cost_irt
+                if report.total_cost_usd > 0:
+                    summary["usd"] = round(report.total_cost_usd, 6)
+    except Exception as exc:  # cost lookup must never fail a job
+        summary["error"] = str(exc)
+    return summary
+
+
 def print_cost_report(
     tracker: TokenTracker,
     api_key: Optional[str] = None,

@@ -14,33 +14,10 @@ from versline.userconfig import user_config_dir, user_env_path
 console = Console()
 
 REPO = "miroverse-solutions/versline"
-PROVIDERS = ["Google", "OpenAI", "OpenRouter", "AvalAI", "OpenAICompatible"]
-DEFAULT_MODELS = {
-    "Google": "gemini-2.0-flash",
-    "OpenAI": "gpt-4o-mini",
-    "OpenRouter": "~google/gemini-flash-latest",
-    "AvalAI": "gemini-2.0-flash",
-    "OpenAICompatible": "",
-}
-SECRET_MARKERS = ("KEY", "TOKEN", "SECRET")
-
-
-def _read_env(path) -> dict:
-    values = {}
-    if not path.is_file():
-        return values
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            key, _, value = line.partition("=")
-            values[key.strip()] = value.strip()
-    return values
-
-
-def _mask(key: str, value: str) -> str:
-    if value and any(marker in key for marker in SECRET_MARKERS):
-        return value[:4] + "…" + value[-2:] if len(value) > 8 else "***"
-    return value
+# Shared with the bridge (versline.userenv); the old private names stay for existing callers.
+from versline.userenv import DEFAULT_MODELS, PROVIDERS  # noqa: E402
+from versline.userenv import mask as _mask  # noqa: E402
+from versline.userenv import read_env as _read_env  # noqa: E402
 
 
 def init_command():
@@ -75,12 +52,9 @@ def init_command():
     else:
         values.pop("VERSLINE_LLM_PROXY", None)
 
-    user_config_dir().mkdir(parents=True, exist_ok=True)
-    path.write_text("".join(f"{k}={v}\n" for k, v in values.items()), encoding="utf-8")
-    try:
-        path.chmod(0o600)
-    except OSError:
-        pass
+    from versline.userenv import write_env
+
+    write_env(values, path)
     console.print("[green]Saved.[/green] You can now run, for example: versline transcribe FILE")
 
 
@@ -103,26 +77,17 @@ def config_command(
 
 def _latest_release(timeout: float = 2.0) -> dict:
     """Return {"tag": str, "wheel_url": str | None} for the latest published release."""
-    import httpx
+    from versline.services.releases import fetch_release
 
-    resp = httpx.get(
-        f"https://api.github.com/repos/{REPO}/releases/latest", timeout=timeout, follow_redirects=True
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    wheel_url = next(
-        (a["browser_download_url"] for a in data.get("assets", []) if a.get("name", "").endswith(".whl")),
-        None,
-    )
-    return {"tag": data.get("tag_name"), "wheel_url": wheel_url}
+    release = fetch_release(REPO, timeout=timeout)
+    wheel_url = next((url for name, url in release["assets"].items() if name.endswith(".whl")), None)
+    return {"tag": release["tag"], "wheel_url": wheel_url}
 
 
 def _version_tuple(tag: str):
-    parts = []
-    for piece in tag.lstrip("vV").split("."):
-        digits = "".join(ch for ch in piece if ch.isdigit())
-        parts.append(int(digits) if digits else 0)
-    return tuple(parts)
+    from versline.services.releases import version_tuple
+
+    return version_tuple(tag)
 
 
 def update_command():

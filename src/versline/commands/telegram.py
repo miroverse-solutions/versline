@@ -11,10 +11,8 @@ from rich.table import Table
 
 from versline.commands._common import EXTRA_BODY_HELP, INTERSPERSED, apply_extra_body_option
 from versline.commands._export import export_frontmatter_option, export_option, run_exports
-from versline.commands.setup import _read_env
 from versline.config import settings, reload_settings
 from versline.core.prompts import resolve_text_input, resolve_user_note
-from versline.userconfig import user_config_dir, user_env_path
 from versline.utils.common import format_duration
 
 app = typer.Typer(help="Archive Telegram channel posts (captions + transcripts) as Obsidian notes, or write a taqrir of a chat's discussions.")
@@ -24,16 +22,9 @@ VALID_TYPES = {"audio", "voice", "video", "video_note", "photo", "document", "te
 
 
 def _save_credentials(api_id: str, api_hash: str) -> None:
-    path = user_env_path()
-    values = _read_env(path)
-    values["VERSLINE_TELEGRAM_API_ID"] = api_id
-    values["VERSLINE_TELEGRAM_API_HASH"] = api_hash
-    user_config_dir().mkdir(parents=True, exist_ok=True)
-    path.write_text("".join(f"{k}={v}\n" for k, v in values.items()), encoding="utf-8")
-    try:
-        path.chmod(0o600)
-    except OSError:
-        pass
+    from versline.userenv import update_env
+
+    update_env({"VERSLINE_TELEGRAM_API_ID": api_id, "VERSLINE_TELEGRAM_API_HASH": api_hash})
 
 
 def _make_source(proxy: Optional[str] = None, web: bool = False):

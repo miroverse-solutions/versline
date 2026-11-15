@@ -86,7 +86,7 @@ app = typer.Typer(
 
 # Setup commands are light; the processing commands pull in pandas, openai, markitdown etc. (seconds of
 # import time, much more on a first Windows run), so skip them when only a setup command is requested.
-_LIGHT_COMMANDS = {"init", "config", "update", "organize", "export", "--version"}
+_LIGHT_COMMANDS = {"init", "config", "update", "organize", "export", "bridge", "obsidian", "--version"}
 if not (len(sys.argv) > 1 and sys.argv[1] in _LIGHT_COMMANDS):
     from versline.commands import transcribe, translate, qude, qualcode, slides, summarize, research, telegram
 
@@ -108,6 +108,14 @@ app.add_typer(export_cmd.app, name="export", help="[cyan]Export Markdown to Word
 from versline.commands import organize  # noqa: E402
 
 app.add_typer(organize.app, name="organize", help="[cyan]Organize a large archive[/cyan]: catalogue, find duplicates, plan a clean copy (read-only on sources).")
+
+# bridge (JSON interface for the Obsidian plugin and other programs) and obsidian (plugin installer) are light:
+# their tools import the heavy services only when a job actually runs.
+from versline.commands import bridge as bridge_cmd  # noqa: E402
+from versline.commands import obsidian as obsidian_cmd  # noqa: E402
+
+app.add_typer(bridge_cmd.app, name="bridge", help="[cyan]JSON interface[/cyan] for other programs (used by the Versobs Obsidian plugin).")
+app.add_typer(obsidian_cmd.app, name="obsidian", help="[cyan]Install/update the Versobs Obsidian plugin[/cyan] in a vault.")
 
 app.command("init", help="[cyan]First-time setup[/cyan]: choose a provider and save your API key.")(setup.init_command)
 app.command("config", help="[cyan]Show saved settings[/cyan] (API keys are masked).")(setup.config_command)
@@ -154,7 +162,7 @@ def main(
         apply_extra_body_option(extra_body)
 
     configure_logging(verbose)
-    if ctx.invoked_subcommand not in ("update", "init", "config"):
+    if ctx.invoked_subcommand not in ("update", "init", "config", "bridge"):
         setup.maybe_notify_update()
 
 def configure_logging(verbose: bool):
