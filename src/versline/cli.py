@@ -1,5 +1,6 @@
 import typer
 from loguru import logger
+import re
 import sys
 from pathlib import Path
 from typing import Optional
@@ -53,7 +54,28 @@ def hoist_global_options(args: list) -> list:
     return head + hoisted + [command] + kept
 
 
-sys.argv[1:] = hoist_global_options(sys.argv[1:])
+_CHAT_ID_RE = re.compile(r"-\d{5,}")
+
+
+def protect_chat_ids(args: list) -> list:
+    """Let ``versline telegram taqrir -1001234567890`` work without ``--``.
+
+    click reads any token starting with '-' as an option, so a negative chat id (-100… channels/supergroups,
+    -… basic groups) after the ``telegram`` command is moved behind a ``--``, where it is taken as the argument.
+    """
+    if "telegram" not in args:
+        return list(args)
+    start = args.index("telegram") + 1
+    end = args.index("--") if "--" in args else len(args)
+    ids = [a for a in args[start:end] if _CHAT_ID_RE.fullmatch(a)]
+    if not ids:
+        return list(args)
+    head = args[:start] + [a for a in args[start:end] if not _CHAT_ID_RE.fullmatch(a)]
+    tail = args[end + 1:] if end < len(args) else []
+    return head + ["--"] + ids + tail
+
+
+sys.argv[1:] = hoist_global_options(protect_chat_ids(sys.argv[1:]))
 
 app = typer.Typer(
     name="versline",

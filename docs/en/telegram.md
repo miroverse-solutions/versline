@@ -48,7 +48,7 @@ versline telegram logout
 versline telegram archive [OPTIONS] CHANNEL
 ```
 
-`CHANNEL`: `@name`, `name`, `https://t.me/name`, `t.me/s/name`, `https://t.me/c/<id>` (private) or an invite link of a channel you already joined (the last two need logged-in mode).
+`CHANNEL`: `@name`, `name`, `https://t.me/name`, `t.me/s/name`, `https://t.me/c/<id>` (private) an invite link of a channel you already joined, or a **numeric id** such as `-1001234567890` or `1234567890` (any form `telegram chats` or a bot shows; no `--` needed). Links to `t.me/c`, invite links and ids need logged-in mode.
 
 ### Selecting posts
 
@@ -181,8 +181,8 @@ versline telegram taqrir @study_group --since 1404-07-01 --until 1404-07-15 --dr
 # Taqrir + claims with evidence in one note, into the vault
 versline telegram taqrir @study_group --since 1404-07-01 --until 1404-07-15 -o ~/Vault/Taqrir
 
-# A chat by numeric id (put ids starting with '-' after --)
-versline telegram taqrir --since 1404-07-01 --style claims -- -1001234567890
+# A chat by numeric id, as `telegram chats` prints it (-100…, -…) or the bare id; works in `archive` too
+versline telegram taqrir -1001234567890 --since 1404-07-01 --style claims
 ```
 
 ### Styles
@@ -204,7 +204,7 @@ By default participants are **anonymous**: the log the model sees labels them «
 In `output/<chat>/taqrir/` (or `-o`):
 
 - `<from> تا <to> - تقریر.md`: frontmatter (`type: chat-taqrir`, chat, dates in Gregorian and Shamsi, number of messages, participants, voices, documents and images read, style, model), the sections, **منابع** (the documents shared) and a link to the log.
-- `<from> تا <to> - متن کامل گفتگو.md`: the full message log by day: header (id, time, participant, reply), text, transcripts, and document/image text in collapsed callouts. Each message has a block id (`^m123`), so citations jump straight to it. `--no-log` skips this file.
+- `<from> تا <to> - متن کامل گفتگو.md`: the full message log by day: each message is a `### id · time · participant` heading under its `##` day, then a line with the date, the message it replies to (linked) and its t.me link, then the text, transcripts, and document/image text in collapsed callouts. That line carries a block id (`^m123`), so citations jump straight to the message. `--no-log` skips this file.
 - `-X docx,pdf` also exports the taqrir note to Word/PDF.
 
 ### Long chats, cache and resume

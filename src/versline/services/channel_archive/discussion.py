@@ -209,16 +209,20 @@ def _part_label(part: Dict[str, str]) -> str:
     return label
 
 
-def render_entry(entry: LogEntry, for_note: bool = False) -> str:
-    """One message: `[#id | date | speaker | in reply to #x]` + text + media text (for the LLM), or the same
-    as an Obsidian block with a ^m<id> anchor, linked header and long extracted text in collapsed callouts."""
+_HEADING_UNSAFE = re.compile(r"[#^\[\]|*_`]")
+
+
+def render_entry(entry: LogEntry, for_note: bool = False, known_ids: Optional[Set[int]] = None) -> str:
+    """One message: `[#id | date | speaker | in reply to #x]` + text + media text (for the LLM), or for the log
+    note a `### id · date · speaker` heading, a line with reply/forward/link ending in the ^m<id> anchor that
+    citations point to, the text, and long extracted text in collapsed callouts."""
     post = entry.post
-    extra = []
-    if post.reply_to:
-        extra.append(f"در پاسخ به #{post.reply_to}")
-    if post.forwarded_from:
-        extra.append(f"بازنشر از {post.forwarded_from}")
     if not for_note:
+        extra = []
+        if post.reply_to:
+            extra.append(f"در پاسخ به #{post.reply_to}")
+        if post.forwarded_from:
+            extra.append(f"بازنشر از {post.forwarded_from}")
         lines = ["[" + " | ".join([f"#{post.id}", shamsi_datetime(post.date), entry.speaker] + extra) + "]"]
         if post.text.strip():
             lines.append(post.text.strip())
@@ -228,9 +232,19 @@ def render_entry(entry: LogEntry, for_note: bool = False) -> str:
                 lines.append(part["text"].strip())
         return "\n".join(lines)
 
-    ident = f"[#{post.id}]({post.url})" if post.url else f"#{post.id}"
-    header = " · ".join([f"**{ident}**", shamsi_datetime(post.date), f"**{entry.speaker}**"] + extra)
-    blocks = [f"{header} ^{_block_id(post.id)}"]
+    speaker = _HEADING_UNSAFE.sub("", entry.speaker).strip()
+    when = shamsi_datetime(post.date)
+    heading = f"### {post.id} · {when[11:]} · {speaker}"  # the day is the ## heading above
+    meta = [when]
+    if post.reply_to:
+        target = f"[[#^{_block_id(post.reply_to)}|#{post.reply_to}]]" if known_ids and post.reply_to in known_ids else f"#{post.reply_to}"
+        meta.append(f"در پاسخ به {target}")
+    if post.forwarded_from:
+        meta.append(f"بازنشر از {post.forwarded_from}")
+    if post.url:
+        meta.append(f"[پیام در تلگرام]({post.url})")
+    # Obsidian block ids can't sit on a heading, so the anchor goes on the line under it.
+    blocks = [heading, f"{' · '.join(meta)} ^{_block_id(post.id)}"]
     if post.text.strip():
         blocks.append(post.text.strip())
     for part in entry.parts:
@@ -248,11 +262,12 @@ def render_entry(entry: LogEntry, for_note: bool = False) -> str:
 def render_log(entries: List[LogEntry], for_note: bool = False) -> List[Tuple[str, List[str]]]:
     """[(Shamsi day, [rendered messages])] in chronological order."""
     days: List[Tuple[str, List[str]]] = []
+    known_ids = {entry.id for entry in entries}
     for entry in entries:
         day = shamsi_datetime(entry.post.date)[:10]
         if not days or days[-1][0] != day:
             days.append((day, []))
-        days[-1][1].append(render_entry(entry, for_note))
+        days[-1][1].append(render_entry(entry, for_note, known_ids))
     return days
 
 
@@ -305,7 +320,7 @@ def link_citations(text: str, urls: Dict[int, Optional[str]], log_stem: Optional
         if urls.get(pid):
             return f"[#{pid}]({urls[pid]})"
         if log_stem and pid in urls:
-            return f"[[{log_stem}#^{_block_id(pid)}\\|#{pid}]]"
+            return f"[[{log_stem}#^{_block_id(pid)}|#{pid}]]"
         return f"#{pid}"
 
     def repl(match: re.Match) -> str:

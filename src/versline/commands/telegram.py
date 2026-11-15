@@ -137,7 +137,7 @@ def logout():
 
 @app.command("archive")
 def archive(
-    channel: str = typer.Argument(..., help="Channel: @name, name, https://t.me/name, https://t.me/c/<id>, or a joined invite link"),
+    channel: str = typer.Argument(..., help="Channel or chat: @name, name, https://t.me/name, https://t.me/c/<id>, a joined invite link, or a numeric id (e.g. -1001234567890 or 1234567890; see `telegram chats`)"),
     since: Optional[str] = typer.Option(None, "--since", help="Only posts from this date (YYYY-MM-DD[ HH:MM], Gregorian or Shamsi e.g. 1404-07-01)"),
     until: Optional[str] = typer.Option(None, "--until", help="Only posts up to and including this date"),
     limit: Optional[int] = typer.Option(None, "--limit", help="Process at most N matching posts"),
@@ -414,7 +414,7 @@ def chats(
 
 @app.command("taqrir", context_settings=INTERSPERSED)
 def taqrir(
-    chat: str = typer.Argument(..., help="Chat: @user, @group, @channel, a t.me link, a joined invite link, a numeric id from `telegram chats`, or 'me'"),
+    chat: str = typer.Argument(..., help="Chat: @user, @group, @channel, its exact title, a t.me link, a joined invite link, a numeric id (e.g. -1001234567890 or 1234567890; see `telegram chats`), or 'me'"),
     since: Optional[str] = typer.Option(None, "--since", help="Messages from this date (YYYY-MM-DD[ HH:MM], Gregorian or Shamsi e.g. 1404-07-01)"),
     until: Optional[str] = typer.Option(None, "--until", help="Messages up to and including this date (default: now)"),
     style: str = typer.Option("both", "--style", help="descriptive (scholarly prose), claims (propositions with their evidence as bullets) or both (one note with both)"),

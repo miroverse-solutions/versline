@@ -160,13 +160,9 @@ class TelegramSource:
     def resolve(self, ref: str) -> ChannelInfo:
         self._connect()
         target = normalize_ref(ref)
-        try:
-            entity = self._run(self._client.get_entity(target))
-        except ValueError:
-            if not isinstance(target, int):
-                raise
-            # A bare id is only known once the chat is in the session cache; loading the dialogs fills it.
-            self._run(self._client.get_dialogs())
+        if isinstance(target, int):
+            entity = self._run(self._entity_by_id(target))
+        else:
             entity = self._run(self._client.get_entity(target))
         self._entity = entity
         return ChannelInfo(
@@ -176,6 +172,31 @@ class TelegramSource:
             channel_id=entity.id,
             kind=chat_kind(entity),
         )
+
+    async def _entity_by_id(self, chat_id: int):
+        """A chat by numeric id, in any form: marked (-100… channel/supergroup, -… basic group) as `telegram chats`
+        and most bots print it, or the bare id (positive) of a user, group or channel. Looked up in your chats, so
+        the account must be a member."""
+        from telethon import utils
+
+        bare = {abs(chat_id)}
+        if chat_id < 0:
+            try:
+                bare.add(utils.resolve_id(chat_id)[0])  # -1001234 -> 1234
+            except Exception:
+                pass
+        loose = None
+        async for dialog in self._client.iter_dialogs():
+            if dialog.id == chat_id:
+                return dialog.entity
+            if loose is None and getattr(dialog.entity, "id", None) in bare:
+                loose = dialog.entity
+        if loose is not None:
+            return loose
+        try:
+            return await self._client.get_entity(chat_id)  # e.g. a user you share no chat with but have cached
+        except (ValueError, TypeError) as exc:
+            raise ValueError(f"No chat with id {chat_id} among your chats. Run `versline telegram chats` to see the ids.") from exc
 
     def iter_dialogs(self, search: Optional[str] = None, limit: Optional[int] = None) -> List[dict]:
         """The account's chats (newest first) as {id, kind, title, username}; `search` matches title or username."""

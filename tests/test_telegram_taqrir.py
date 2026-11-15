@@ -130,7 +130,10 @@ class TestDiscussion(unittest.TestCase):
         self.assertEqual(len(llm.prompts), 2)  # descriptive + claims, no map step for a short log
         self.assertEqual(len(llm.images), 1)
         log = result.log_path.read_text(encoding="utf-8")
-        self.assertIn("^m3", log)
+        self.assertIn("\n### 3 · ", log)  # each message is a heading under its ## day
+        self.assertNotIn("**#", log)
+        self.assertIn("در پاسخ به [[#^m1|#1]]", log)
+        self.assertRegex(log, r"\n1404-12-10 15:40 · \[پیام در تلگرام\]\(https://t.me/grp/3\) \^m3\n")
         self.assertEqual(list((self.tmp / "tmp").iterdir()), [])  # downloads cleaned up
 
     def test_attribute_names_participants(self):
@@ -176,7 +179,7 @@ class TestDiscussion(unittest.TestCase):
         result, _, _, _ = self.build(source=FakeSource(self.posts, info), style="descriptive")
         self.assertEqual(result.out_dir, self.tmp / "out")
         note = result.note_path.read_text(encoding="utf-8")
-        self.assertIn(f"[[{result.log_path.stem}#^m2\\|#2]]", note)
+        self.assertIn(f"[[{result.log_path.stem}#^m2|#2]]", note)
 
     def test_dry_run_and_empty_range(self):
         result, llm, tr, source = self.build(dry_run=True)
@@ -235,6 +238,50 @@ class TestTelegramSourceHelpers(unittest.TestCase):
         self.assertEqual(ChannelInfo(ref="x", title="t", channel_id=5).slug, "channel_5")
         self.assertFalse(ChannelInfo(ref="x", title="t", kind="group").linkable)
         self.assertTrue(ChannelInfo(ref="x", title="t", kind="supergroup").linkable)
+
+
+class TestChatIds(unittest.TestCase):
+    def test_negative_id_moved_behind_double_dash(self):
+        from versline.cli import protect_chat_ids
+
+        self.assertEqual(protect_chat_ids(["telegram", "taqrir", "-1001234567890", "--since", "2026-11-09"]),
+                         ["telegram", "taqrir", "--since", "2026-11-09", "--", "-1001234567890"])
+        self.assertEqual(protect_chat_ids(["telegram", "archive", "--limit", "5", "-5165572914", "--", "x"]),
+                         ["telegram", "archive", "--limit", "5", "--", "-5165572914", "x"])
+        self.assertEqual(protect_chat_ids(["telegram", "taqrir", "--", "-1001234"]), ["telegram", "taqrir", "--", "-1001234"])
+        self.assertEqual(protect_chat_ids(["summarize", "-123456"]), ["summarize", "-123456"])
+
+    def test_entity_by_id_matches_marked_and_bare_ids(self):
+        import asyncio
+        from types import SimpleNamespace
+
+        from versline.services.channel_archive.sources.telegram import TelegramSource
+
+        dialogs = [SimpleNamespace(id=-1001234567890, entity=SimpleNamespace(id=1234567890, kind="supergroup")),
+                   SimpleNamespace(id=-5165572914, entity=SimpleNamespace(id=5165572914, kind="group")),
+                   SimpleNamespace(id=42, entity=SimpleNamespace(id=42, kind="user"))]
+
+        class Client:
+            async def iter_dialogs_gen(self):
+                for d in dialogs:
+                    yield d
+
+            def iter_dialogs(self):
+                return self.iter_dialogs_gen()
+
+            async def get_entity(self, target):
+                raise ValueError("unknown")
+
+        source = TelegramSource.__new__(TelegramSource)
+        source._client = Client()
+        find = lambda i: asyncio.run(source._entity_by_id(i)).kind
+        self.assertEqual(find(-1001234567890), "supergroup")
+        self.assertEqual(find(1234567890), "supergroup")
+        self.assertEqual(find(-5165572914), "group")
+        self.assertEqual(find(5165572914), "group")
+        self.assertEqual(find(42), "user")
+        with self.assertRaises(ValueError):
+            asyncio.run(source._entity_by_id(777))
 
 
 class TestTaqrirCli(unittest.TestCase):
