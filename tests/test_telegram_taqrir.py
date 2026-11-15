@@ -133,7 +133,8 @@ class TestDiscussion(unittest.TestCase):
         self.assertIn("\n### 3 · ", log)  # each message is a heading under its ## day
         self.assertNotIn("**#", log)
         self.assertIn("در پاسخ به [[#^m1|#1]]", log)
-        self.assertRegex(log, r"\n1404-12-10 15:40 · \[پیام در تلگرام\]\(https://t.me/grp/3\) \^m3\n")
+        local_hm = (BASE + timedelta(minutes=10)).astimezone().strftime("%H:%M")  # machine-local time
+        self.assertRegex(log, r"\n1404-12-\d\d " + local_hm + r" · \[پیام در تلگرام\]\(https://t.me/grp/3\) \^m3\n")
         self.assertEqual(list((self.tmp / "tmp").iterdir()), [])  # downloads cleaned up
 
     def test_attribute_names_participants(self):
