@@ -22,6 +22,11 @@ FA_LABELS = {
     "generated_at": "تاریخ تولید", "workspace": "پوشه کاری", "post_count": "تعداد پست‌ها",
     "range_from": "از", "range_to": "تا", "updated": "به‌روزرسانی", "didactic": "آموزشی",
     "compression": "درصد فشرده‌سازی",
+    "chat": "گفتگو", "chat_title": "عنوان گفتگو", "chat_type": "نوع گفتگو", "since": "از تاریخ",
+    "until": "تا تاریخ", "since_shamsi": "از تاریخ (شمسی)", "until_shamsi": "تا تاریخ (شمسی)",
+    "messages": "تعداد پیام‌ها", "participants": "شرکت‌کنندگان", "participant_count": "تعداد شرکت‌کنندگان",
+    "voices": "صوت‌های پیاده‌شده", "documents": "اسناد خوانده‌شده", "images": "تصاویر خوانده‌شده",
+    "style": "نوع تقریر",
 }
 HIDDEN_KEYS = {"aliases", "post_ids", "part_urls", "skipped_media", "merged_into"}
 _DURATION_KEYS = {"duration"}

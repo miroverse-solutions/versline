@@ -16,10 +16,19 @@ class ChannelInfo:
     title: str
     username: Optional[str] = None
     channel_id: Optional[int] = None
+    kind: Optional[str] = None  # channel | supergroup | group | user (None when the source can't tell)
 
     @property
     def slug(self) -> str:
-        return self.username or f"channel_{self.channel_id or 'unknown'}"
+        if self.username:
+            return self.username
+        prefix = "chat" if self.kind in ("group", "user") else "channel"
+        return f"{prefix}_{self.channel_id or 'unknown'}"
+
+    @property
+    def linkable(self) -> bool:
+        """Whether t.me links to single messages exist (channels and supergroups only)."""
+        return self.kind not in ("group", "user")
 
 
 @dataclass
@@ -50,6 +59,9 @@ class ChannelPost:
     grouped_id: Optional[int] = None
     forwarded_from: Optional[str] = None
     edit_date: Optional[datetime] = None
+    sender_id: Optional[int] = None
+    sender_name: Optional[str] = None
+    reply_to: Optional[int] = None  # id of the message this one replies to
     parts: List["ChannelPost"] = field(default_factory=list)  # set when several posts were merged into this one
 
     @property

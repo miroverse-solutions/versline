@@ -185,7 +185,7 @@ versline research -i study.json --stage full --approved-outline-file output/ch4_
 
 ## `telegram`
 
-`telegram login`، `telegram logout`، `telegram archive CHANNEL`. توضیح کامل در [بایگانی کانال تلگرام](telegram.md).
+`telegram login`، `telegram logout`، `telegram chats`، `telegram archive CHANNEL`، `telegram pack ARCHIVE`، `telegram taqrir CHAT` (تقریر مباحثات یک گفتگو بین دو تاریخ). توضیح کامل در [بایگانی کانال تلگرام](telegram.md).
 
 ## `organize`
 

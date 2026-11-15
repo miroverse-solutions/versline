@@ -45,7 +45,29 @@ def normalize_ref(ref: str) -> Any:
     public = re.match(r"^(?:https?://)?t\.me/(?:s/)?([A-Za-z0-9_]+)", ref)
     if public:
         return public.group(1)
-    return ref.lstrip("@")
+    if re.fullmatch(r"-?\d+", ref):
+        return int(ref)  # a chat id as `telegram chats` prints it (users, basic groups -123, channels -100…)
+    return ref.lstrip("@")  # @name, name, or "me" (Saved Messages)
+
+
+def chat_kind(entity: Any) -> Optional[str]:
+    """channel | supergroup | group | user for a Telethon entity."""
+    from telethon.tl.types import Channel, Chat, User
+
+    if isinstance(entity, User):
+        return "user"
+    if isinstance(entity, Chat):
+        return "group"
+    if isinstance(entity, Channel):
+        return "channel" if getattr(entity, "broadcast", False) else "supergroup"
+    return None
+
+
+def display_name(entity: Any) -> Optional[str]:
+    if entity is None:
+        return None
+    name = " ".join(filter(None, [getattr(entity, "first_name", None), getattr(entity, "last_name", None)]))
+    return name or getattr(entity, "title", None) or getattr(entity, "username", None)
 
 
 def _markdown(text: str) -> str:
@@ -137,14 +159,45 @@ class TelegramSource:
 
     def resolve(self, ref: str) -> ChannelInfo:
         self._connect()
-        entity = self._run(self._client.get_entity(normalize_ref(ref)))
+        target = normalize_ref(ref)
+        try:
+            entity = self._run(self._client.get_entity(target))
+        except ValueError:
+            if not isinstance(target, int):
+                raise
+            # A bare id is only known once the chat is in the session cache; loading the dialogs fills it.
+            self._run(self._client.get_dialogs())
+            entity = self._run(self._client.get_entity(target))
         self._entity = entity
         return ChannelInfo(
             ref=ref,
-            title=getattr(entity, "title", None) or getattr(entity, "first_name", None) or str(entity.id),
+            title=display_name(entity) or str(entity.id),
             username=getattr(entity, "username", None),
             channel_id=entity.id,
+            kind=chat_kind(entity),
         )
+
+    def iter_dialogs(self, search: Optional[str] = None, limit: Optional[int] = None) -> List[dict]:
+        """The account's chats (newest first) as {id, kind, title, username}; `search` matches title or username."""
+        from versline.services.channel_archive.filters import normalize_fa
+
+        self._connect()
+        needle = normalize_fa(search) if search else None
+
+        async def _list():
+            rows = []
+            async for dialog in self._client.iter_dialogs():
+                entity = dialog.entity
+                title = display_name(entity) or str(dialog.id)
+                username = getattr(entity, "username", None)
+                if needle and needle not in normalize_fa(title) and needle not in normalize_fa(username or ""):
+                    continue
+                rows.append({"id": dialog.id, "kind": chat_kind(entity), "title": title, "username": username})
+                if limit and len(rows) >= limit:
+                    break
+            return rows
+
+        return self._run(_list())
 
     def iter_posts(
         self,
@@ -248,7 +301,9 @@ class TelegramSource:
         first = min(msgs, key=lambda m: m.id)
         text = next((m.text for m in msgs if m.message), "") or ""
         media = [item for item in (self._media_item(m) for m in msgs) if item]
-        if channel.username:
+        if not channel.linkable:
+            url = None  # private chats and basic groups have no per-message links
+        elif channel.username:
             url = f"https://t.me/{channel.username}/{first.id}"
         elif channel.channel_id:
             url = f"https://t.me/c/{channel.channel_id}/{first.id}"
@@ -270,4 +325,7 @@ class TelegramSource:
             grouped_id=first.grouped_id,
             forwarded_from=forwarded,
             edit_date=first.edit_date,
+            sender_id=getattr(first, "sender_id", None),
+            sender_name=getattr(first, "post_author", None) or display_name(getattr(first, "sender", None)),
+            reply_to=getattr(first, "reply_to_msg_id", None),
         )

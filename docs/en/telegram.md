@@ -2,7 +2,7 @@
 
 [Index](index.md) · **English** · [فارسی](../fa/telegram.md)
 
-Archive a Telegram channel into an Obsidian vault: **one Markdown note per post** (caption, transcript of audio/video, optional summary and *taqrir*, rich frontmatter) plus a channel index note. Works for audio/video, text-only and mixed channels.
+Archive a Telegram channel into an Obsidian vault, or write a [taqrir of a chat's discussions](#discussion-taqrir-telegram-taqrir): **one Markdown note per post** (caption, transcript of audio/video, optional summary and *taqrir*, rich frontmatter) plus a channel index note. Works for audio/video, text-only and mixed channels.
 
 ## Quick start
 
@@ -161,6 +161,75 @@ Frontmatter always has `title, source, channel, channel_title, post_id, url, dat
 Merged multi-part posts appear once. Rerunning is cheap: up-to-date per-post files are skipped; the book, catalog, README and ZIP are rebuilt.
 
 With `archive` you can do it in one go: `--pack` builds the full pack after archiving, and `--export docx,pdf` only writes per-post files to `<output>/exports/`.
+
+## Discussion taqrir: `telegram taqrir`
+
+`versline telegram taqrir CHAT --since … --until …` reads every message of a chat (private chat, group, supergroup or channel) in a date range and writes **one taqrir note for the whole range**. Useful for study groups and scholarly debates held in voice messages, texts, PDFs and photos of book pages.
+
+- **Voice, audio and video** are transcribed (same engine and cache as `archive`).
+- **Documents** (pdf, docx, pptx, xlsx, html, txt, md…) are read as text; at most `--doc-chars` characters per document (default 30000).
+- **Photos** are read by the vision model (book pages, handwriting, screenshots, tables); turn off with `--no-images`.
+- Replies (`in reply to #id`) and forwards are kept, so the model can follow who answered whom.
+
+```sh
+# Find the chat (private chats and basic groups have no username)
+versline telegram chats --search "مباحثه"
+
+# Preview the range: messages, senders, media (nothing downloaded, no LLM)
+versline telegram taqrir @study_group --since 1404-07-01 --until 1404-07-15 --dry-run
+
+# Taqrir + claims with evidence in one note, into the vault
+versline telegram taqrir @study_group --since 1404-07-01 --until 1404-07-15 -o ~/Vault/Taqrir
+
+# A chat by numeric id (put ids starting with '-' after --)
+versline telegram taqrir --since 1404-07-01 --style claims -- -1001234567890
+```
+
+### Styles
+
+| `--style` | Section | What it is |
+| :--- | :--- | :--- |
+| `descriptive` | **تقریر** | Scholarly prose, one `###` per topic: the question, positions with their formulated arguments, evidence, objections and replies, outcome |
+| `claims` | **ادعاها و ادله** | Each point in dispute (`محل بحث`) with its propositions as precise, atomic bullets (`گزاره ۱.۱`) and, under each, its evidence (`دلیل`), objections (`اشکال`) and replies (`پاسخ`); a proposition with no evidence is marked as such |
+| `both` (default) | both | Both sections in one note |
+
+Every point cites its messages: `[#123]` becomes a link to the message on t.me (channels and supergroups) or to the message in the log note (private chats and basic groups).
+
+### Participants
+
+By default participants are **anonymous**: the log the model sees labels them «شرکت‌کننده ۱», «شرکت‌کننده ۲»… (stable per person), and the taqrir uses those labels or impersonal phrasing. `--attribute` uses real names instead and lists them in the frontmatter (`participants`).
+
+### Output
+
+In `output/<chat>/taqrir/` (or `-o`):
+
+- `<from> تا <to> - تقریر.md`: frontmatter (`type: chat-taqrir`, chat, dates in Gregorian and Shamsi, number of messages, participants, voices, documents and images read, style, model), the sections, **منابع** (the documents shared) and a link to the log.
+- `<from> تا <to> - متن کامل گفتگو.md`: the full message log by day: header (id, time, participant, reply), text, transcripts, and document/image text in collapsed callouts. Each message has a block id (`^m123`), so citations jump straight to it. `--no-log` skips this file.
+- `-X docx,pdf` also exports the taqrir note to Word/PDF.
+
+### Long chats, cache and resume
+
+Transcripts, document text and image text are cached in `.versline-taqrir.json` in the output folder after each message: an interrupted run continues where it stopped, and a rerun (for example with another `--style`) reads nothing again. A failed file is reported and retried on the next run; it doesn't stop the taqrir.
+
+A log longer than `--max-chars` (default 150000) is cut into parts at day (or message) boundaries. The model first takes structured notes on each part (cached too), then writes each style from all the notes, so a rerun with another style costs one call per style. `--force` ignores the cache.
+
+### Options
+
+| Option | Meaning |
+| :--- | :--- |
+| `--since`, `--until` | Date range (Gregorian or Shamsi, optional `HH:MM`) |
+| `--style` | `descriptive`, `claims` or `both` |
+| `--attribute` | Name the participants |
+| `--no-transcribe`, `--no-documents`, `--no-images` | Don't read that kind of media (it still appears as a marker) |
+| `--types`, `--limit` | Only some message types / at most N messages |
+| `--output-lang` | Language of the taqrir (default: that of the discussion) |
+| `--instruction`, `--instruction-file` | Extra guidance for the taqrir, e.g. «فقط بحث دلالت امر بر وجوب» |
+| `--note`, `--note-file` | Extra instruction for the transcription prompt (as in `archive`) |
+| `--doc-chars`, `--max-chars`, `--max-size` | Per-document limit, part size for long logs, skip media over N MB |
+| `--no-log`, `--dry-run`, `--force` | See above |
+| `-X`, `--export-frontmatter` | Word/PDF export |
+
+The LLM overrides (`--model`, `--provider`, `--api-key`, `--api-endpoint`, `--proxy`, `--telegram-proxy`, `--extra-body`, `--chunk-size`, `--overlap`, `--skip-blocked`) work as in `archive`. Photos need a multimodal model (any Gemini model, gpt-4o-class models). A logged-in account is required (`telegram login`); `--web` is not available here.
 
 ## Recipes
 

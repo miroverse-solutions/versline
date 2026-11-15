@@ -185,7 +185,7 @@ Plus the common LLM and prompt-note options.
 
 ## `telegram`
 
-`telegram login`, `telegram logout`, `telegram archive CHANNEL`, `telegram pack ARCHIVE`. Fully documented in [Telegram channel archive](telegram.md).
+`telegram login`, `telegram logout`, `telegram chats`, `telegram archive CHANNEL`, `telegram pack ARCHIVE`, `telegram taqrir CHAT` (taqrir of a chat's discussions between two dates). Fully documented in [Telegram channel archive](telegram.md).
 
 ## `organize`
 

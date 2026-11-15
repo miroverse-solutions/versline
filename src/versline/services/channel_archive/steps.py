@@ -97,6 +97,27 @@ class MediaStep:
                 record.attachments.append(path.relative_to(ctx.out_dir).as_posix())
 
 
+def transcribe_media(ctx: StepContext, post: ChannelPost, item: MediaItem, source_path: Path, temp_files: List[Path]) -> str:
+    """Transcribe one downloaded audio/video file (audio is extracted from video first) and clean the result."""
+    audio_path = source_path
+    if _is_video(item):
+        audio_path = ctx.temp_dir / f"{source_path.stem}.mp3"
+        ctx.progress(f"Extracting audio for post {post.id}…")
+        media_utils.extract_audio(str(source_path), str(audio_path))
+        temp_files.append(audio_path)
+    ctx.progress(f"Transcribing post {post.id}…")
+    text = ctx.transcriber.process_file(
+        str(audio_path),
+        chunk_length=ctx.chunk_size,
+        overlap=ctx.overlap,
+        force=ctx.force,
+        skip_blocked=ctx.skip_blocked,
+    )
+    work_dir = Path("work_dir") / audio_path.stem
+    shutil.rmtree(work_dir, ignore_errors=True)  # only reached on success; failures keep it for resuming
+    return clean_transcript(text if isinstance(text, str) else str(text))
+
+
 class TranscribeStep:
     """Transcribes audio/video media and stores the text as the `transcript` section."""
 
@@ -111,25 +132,8 @@ class TranscribeStep:
         for index, item in enumerate(post.media):
             if not item.transcribable or index not in files:
                 continue
-            source_path = files[index]
-            audio_path = source_path
-            if _is_video(item):
-                audio_path = ctx.temp_dir / f"{source_path.stem}.mp3"
-                ctx.progress(f"Extracting audio for post {post.id}…")
-                media_utils.extract_audio(str(source_path), str(audio_path))
-                record.work.setdefault("temp_files", []).append(audio_path)
-            ctx.progress(f"Transcribing post {post.id}…")
-            text = ctx.transcriber.process_file(
-                str(audio_path),
-                chunk_length=ctx.chunk_size,
-                overlap=ctx.overlap,
-                force=ctx.force,
-                skip_blocked=ctx.skip_blocked,
-            )
-            texts.append(clean_transcript(text if isinstance(text, str) else str(text)))
+            texts.append(transcribe_media(ctx, post, item, files[index], record.work.setdefault("temp_files", [])))
             total_duration += item.duration or 0
-            work_dir = Path("work_dir") / audio_path.stem
-            shutil.rmtree(work_dir, ignore_errors=True)  # only reached on success; failures keep it for resuming
         if not texts:
             return
         if len(texts) == 1:

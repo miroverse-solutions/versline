@@ -111,6 +111,12 @@ versline telegram archive @نام_کانال --since 1404-07-01 --summary --taqr
 - تاریخ را می‌توانید شمسی بنویسید (مثل `1404-07-01`).
 - اگر اجرا قطع شد، دوباره همان دستور را بزنید؛ پست‌های تمام‌شده تکرار نمی‌شوند.
 
+تقریر مباحثات یک گروه یا چت بین دو تاریخ (صوت‌ها پیاده، اسناد و عکس‌ها خوانده می‌شوند؛ تقریر توصیفی و فهرست گزاره‌ها با ادله‌شان):
+
+```sh
+versline telegram taqrir @گروه_مباحثه --since 1404-07-01 --until 1404-07-15 --style both -o ~/Vault/تقریرات
+```
+
 ### 🗂️ سازمان‌دهی هارد و آرشیو
 
 ```sh
@@ -142,7 +148,7 @@ versline update
 | `versline transcribe` | صوت/ویدیو ← متن |
 | `versline translate` | ترجمه‌ی فایل |
 | `versline summarize` | خلاصه‌سازی |
-| `versline telegram` | بایگانی کانال تلگرام |
+| `versline telegram` | بایگانی کانال تلگرام، تقریر مباحثات یک گفتگو |
 | `versline organize` | فهرست‌برداری هارد و پیدا کردن فایل‌های تکراری |
 | `versline export` | خروجی Word و PDF از فایل‌های Markdown (همه‌ی دستورها هم `--export` دارند) |
 | `versline qude` | ساخت سؤال و فلش‌کارت (CSV، Anki، HTML) |

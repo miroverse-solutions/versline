@@ -168,6 +168,51 @@ def export_documents(
 
 
 @mcp.tool(
+    name="telegram_taqrir",
+    description=(
+        "Write a taqrir (scholarly write-up) of the discussions in a Telegram chat (private chat, group or channel) "
+        "between two dates: voice messages are transcribed, documents and photos read. style: descriptive, claims "
+        "(propositions with their evidence as bullets) or both. Needs a prior `versline telegram login`. "
+        "Returns the taqrir note (Markdown) and its path."
+    ),
+)
+def telegram_taqrir(
+    chat: str,
+    since: str,
+    until: Optional[str] = None,
+    style: str = "both",
+    *,
+    attribute: bool = False,
+    output_lang: Optional[str] = None,
+    instruction: Optional[str] = None,
+    output_dir: Optional[str] = None,
+    model: Optional[str] = None,
+    provider: Optional[str] = None,
+) -> str:
+    if style not in ("descriptive", "claims", "both"):
+        raise ValueError("style must be descriptive, claims or both")
+    cmd = ["telegram", "taqrir", "--since", since, "--style", style]
+    cmd += _build_llm_args(model=model, provider=provider)
+    if until:
+        cmd += ["--until", until]
+    if attribute:
+        cmd += ["--attribute"]
+    if output_lang:
+        cmd += ["--output-lang", output_lang]
+    if instruction:
+        cmd += ["--instruction", instruction]
+    if output_dir:
+        cmd += ["--output", output_dir]
+    output = _versline_subprocess(*cmd, "--", chat, timeout=6 * 3600)
+    for line in output.splitlines():
+        if line.startswith("Taqrir: "):
+            path = Path(line[len("Taqrir: "):].strip())
+            if path.is_file():
+                return f"{path}\n\n{path.read_text(encoding='utf-8')}"
+    return output
+
+
+@mcp.tool(
     name="summarize",
     description="Summarize a file in multiple modes: outline, detailed, slides, or didactic.",
 )

@@ -9,14 +9,15 @@ from rich.console import Console
 from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn
 from rich.table import Table
 
-from versline.commands._common import EXTRA_BODY_HELP, apply_extra_body_option
+from versline.commands._common import EXTRA_BODY_HELP, INTERSPERSED, apply_extra_body_option
+from versline.commands._export import export_frontmatter_option, export_option, run_exports
 from versline.commands.setup import _read_env
 from versline.config import settings, reload_settings
-from versline.core.prompts import resolve_user_note
+from versline.core.prompts import resolve_text_input, resolve_user_note
 from versline.userconfig import user_config_dir, user_env_path
 from versline.utils.common import format_duration
 
-app = typer.Typer(help="Archive Telegram channel posts (captions + transcripts) as Obsidian notes.")
+app = typer.Typer(help="Archive Telegram channel posts (captions + transcripts) as Obsidian notes, or write a taqrir of a chat's discussions.")
 console = Console()
 
 VALID_TYPES = {"audio", "voice", "video", "video_note", "photo", "document", "text"}
@@ -47,6 +48,54 @@ def _make_source(proxy: Optional[str] = None, web: bool = False):
     except (RuntimeError, ValueError) as exc:
         logger.error(str(exc))
         raise typer.Exit(code=1)
+
+
+def _apply_llm_overrides(model, provider, api_key, api_endpoint, proxy, extra_body) -> None:
+    if model:
+        settings.llm.model = model
+    if provider:
+        settings.llm.provider = provider
+    if api_key:
+        settings.llm.api_key = api_key
+    if api_endpoint:
+        settings.llm.api_endpoint = api_endpoint
+    if proxy:
+        settings.llm.proxy = proxy
+    if extra_body:
+        apply_extra_body_option(extra_body)
+
+
+def _date_range(since: Optional[str], until: Optional[str]):
+    from versline.services.channel_archive.obsidian import parse_date_arg
+
+    try:
+        since_dt = parse_date_arg(since) if since else None
+        until_dt = parse_date_arg(until, end=True) if until else None
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc))
+    if since_dt and until_dt and since_dt > until_dt:
+        raise typer.BadParameter("--since is after --until")
+    return since_dt, until_dt
+
+
+def _type_set(types: Optional[str]):
+    if not types:
+        return None
+    type_set = {t.strip() for t in types.split(",") if t.strip()}
+    bad = type_set - VALID_TYPES
+    if bad:
+        raise typer.BadParameter(f"Unknown type(s): {', '.join(sorted(bad))}. Choose from: {', '.join(sorted(VALID_TYPES))}")
+    return type_set
+
+
+def _require_llm() -> None:
+    from versline.services.ai import MissingAPIKeyError, require_api_key
+
+    try:
+        require_api_key(settings.llm)
+    except MissingAPIKeyError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1)
 
 
 @app.command("login")
@@ -129,37 +178,12 @@ def archive(
     make_pack: bool = typer.Option(False, "--pack", help="After archiving, build the complete pack (book, per-post files, catalog, notes, README, ZIP); same as running `telegram pack` on the output"),
 ):
     """Download a channel's posts in a date range and save each as an Obsidian note with frontmatter and transcript."""
-    from versline.services.channel_archive.obsidian import parse_date_arg
     from versline.services.channel_archive.pipeline import ArchiveOptions, ChannelArchiver
     from versline.services.channel_archive.steps import StepContext
 
-    if model:
-        settings.llm.model = model
-    if provider:
-        settings.llm.provider = provider
-    if api_key:
-        settings.llm.api_key = api_key
-    if api_endpoint:
-        settings.llm.api_endpoint = api_endpoint
-    if proxy:
-        settings.llm.proxy = proxy
-    if extra_body:
-        apply_extra_body_option(extra_body)
-
-    try:
-        since_dt = parse_date_arg(since) if since else None
-        until_dt = parse_date_arg(until, end=True) if until else None
-    except ValueError as exc:
-        raise typer.BadParameter(str(exc))
-    if since_dt and until_dt and since_dt > until_dt:
-        raise typer.BadParameter("--since is after --until")
-
-    type_set = None
-    if types:
-        type_set = {t.strip() for t in types.split(",") if t.strip()}
-        bad = type_set - VALID_TYPES
-        if bad:
-            raise typer.BadParameter(f"Unknown type(s): {', '.join(sorted(bad))}. Choose from: {', '.join(sorted(VALID_TYPES))}")
+    _apply_llm_overrides(model, provider, api_key, api_endpoint, proxy, extra_body)
+    since_dt, until_dt = _date_range(since, until)
+    type_set = _type_set(types)
 
     from versline.services.channel_archive.filters import FileFilter
 
@@ -176,13 +200,7 @@ def archive(
 
     needs_llm = not dry_run and not files_only and (not no_transcribe or add_summary or add_taqrir)
     if needs_llm:
-        from versline.services.ai import MissingAPIKeyError, require_api_key
-
-        try:
-            require_api_key(settings.llm)
-        except MissingAPIKeyError as exc:
-            console.print(f"[red]{exc}[/red]")
-            raise typer.Exit(1)
+        _require_llm()
 
     source = _make_source(telegram_proxy, web=web)
     try:
@@ -369,3 +387,166 @@ def pack(
     except (docexport.ExportError, ValueError, FileNotFoundError) as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(1)
+
+
+@app.command("chats")
+def chats(
+    search: Optional[str] = typer.Option(None, "--search", "-s", help="Only chats whose title or username contains this text"),
+    limit: int = typer.Option(50, "--limit", help="Show at most N chats (newest first)"),
+    telegram_proxy: Optional[str] = typer.Option(None, "--telegram-proxy", help="Proxy URL for Telegram"),
+):
+    """List your chats (private chats, groups, channels) with the id to pass to `telegram taqrir` or `archive`."""
+    source = _make_source(telegram_proxy)
+    try:
+        rows = source.iter_dialogs(search=search, limit=limit)
+    except Exception as exc:
+        logger.error(f"Listing chats failed: {exc}")
+        raise typer.Exit(1)
+    finally:
+        source.close()
+    table = Table(title=f"{len(rows)} chats")
+    for column in ("ID", "Type", "Title", "Username"):
+        table.add_column(column)
+    for row in rows:
+        table.add_row(str(row["id"]), row["kind"] or "", row["title"], f"@{row['username']}" if row["username"] else "")
+    console.print(table)
+
+
+@app.command("taqrir", context_settings=INTERSPERSED)
+def taqrir(
+    chat: str = typer.Argument(..., help="Chat: @user, @group, @channel, a t.me link, a joined invite link, a numeric id from `telegram chats`, or 'me'"),
+    since: Optional[str] = typer.Option(None, "--since", help="Messages from this date (YYYY-MM-DD[ HH:MM], Gregorian or Shamsi e.g. 1404-07-01)"),
+    until: Optional[str] = typer.Option(None, "--until", help="Messages up to and including this date (default: now)"),
+    style: str = typer.Option("both", "--style", help="descriptive (scholarly prose), claims (propositions with their evidence as bullets) or both (one note with both)"),
+    attribute: bool = typer.Option(False, "--attribute", help="Name the participants in the taqrir (default: anonymous labels such as «شرکت‌کننده ۱»)"),
+    no_transcribe: bool = typer.Option(False, "--no-transcribe", help="Don't transcribe voice/audio/video messages"),
+    no_documents: bool = typer.Option(False, "--no-documents", help="Don't read documents (pdf, docx, pptx, txt...)"),
+    no_images: bool = typer.Option(False, "--no-images", help="Don't read photos with the vision model"),
+    types: Optional[str] = typer.Option(None, "--types", help="Only these message types: audio,voice,video,video_note,photo,document,text (default: all)"),
+    limit: Optional[int] = typer.Option(None, "--limit", help="Use at most N messages"),
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output folder (default: output/<chat>/taqrir)"),
+    output_lang: Optional[str] = typer.Option(None, "--output-lang", help="Language of the taqrir (default: same as the discussion)"),
+    instruction: Optional[str] = typer.Option(None, "--instruction", help="Extra guidance for the taqrir (e.g. which topic to focus on)"),
+    instruction_file: Optional[Path] = typer.Option(None, "--instruction-file", help="Path to a .md or .txt file with extra guidance for the taqrir"),
+    doc_chars: int = typer.Option(30000, "--doc-chars", help="Use at most this many characters of each document"),
+    max_chars: int = typer.Option(150000, "--max-chars", help="Logs longer than this are written up in parts (notes per part, then the taqrir from the notes)"),
+    max_size: Optional[float] = typer.Option(None, "--max-size", help="Skip media larger than this many MB"),
+    no_log: bool = typer.Option(False, "--no-log", help="Don't write the full message log note next to the taqrir"),
+    force: bool = typer.Option(False, "--force", "-f", help="Ignore the cache: transcribe, read and take notes again"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="List the messages in the range without downloading or calling the LLM"),
+    model: Optional[str] = typer.Option(None, help="LLM Model to use (overrides config)"),
+    provider: Optional[str] = typer.Option(None, help="LLM Provider (Google, OpenAI, OpenRouter, AvalAI, OpenAICompatible)"),
+    api_key: Optional[str] = typer.Option(None, help="API Key for the provider"),
+    api_endpoint: Optional[str] = typer.Option(None, help="Custom API Endpoint"),
+    proxy: Optional[str] = typer.Option(None, help="Proxy URL for the LLM provider"),
+    telegram_proxy: Optional[str] = typer.Option(None, "--telegram-proxy", help="Proxy URL for Telegram (defaults to VERSLINE_TELEGRAM_PROXY, then --proxy)"),
+    extra_body: Optional[str] = typer.Option(None, "--extra-body", help=EXTRA_BODY_HELP),
+    note: Optional[str] = typer.Option(None, "--note", help="Additional instruction to append to the transcription prompt"),
+    note_file: Optional[Path] = typer.Option(None, "--note-file", help="Path to a .md or .txt file with an additional transcription instruction"),
+    chunk_size: int = typer.Option(900, help="Transcription chunk size in seconds"),
+    overlap: int = typer.Option(180, help="Transcription overlap in seconds"),
+    skip_blocked: bool = typer.Option(False, "--skip-blocked", help="Skip transcription chunks blocked by the provider"),
+    export: Optional[str] = export_option(),
+    export_frontmatter: Optional[bool] = export_frontmatter_option(),
+):
+    """Write a taqrir of the discussions in a chat between two dates: voices transcribed, documents and photos read."""
+    from versline.services.channel_archive.discussion import STYLES, DiscussionBuilder, DiscussionOptions
+    from versline.services.channel_archive.steps import StepContext
+
+    if style not in STYLES:
+        raise typer.BadParameter(f"Unknown style '{style}'. Choose from: {', '.join(STYLES)}", param_hint="--style")
+    if doc_chars < 0 or max_chars < 2000:
+        raise typer.BadParameter("--doc-chars must be ≥ 0 and --max-chars ≥ 2000")
+    _apply_llm_overrides(model, provider, api_key, api_endpoint, proxy, extra_body)
+    since_dt, until_dt = _date_range(since, until)
+    type_set = _type_set(types)
+    if since_dt is None and limit is None and not dry_run:
+        console.print("[yellow]No --since given: the whole chat history will be read.[/yellow]")
+    if not dry_run:
+        _require_llm()
+    instruction_text = resolve_text_input(instruction, str(instruction_file) if instruction_file else None, label="Instruction")
+
+    source = _make_source(telegram_proxy)
+    tracker = None
+    try:
+        transcriber = text_llm = None
+        if not dry_run:
+            from versline.services.channel_archive.llm import TextLLM
+            from versline.services.pricing import TokenTracker
+
+            if not no_transcribe:
+                from versline.services.transcription import AudioTranscriber
+
+                transcriber = AudioTranscriber(user_note=resolve_user_note(note=note, note_file=str(note_file) if note_file else None))
+            tracker = transcriber.tracker if transcriber is not None else TokenTracker()
+            text_llm = TextLLM(tracker)
+        ctx = StepContext(
+            source=source, channel=None, out_dir=output, temp_dir=Path(settings.temp_directory) / "telegram",
+            transcribe=not no_transcribe, max_size_mb=max_size, force=force, chunk_size=chunk_size, overlap=overlap,
+            skip_blocked=skip_blocked, transcriber=transcriber, text_llm=text_llm, output_lang=output_lang or "",
+        )
+        options = DiscussionOptions(
+            out_dir=output, temp_dir=ctx.temp_dir, since=since_dt, until=until_dt, limit=limit, types=type_set,
+            style=style, attribute=attribute, transcribe=not no_transcribe, documents=not no_documents,
+            images=not no_images, doc_chars=doc_chars, max_chars=max_chars, force=force, dry_run=dry_run,
+            write_log=not no_log, instruction=instruction_text,
+        )
+        builder = DiscussionBuilder(source, ctx, options, text_llm=text_llm)
+        with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
+                      redirect_stdout=True, redirect_stderr=True) as progress:
+            task = progress.add_task("[green]Reading chat...", total=None)
+            ctx.progress = lambda message: progress.update(task, description=f"[green]{message}")
+            result = builder.run(chat)
+    except KeyboardInterrupt:
+        console.print("[yellow]Interrupted. Transcripts and notes made so far are cached; run the same command again to resume.[/yellow]")
+        raise typer.Exit(code=130)
+    except Exception as exc:
+        logger.error(f"Taqrir failed: {exc}")
+        raise typer.Exit(code=1)
+    finally:
+        source.close()
+
+    if not result.entries:
+        console.print(f"[yellow]No messages in {result.channel.title} for this range.[/yellow]")
+        return
+    if dry_run:
+        _print_taqrir_plan(result)
+        return
+
+    console.print(f"[bold]Taqrir:[/bold] {result.note_path}", soft_wrap=True)
+    if result.log_path:
+        console.print(f"[bold]Message log:[/bold] {result.log_path}", soft_wrap=True)
+    counts = result.metadata
+    console.print(
+        f"messages: {counts.get('messages')}  voices: {counts.get('voices') or 0}  documents: {counts.get('documents') or 0}  "
+        f"images: {counts.get('images') or 0}  LLM calls: {result.llm_calls}  cached notes: {result.cached_notes}"
+    )
+    for error in result.errors:
+        console.print(f"[red]  {error}[/red]")
+    if tracker is not None:
+        from versline.services.pricing import print_cost_report
+
+        print_cost_report(tracker, api_key=settings.llm.api_key)
+    run_exports([result.note_path], export, export_frontmatter, force=True)
+
+
+def _print_taqrir_plan(result) -> None:
+    from versline.services.channel_archive.discussion import shamsi_datetime
+
+    table = Table(title=f"{result.channel.title}: {len(result.entries)} messages")
+    for column in ("ID", "Date", "Sender", "Type", "Size", "Text"):
+        table.add_column(column)
+    kinds: dict = {}
+    for entry in result.entries:
+        post = entry.post
+        for item in post.media:
+            kinds[item.kind] = kinds.get(item.kind, 0) + 1
+        size = ""
+        if post.media:
+            duration = sum(i.duration or 0 for i in post.media)
+            size = format_duration(duration) if duration else f"{sum(i.size or 0 for i in post.media) / 1048576:.1f} MB"
+        preview = " ".join(post.text.split())[:60]
+        table.add_row(str(post.id), shamsi_datetime(post.date), entry.speaker, post.media_type, size, preview)
+    console.print(table)
+    if kinds:
+        console.print("Media: " + ", ".join(f"{k} ×{v}" for k, v in sorted(kinds.items())))
