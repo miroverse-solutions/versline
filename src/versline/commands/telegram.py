@@ -525,6 +525,7 @@ def send(
     batch_size: int = typer.Option(10, "--batch-size", help="After this many messages take a longer pause (0 = never)"),
     batch_pause: float = typer.Option(300, "--batch-pause", help="Seconds of the longer pause (randomised ±20%)"),
     daily_limit: int = typer.Option(100, "--daily-limit", help="Never send more than this many messages in 24 hours (counted across runs; 0 = no limit)"),
+    ignore_daily_limit: bool = typer.Option(False, "--ignore-daily-limit", help="Don't apply the 24-hour cap this run (sends are still recorded; risky for the account)"),
     max_flood_wait: float = typer.Option(3600, "--max-flood-wait", help="If Telegram asks to wait longer than this many seconds, stop and resume later"),
     test: bool = typer.Option(False, "--test", help="Send the message once to your Saved Messages (as the first recipient would get it) and stop"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Match recipients and show the message and timing; send nothing"),
@@ -564,6 +565,8 @@ def send(
             telegram_format.parse(telegram_send.render(text, {}, fmt), fmt, tables)
         except Exception as exc:
             raise typer.BadParameter(f"The message can't be formatted: {exc}")
+    if ignore_daily_limit:
+        daily_limit = 0
     pacer = telegram_send.Pacer(_parse_delay(delay), batch_size, batch_pause, daily_limit)
     history = telegram_send.SendHistory(user_config_dir() / "telegram-send-history.json")
 
@@ -636,7 +639,7 @@ def send(
         with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), BarColumn(), TaskProgressColumn(),
                       redirect_stdout=True, redirect_stderr=True) as progress:
             task = progress.add_task("Sending...", total=len(resolved))
-            sender.on_progress = lambda done, total, label: progress.update(task, completed=done, description=f"[green]Sending {label}" if label else "Sending")
+            sender.on_progress = lambda done, total, label: progress.update(task, completed=done, description=f"[green]Sending {done + 1}/{total}: {label}" if label else f"Sending {done}/{total}")
             sender.on_wait = lambda left, reason: progress.update(task, description=f"[yellow]{reason}: {_fmt_seconds(left)} left")
             try:
                 summary = sender.run(resolved)
@@ -656,7 +659,9 @@ def send(
         source.close()
 
     telegram_send.write_report(report_path, skipped, state)
-    console.print(f"[bold]Sent:[/bold] {summary.sent}  failed: {summary.failed}  skipped: {len(skipped)}  → report: {report_path}", soft_wrap=True)
+    total_sent = sum(1 for i in resolved if state.is_sent(i.key))
+    console.print(f"[bold]Sent this run:[/bold] {summary.sent}  failed: {summary.failed}  skipped: {len(skipped)}  → report: {report_path}", soft_wrap=True)
+    console.print(f"[bold]Overall:[/bold] {total_sent} of {len(resolved)} sent, {len(resolved) - total_sent} left", soft_wrap=True)
     for entry in summary.results:
         if entry["status"] == "failed":
             console.print(f"[red]  {entry['name']}: {entry['reason']}[/red]")

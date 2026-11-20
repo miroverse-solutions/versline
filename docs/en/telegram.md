@@ -322,6 +322,7 @@ For anything Telegram's own editor can do, compose the message in **Saved Messag
 | `--delay MIN-MAX` | `20-45` | random seconds between messages |
 | `--batch-size N` / `--batch-pause S` | `10` / `300` | a longer pause (±20 %) after every N messages |
 | `--daily-limit N` | `100` | at most N messages in 24 hours, counted across runs and lists (`0` = off) |
+| `--ignore-daily-limit` | off | this run only: do not apply the 24-hour cap (sends are still recorded; risky for the account) |
 | `--max-flood-wait S` | `3600` | if Telegram asks for a longer wait, stop and resume later |
 
 The program waits out Telegram's own `FloodWait` requests and retries. If Telegram reports that the account is spam-limited (PeerFlood) it **stops at once**; check [@SpamBot](https://t.me/SpamBot). A person who blocked you or restricts messages is marked failed and the run continues. These defaults are conservative; shorter delays and bigger batches raise the risk.
