@@ -10,6 +10,7 @@
 | `commands/` | Thin CLI wrappers (`transcribe`, `translate`, `summarize`, `qude`, `qualcode`, `research`, `slides`, `telegram`, `organize`, `setup`, `bridge`, `obsidian`) |
 | `config.py`, `userconfig.py` | pydantic-settings groups (llm, transcription, ffmpeg, resource, slides, telegram), env loading, per-user config folder |
 | `services/` | Business logic: `transcription`, `translation`, `summarizer`, `question_generator`, `qualitative_coding`, `research_writing`, `slides`, `document_processor`, `export`, `media`, `network`, `ai` (provider clients, retries), `pricing` (token/cost tracking) |
+| `services/telegram_people.py`, `telegram_send.py`, `telegram_format.py` | `telegram contacts/chats/members/send`: list files (CSV/MD/JSON) and recipient parsing, recipient resolution + pacer + resumable bulk sender (state in `<list>.send-state.json`), Markdown → Telegram entities |
 | `services/channel_archive/` | Telegram archive: `sources/` (`telegram` via Telethon, `telegram_web` via httpx + BeautifulSoup), `steps.py` (media, transcribe, summary, taqrir), `pipeline.py`, `obsidian.py`, `state.py` (manifest), `llm.py` (single-prompt text and image generator), `models.py`, `discussion.py` (`telegram taqrir`: message log, media to text, map/reduce taqrir, `.versline-taqrir.json` cache) |
 | `services/docexport/` | Shared Word/PDF export over MdPersia (optional): `frontmatter.py` (front-matter parser, metadata table), `normalize.py` (Obsidian to standard Markdown), `engine.py` (MdPersia adapter, lazy import), `service.py` (`export_items`, `ExportItem`, `ExportOptions`). Commands share `commands/_export.py` (`--export` options, `run_exports`). The Telegram pack is `channel_archive/pack.py` |
 | `services/organize/` | Archive organizer (standard library only): `catalog.py` (SQLite, root paths relative to the drive root), `scanner.py` (incremental walk), `hashing.py` (SHA-256), `dupes.py` (duplicates, redundant folders), `reports.py` (Markdown/CSV), `rules.py` (rules.txt/taxonomy.txt), `planner.py` (plan, dedupe, name collisions), `applier.py` (journaled apply/verify/revert-moves), `kinds.py`, `normalize.py`. Design: [organize-design.md](../fa/organize-design.md) |
@@ -37,7 +38,7 @@ Writes are atomic (temp file then replace); failed posts are retried on the next
 make test      # python -m pytest tests -q
 ```
 
-35 test files cover config, resource limits, transcription (provider resolution, STT fallback, word alignment), summarizer, slides, qude, qualcode, research, pricing, the bridge (`test_bridge.py`), the plugin installer (`test_obsidian_install.py`), and the Telegram archive (`test_channel_obsidian.py`, `test_channel_pipeline.py`, `test_channel_web.py`). CI runs on Ubuntu, Windows and macOS with Python 3.12.
+37 test files cover config, resource limits, transcription (provider resolution, STT fallback, word alignment), summarizer, slides, qude, qualcode, research, pricing, the bridge (`test_bridge.py`), the plugin installer (`test_obsidian_install.py`), and Telegram (`test_channel_obsidian.py`, `test_channel_pipeline.py`, `test_channel_web.py`, `test_telegram_send.py`, `test_telegram_format.py`). CI runs on Ubuntu, Windows and macOS with Python 3.12.
 
 ## Releasing
 

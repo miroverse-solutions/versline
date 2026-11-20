@@ -380,27 +380,291 @@ def pack(
         raise typer.Exit(1)
 
 
+LIST_COLUMNS = ["id", "name", "username", "phone", "type"]
+CHAT_KINDS = {"user", "bot", "group", "supergroup", "channel"}
+
+
+def _show_people(rows: List[dict], title: str, output: Optional[Path], columns: Optional[List[str]] = None) -> None:
+    """Print a people/chat list as a table, or write it to a .csv/.md/.json file."""
+    from versline.services.telegram_people import write_rows
+
+    if output:
+        try:
+            write_rows(rows, output, columns or LIST_COLUMNS)
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc), param_hint="--output")
+        console.print(f"[bold]{len(rows)}[/bold] {title} → {output}", soft_wrap=True)
+        return
+    table = Table(title=f"{len(rows)} {title}")
+    dated = any(r.get("last_message") for r in rows)
+    for column in ("ID", "Type", "Name", "Username", "Phone") + (("Last message",) if dated else ()):
+        table.add_column(column)
+    for row in rows:
+        table.add_row(str(row["id"]), row.get("type") or "", row.get("name") or "", f"@{row['username']}" if row.get("username") else "",
+                      row.get("phone") or "", *([row.get("last_message") or ""] if dated else []))
+    console.print(table)
+
+
+def _kind_set(value: Optional[str]):
+    if not value:
+        return None
+    kinds = {k.strip().lower() for k in value.split(",") if k.strip()}
+    bad = kinds - CHAT_KINDS
+    if bad:
+        raise typer.BadParameter(f"Unknown type(s): {', '.join(sorted(bad))}. Choose from: {', '.join(sorted(CHAT_KINDS))}", param_hint="--type")
+    return kinds
+
+
+DEFAULT_CHAT_LIMIT = 50
+
+
+def effective_chat_limit(limit, since, until, output) -> Optional[int]:
+    """An explicit limit always wins; otherwise a date range or a saved file means 'all matching chats'."""
+    if limit is not None:
+        return limit or None
+    return None if (since or until or output) else DEFAULT_CHAT_LIMIT
+
+
 @app.command("chats")
 def chats(
-    search: Optional[str] = typer.Option(None, "--search", "-s", help="Only chats whose title or username contains this text"),
-    limit: int = typer.Option(50, "--limit", help="Show at most N chats (newest first)"),
+    search: Optional[str] = typer.Option(None, "--search", "-s", help="Only chats whose title, username or phone contains this text"),
+    limit: Optional[int] = typer.Option(None, "--limit", help="At most N chats, newest first (default: 50 when printing; no limit with --since/--until or --output)"),
+    kinds: Optional[str] = typer.Option(None, "--type", help="Only these kinds, comma-separated: user,bot,group,supergroup,channel (e.g. --type user for private chats)"),
+    unread: bool = typer.Option(False, "--unread", help="Only chats with unread messages"),
+    archived: Optional[bool] = typer.Option(None, "--archived/--no-archived", help="Only archived chats, or only non-archived ones (default: both)"),
+    since: Optional[str] = typer.Option(None, "--since", help="Only chats whose last message is from this date on (YYYY-MM-DD[ HH:MM], Gregorian or Shamsi)"),
+    until: Optional[str] = typer.Option(None, "--until", help="Only chats whose last message is up to and including this date"),
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Write the list to a .csv, .md or .json file instead of printing it (a .csv/.md list can be given to `telegram send`)"),
     telegram_proxy: Optional[str] = typer.Option(None, "--telegram-proxy", help="Proxy URL for Telegram"),
 ):
     """List your chats (private chats, groups, channels) with the id to pass to `telegram taqrir` or `archive`."""
+    kind_set = _kind_set(kinds)
+    since_dt, until_dt = _date_range(since, until)
+    limit = effective_chat_limit(limit, since_dt, until_dt, output)
     source = _make_source(telegram_proxy)
     try:
-        rows = source.iter_dialogs(search=search, limit=limit)
+        rows = source.iter_dialogs(search=search, limit=limit, kinds=kind_set, unread_only=unread, archived=archived,
+                                   since=since_dt, until=until_dt)
     except Exception as exc:
         logger.error(f"Listing chats failed: {exc}")
         raise typer.Exit(1)
     finally:
         source.close()
-    table = Table(title=f"{len(rows)} chats")
-    for column in ("ID", "Type", "Title", "Username"):
-        table.add_column(column)
-    for row in rows:
-        table.add_row(str(row["id"]), row["kind"] or "", row["title"], f"@{row['username']}" if row["username"] else "")
-    console.print(table)
+    _show_people(rows, "chats", output, LIST_COLUMNS + ["last_message", "unread", "archived"])
+    if limit and len(rows) >= limit:
+        console.print(f"[yellow]Stopped at {limit} chats. Use --limit N for more (or give --since/--until, or --output, to list them all).[/yellow]")
+
+
+@app.command("contacts")
+def contacts(
+    search: Optional[str] = typer.Option(None, "--search", "-s", help="Only contacts whose name, username or phone contains this text"),
+    mutual: bool = typer.Option(False, "--mutual", help="Only mutual contacts (you have each other's number)"),
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Write the list to a .csv, .md or .json file (name, phone, username, id); a .csv/.md list can be given to `telegram send`"),
+    telegram_proxy: Optional[str] = typer.Option(None, "--telegram-proxy", help="Proxy URL for Telegram"),
+):
+    """List your Telegram contacts with name, phone number, username and id."""
+    source = _make_source(telegram_proxy)
+    try:
+        rows = source.list_contacts(search=search, mutual_only=mutual)
+    except Exception as exc:
+        logger.error(f"Listing contacts failed: {exc}")
+        raise typer.Exit(1)
+    finally:
+        source.close()
+    _show_people(rows, "contacts", output, LIST_COLUMNS + ["mutual"])
+
+
+@app.command("members", context_settings=INTERSPERSED)
+def members(
+    chat: str = typer.Argument(..., help="Group or supergroup: @name, title, t.me link or numeric id (see `telegram chats`)"),
+    search: Optional[str] = typer.Option(None, "--search", "-s", help="Only members whose name or username contains this text"),
+    limit: Optional[int] = typer.Option(None, "--limit", help="At most N members"),
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Write the list to a .csv, .md or .json file"),
+    telegram_proxy: Optional[str] = typer.Option(None, "--telegram-proxy", help="Proxy URL for Telegram"),
+):
+    """List the members of a group you belong to (phone numbers only show for people who share them with you)."""
+    source = _make_source(telegram_proxy)
+    try:
+        rows = source.list_members(chat, search=search, limit=limit)
+    except Exception as exc:
+        logger.error(f"Listing members failed: {exc}")
+        raise typer.Exit(1)
+    finally:
+        source.close()
+    _show_people(rows, "members", output)
+
+
+def _parse_delay(value: str):
+    try:
+        low, _, high = value.replace(" ", "").partition("-")
+        low_f = float(low)
+        return (low_f, float(high) if high else low_f)
+    except ValueError:
+        raise typer.BadParameter("Use MIN-MAX seconds, e.g. 20-45 (or one number)", param_hint="--delay")
+
+
+def _fmt_seconds(seconds: float) -> str:
+    seconds = int(seconds)
+    return f"{seconds // 3600}h {seconds % 3600 // 60}m" if seconds >= 3600 else f"{seconds // 60}m {seconds % 60}s"
+
+
+@app.command("send")
+def send(
+    recipients: Path = typer.Argument(..., help="List of recipients: .csv, .md (table or one per line) or .txt. Columns/values: username (@name), phone, id or name; other columns become {placeholders}"),
+    message: Optional[str] = typer.Option(None, "--message", "-m", help="Message text (Markdown). With --forward: an optional note sent before the forwarded message. {name}, {first_name}, {username}, {phone} and any CSV column are filled per person"),
+    message_file: Optional[Path] = typer.Option(None, "--message-file", help="Read the message from a .md or .txt file"),
+    attach: Optional[Path] = typer.Option(None, "--attach", help="Send this file (photo, video, document, voice...) with the message as its caption"),
+    forward: Optional[List[str]] = typer.Option(None, "--forward", help="Forward an existing message instead: https://t.me/<channel>/<id>, https://t.me/c/<id>/<id>, <chat>:<id> or me:last (repeatable; add ?single to skip the rest of an album)"),
+    hide_source: bool = typer.Option(False, "--hide-source", help="With --forward: send as your own message, without «Forwarded from»"),
+    hide_caption: bool = typer.Option(False, "--hide-caption", help="With --forward: drop the captions of forwarded media"),
+    fmt: str = typer.Option("markdown", "--format", help="markdown (bold, italic, links, quotes, code, spoilers, custom emoji, tables), html (Telegram HTML) or plain"),
+    tables: str = typer.Option("pre", "--tables", help="Markdown tables: pre (aligned monospace block) or list (`Header: value` lines)"),
+    no_preview: bool = typer.Option(False, "--no-preview", help="Don't show link previews"),
+    column: Optional[str] = typer.Option(None, "--column", help="CSV column that holds the recipient (default: id, username, phone or name column, found by header)"),
+    delay: str = typer.Option("20-45", "--delay", help="Seconds to wait between messages, random between MIN-MAX"),
+    batch_size: int = typer.Option(10, "--batch-size", help="After this many messages take a longer pause (0 = never)"),
+    batch_pause: float = typer.Option(300, "--batch-pause", help="Seconds of the longer pause (randomised ±20%)"),
+    daily_limit: int = typer.Option(100, "--daily-limit", help="Never send more than this many messages in 24 hours (counted across runs; 0 = no limit)"),
+    max_flood_wait: float = typer.Option(3600, "--max-flood-wait", help="If Telegram asks to wait longer than this many seconds, stop and resume later"),
+    test: bool = typer.Option(False, "--test", help="Send the message once to your Saved Messages (as the first recipient would get it) and stop"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Match recipients and show the message and timing; send nothing"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Don't ask for confirmation"),
+    restart: bool = typer.Option(False, "--restart", help="Ignore the saved progress and send to everyone again"),
+    telegram_proxy: Optional[str] = typer.Option(None, "--telegram-proxy", help="Proxy URL for Telegram"),
+):
+    """Send one message (or forward one) to everyone in a list, paced so the account is not limited.
+
+    Progress is saved next to the list (<list>.send-state.json): run the same command again to resume.
+    """
+    from versline.services import telegram_format, telegram_people, telegram_send
+    from versline.userconfig import user_config_dir
+
+    from versline.services.channel_archive.sources.telegram import SendError
+
+    if fmt not in telegram_format.FORMATS:
+        raise typer.BadParameter(f"Choose from: {', '.join(telegram_format.FORMATS)}", param_hint="--format")
+    if tables not in telegram_format.TABLES:
+        raise typer.BadParameter(f"Choose from: {', '.join(telegram_format.TABLES)}", param_hint="--tables")
+    if batch_size < 0 or batch_pause < 0 or daily_limit < 0:
+        raise typer.BadParameter("--batch-size, --batch-pause and --daily-limit must be ≥ 0")
+    try:
+        text = resolve_text_input(message, str(message_file) if message_file else None, label="Message")
+        forward_refs = [telegram_send.parse_forward_ref(f) for f in forward or []]
+        people = telegram_people.read_recipients(recipients, column)
+    except (ValueError, FileNotFoundError) as exc:
+        raise typer.BadParameter(str(exc))
+    if not text and not forward_refs:
+        raise typer.BadParameter("Give a message (--message / --message-file) or something to --forward")
+    if attach and forward_refs:
+        raise typer.BadParameter("--attach can't be combined with --forward")
+    if attach and not attach.is_file():
+        raise typer.BadParameter(f"Attachment not found: {attach}", param_hint="--attach")
+    if text and fmt != "plain":
+        try:
+            telegram_format.parse(telegram_send.render(text, {}, fmt), fmt, tables)
+        except Exception as exc:
+            raise typer.BadParameter(f"The message can't be formatted: {exc}")
+    pacer = telegram_send.Pacer(_parse_delay(delay), batch_size, batch_pause, daily_limit)
+    history = telegram_send.SendHistory(user_config_dir() / "telegram-send-history.json")
+
+    source = _make_source(telegram_proxy)
+    try:
+        payload = telegram_send.Payload(text=text, file=attach, fmt=fmt, tables=tables, link_preview=not no_preview,
+                                        hide_source=hide_source, hide_caption=hide_caption)
+        with console.status("Reading the forwarded messages..." if forward_refs else "Matching recipients..."):
+            payload.forwards = telegram_send.prepare_forwards(source, forward_refs)
+            resolved, skipped = telegram_send.resolve_recipients(source, people)
+        if not resolved:
+            console.print("[red]None of the recipients could be matched.[/red]")
+            for r, reason in skipped[:20]:
+                console.print(f"[red]  {r.ref}: {reason}[/red]")
+            raise typer.Exit(1)
+
+        table = Table(title=f"{len(resolved)} recipients" + (f", {len(skipped)} skipped" if skipped else ""))
+        for column_name in ("Name", "Username", "Phone", "ID"):
+            table.add_column(column_name)
+        for item in resolved[:15]:
+            row = item.row
+            table.add_row(item.label, f"@{row['username']}" if row.get("username") else "", row.get("phone") or "", str(item.entity_id))
+        if len(resolved) > 15:
+            table.add_row(f"… and {len(resolved) - 15} more", "", "", "")
+        console.print(table)
+        for r, reason in skipped[:20]:
+            console.print(f"[yellow]  skipped {r.ref}: {reason}[/yellow]")
+        if len(skipped) > 20:
+            console.print(f"[yellow]  … and {len(skipped) - 20} more skipped (see the report)[/yellow]")
+
+        first_values = telegram_send.placeholders(resolved[0])
+        if text:
+            console.print(f"\n[bold]Message for {resolved[0].label}:[/bold]")
+            console.print(payload.preview(first_values), markup=False, highlight=False)
+        if attach:
+            console.print(f"[bold]Attachment:[/bold] {attach}", soft_wrap=True)
+        if forward_refs:
+            console.print(f"[bold]Forwarding:[/bold] {sum(len(ids) for _, ids in payload.forwards)} message(s)" + (" without the source" if hide_source else ""))
+
+        state_path = recipients.with_name(recipients.name + ".send-state.json")
+        report_path = recipients.with_name(recipients.name + ".send-report.csv")
+        state = telegram_send.SendState(state_path, telegram_send.payload_key(payload, forward_refs), restart)
+        if state.reset_reason:
+            console.print(f"[yellow]{state.reset_reason}[/yellow]")
+        remaining = [i for i in resolved if not state.is_sent(i.key)]
+        if len(remaining) != len(resolved):
+            console.print(f"[green]{len(resolved) - len(remaining)} already sent in an earlier run; {len(remaining)} left.[/green]")
+        console.print(f"Pacing: {delay} s between messages, {batch_pause:.0f} s pause every {batch_size}, at most {daily_limit or '∞'} per 24 h. "
+                      f"Estimated time: {_fmt_seconds(pacer.estimate(len(remaining)))}")
+
+        if dry_run:
+            console.print("[dim]Dry run: nothing was sent.[/dim]")
+            return
+        sender = telegram_send.BulkSender(source, payload, pacer, state, history, max_flood_wait=max_flood_wait)
+        if test:
+            try:
+                sender.deliver(source.entity_of("me"), first_values)
+            except (SendError, telegram_send.StopSending) as exc:
+                console.print(f"[red]Test failed: {exc}[/red]")
+                raise typer.Exit(1)
+            console.print("[green]Sent to your Saved Messages. Check how it looks, then run again without --test.[/green]")
+            return
+        if not remaining:
+            console.print("Nothing left to send. Use --restart to send to everyone again.")
+            return
+        if not yes and not typer.confirm(f"Send to {len(remaining)} recipients?", default=False):
+            raise typer.Exit(1)
+
+        source.set_flood_sleep_threshold(0)
+        with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), BarColumn(), TaskProgressColumn(),
+                      redirect_stdout=True, redirect_stderr=True) as progress:
+            task = progress.add_task("Sending...", total=len(resolved))
+            sender.on_progress = lambda done, total, label: progress.update(task, completed=done, description=f"[green]Sending {label}" if label else "Sending")
+            sender.on_wait = lambda left, reason: progress.update(task, description=f"[yellow]{reason}: {_fmt_seconds(left)} left")
+            try:
+                summary = sender.run(resolved)
+            except KeyboardInterrupt:
+                state.save()
+                console.print("[yellow]Interrupted. Progress is saved; run the same command again to continue.[/yellow]")
+                raise typer.Exit(code=130)
+    except typer.Exit:
+        raise
+    except KeyboardInterrupt:
+        console.print("[yellow]Interrupted.[/yellow]")
+        raise typer.Exit(code=130)
+    except Exception as exc:
+        logger.error(f"Send failed: {exc}")
+        raise typer.Exit(1)
+    finally:
+        source.close()
+
+    telegram_send.write_report(report_path, skipped, state)
+    console.print(f"[bold]Sent:[/bold] {summary.sent}  failed: {summary.failed}  skipped: {len(skipped)}  → report: {report_path}", soft_wrap=True)
+    for entry in summary.results:
+        if entry["status"] == "failed":
+            console.print(f"[red]  {entry['name']}: {entry['reason']}[/red]")
+    if summary.stopped:
+        console.print(f"[yellow]Stopped: {summary.stopped}. Run the same command again to continue.[/yellow]")
+        raise typer.Exit(2)
+    if summary.failed:
+        raise typer.Exit(1)
 
 
 @app.command("taqrir", context_settings=INTERSPERSED)

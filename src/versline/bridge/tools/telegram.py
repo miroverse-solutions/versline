@@ -83,25 +83,107 @@ def logout(p: LogoutParams, ctx):
     return {}
 
 
+KINDS = Literal["user", "bot", "group", "supergroup", "channel"]
+LIST_FILE_HELP = tr("Optional .csv, .md or .json file to save the list in.", "فایل اختیاری ‎.csv‎، ‎.md‎ یا ‎.json‎ برای ذخیره‌ی فهرست.")
+
+
+def _save_list(ctx, rows, output, columns):
+    """Rows for the client (no Telethon objects), plus a saved file when asked."""
+    from versline.services.telegram_people import COLUMNS, write_rows
+
+    clean = [{k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in r.items() if k != "entity"} for r in rows]
+    result = {"rows": clean}
+    if output:
+        path = write_rows(clean, Path(output).expanduser(), columns or COLUMNS)
+        ctx.artifact(path)
+        result["output"] = str(path)
+    return result
+
+
 class ChatsParams(Params):
-    search: Optional[str] = F(None, en="Search", fa="جستجو")
-    limit: int = F(100, en="Max chats", fa="حداکثر تعداد", ge=1, le=2000)
+    search: Optional[str] = F(None, en="Search", fa="جستجو", help_en="Title, username or phone.", help_fa="عنوان، نام کاربری یا شماره.")
+    limit: Optional[int] = F(None, en="Max chats", fa="حداکثر تعداد", ge=1,
+                             help_en="Empty: 100, or all when a date range or a file is given.",
+                             help_fa="خالی: ۱۰۰ مورد، یا همه اگر بازه‌ی تاریخ یا فایل داده شود.")
+    kinds: List[KINDS] = F([], en="Chat types", fa="نوع گفتگو", widget="tags", help_en="Empty: all. «user» = private chats.",
+                           help_fa="خالی: همه. «user» = گفتگوهای شخصی.")
+    unread: bool = F(False, en="Unread only", fa="فقط خوانده‌نشده")
+    archived: Optional[bool] = F(None, en="Archived", fa="بایگانی‌شده", help_en="Empty: both.", help_fa="خالی: هر دو.", advanced=True)
+    since: Optional[str] = F(None, en="Last message from", fa="آخرین پیام از تاریخ", widget="date", help_en=DATE_HELP["en"], help_fa=DATE_HELP["fa"])
+    until: Optional[str] = F(None, en="Last message until", fa="آخرین پیام تا تاریخ", widget="date", help_en=DATE_HELP["en"], help_fa=DATE_HELP["fa"])
+    output: Optional[str] = F(None, en="Save list as", fa="ذخیره‌ی فهرست", widget="output-file", help_en=LIST_FILE_HELP["en"],
+                              help_fa=LIST_FILE_HELP["fa"], accept=[".csv", ".md", ".json"])
     telegram_proxy: Optional[str] = _proxy_field()
 
 
 @tool("telegram.chats", category="telegram", params=ChatsParams, needs_llm=False, hidden=True,
       title=tr("Telegram chats", "گفتگوهای تلگرام"),
-      description=tr("List your chats with the ids to archive.", "فهرست گفتگوها با شناسه‌ی آن‌ها برای بایگانی."))
+      description=tr("List your chats with the ids to archive, optionally saved as a file.",
+                     "فهرست گفتگوها با شناسه‌ی آن‌ها برای بایگانی؛ در صورت تمایل به‌صورت فایل."))
 def chats(p: ChatsParams, ctx):
+    from versline.commands.telegram import _date_range
+    from versline.services.channel_archive.sources.telegram import TelegramSource
+
+    since, until = _date_range(p.since, p.until)
+    limit = p.limit if p.limit is not None else (None if (since or until or p.output) else 100)
+    with interactive(ctx):
+        source = TelegramSource(proxy=p.telegram_proxy)
+        try:
+            rows = source.iter_dialogs(search=p.search, limit=limit, kinds=set(p.kinds) or None,
+                                       unread_only=p.unread, archived=p.archived, since=since, until=until)
+        finally:
+            source.close()
+    result = _save_list(ctx, rows, p.output, ["id", "name", "username", "phone", "type", "last_message", "unread", "archived"])
+    result["chats"] = result["rows"]
+    return result
+
+
+class ContactsParams(Params):
+    search: Optional[str] = F(None, en="Search", fa="جستجو", help_en="Name, username or phone.", help_fa="نام، نام کاربری یا شماره.")
+    mutual: bool = F(False, en="Mutual contacts only", fa="فقط مخاطبین دوطرفه")
+    output: Optional[str] = F(None, en="Save list as", fa="ذخیره‌ی فهرست", widget="output-file", help_en=LIST_FILE_HELP["en"],
+                              help_fa=LIST_FILE_HELP["fa"], accept=[".csv", ".md", ".json"])
+    telegram_proxy: Optional[str] = _proxy_field()
+
+
+@tool("telegram.contacts", category="telegram", params=ContactsParams, needs_llm=False, hidden=True,
+      title=tr("Telegram contacts", "مخاطبین تلگرام"),
+      description=tr("List your contacts with name, phone number, username and id.",
+                     "فهرست مخاطبین با نام، شماره تلفن، نام کاربری و شناسه."))
+def contacts(p: ContactsParams, ctx):
     from versline.services.channel_archive.sources.telegram import TelegramSource
 
     with interactive(ctx):
         source = TelegramSource(proxy=p.telegram_proxy)
         try:
-            rows = source.iter_dialogs(search=p.search, limit=p.limit)
+            rows = source.list_contacts(search=p.search, mutual_only=p.mutual)
         finally:
             source.close()
-    return {"chats": rows}
+    return _save_list(ctx, rows, p.output, ["id", "name", "username", "phone", "type", "mutual"])
+
+
+class MembersParams(Params):
+    chat: str = F(..., en="Group", fa="گروه", help_en="@name, a t.me link or a numeric id.", help_fa="‎@name‎، لینک t.me یا شناسه‌ی عددی.")
+    search: Optional[str] = F(None, en="Search", fa="جستجو")
+    limit: Optional[int] = F(None, en="Max members", fa="حداکثر تعداد", ge=1)
+    output: Optional[str] = F(None, en="Save list as", fa="ذخیره‌ی فهرست", widget="output-file", help_en=LIST_FILE_HELP["en"],
+                              help_fa=LIST_FILE_HELP["fa"], accept=[".csv", ".md", ".json"])
+    telegram_proxy: Optional[str] = _proxy_field()
+
+
+@tool("telegram.members", category="telegram", params=MembersParams, needs_llm=False, hidden=True,
+      title=tr("Group members", "اعضای گروه"),
+      description=tr("List the members of a group you belong to.", "فهرست اعضای گروهی که در آن عضو هستید."))
+def members(p: MembersParams, ctx):
+    from versline.services.channel_archive.sources.telegram import TelegramSource
+
+    with interactive(ctx):
+        source = TelegramSource(proxy=p.telegram_proxy)
+        try:
+            rows = source.list_members(p.chat, search=p.search, limit=p.limit)
+        finally:
+            source.close()
+    return _save_list(ctx, rows, p.output, None)
 
 
 MEDIA_TYPES = Literal["audio", "voice", "video", "video_note", "photo", "document", "text"]

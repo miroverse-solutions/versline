@@ -141,7 +141,7 @@ def test_manifest_lists_every_tool_with_bilingual_labels():
     assert data["protocol"] == PROTOCOL_VERSION
     names = {t["name"] for t in data["tools"]}
     assert {"transcribe", "translate.file", "summarize.file", "qude", "qualcode", "research.outline",
-            "research.full", "slides", "export", "telegram.archive", "telegram.taqrir", "organize.report",
+            "research.full", "slides", "export", "telegram.archive", "telegram.taqrir", "telegram.contacts", "telegram.members", "telegram.chats", "organize.report",
             "config.get", "config.set", "obsidian.install"} <= names
     for item in data["tools"]:
         assert item["title"]["en"] and item["title"]["fa"], item["name"]

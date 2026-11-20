@@ -187,7 +187,7 @@ versline research -i study.json --stage full --approved-outline-file output/ch4_
 
 ## `telegram`
 
-`telegram login`، `telegram logout`، `telegram chats`، `telegram archive CHANNEL`، `telegram pack ARCHIVE`، `telegram taqrir CHAT` (تقریر مباحثات یک گفتگو بین دو تاریخ). توضیح کامل در [بایگانی کانال تلگرام](telegram.md).
+`telegram login`، `telegram logout`، `telegram chats` (فیلتر نوع، خوانده‌نشده، بایگانی؛ ذخیره به CSV/MD)، `telegram contacts` (نام، شماره، نام کاربری، شناسه)، `telegram members GROUP`، `telegram archive CHANNEL`، `telegram pack ARCHIVE`، `telegram taqrir CHAT` (تقریر مباحثات یک گفتگو بین دو تاریخ)، `telegram send LIST` (ارسال یا فوروارد گروهی با سرعت کنترل‌شده به فهرست CSV/MD). توضیح کامل در [بایگانی کانال تلگرام](telegram.md).
 
 ## `organize`
 

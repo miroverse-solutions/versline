@@ -70,6 +70,48 @@ def display_name(entity: Any) -> Optional[str]:
     return name or getattr(entity, "title", None) or getattr(entity, "username", None)
 
 
+def row_kind(entity: Any) -> Optional[str]:
+    """Like chat_kind, but bots are their own kind (for lists; ChannelInfo keeps treating them as users)."""
+    kind = chat_kind(entity)
+    return "bot" if kind == "user" and getattr(entity, "bot", False) else kind
+
+
+def user_row(user: Any) -> dict:
+    phone = getattr(user, "phone", None)
+    return {
+        "id": user.id,
+        "name": display_name(user) or "",
+        "first_name": getattr(user, "first_name", None) or "",
+        "last_name": getattr(user, "last_name", None) or "",
+        "username": getattr(user, "username", None) or "",
+        "phone": f"+{phone}" if phone else "",
+        "type": row_kind(user) or "user",
+        "contact": bool(getattr(user, "contact", False)),
+        "mutual": bool(getattr(user, "mutual_contact", False)),
+        "bot": bool(getattr(user, "bot", False)),
+    }
+
+
+class SendError(Exception):
+    """A failed send, in terms the sender understands. kind: flood (wait `seconds`, retry) | peer_flood (account limited,
+    stop) | failed (this recipient only)."""
+
+    def __init__(self, kind: str, message: str = "", seconds: int = 0):
+        super().__init__(message or kind)
+        self.kind = kind
+        self.seconds = seconds
+
+
+def _send_error(exc: Exception) -> SendError:
+    from telethon import errors
+
+    if isinstance(exc, errors.PeerFloodError):
+        return SendError("peer_flood", "Telegram limited this account for spam (PeerFlood). Check @SpamBot")
+    if isinstance(exc, (errors.FloodWaitError, errors.SlowModeWaitError)):
+        return SendError("flood", f"flood wait {exc.seconds}s", seconds=int(exc.seconds))
+    return SendError("failed", f"{type(exc).__name__}: {exc}".rstrip(": "))
+
+
 def _markdown(text: str) -> str:
     # Telethon marks italics with __x__, which Obsidian renders as bold.
     return re.sub(r"__(.+?)__", r"*\1*", text or "", flags=re.DOTALL)
@@ -209,27 +251,176 @@ class TelegramSource:
         except (ValueError, TypeError) as exc:
             raise ValueError(f"No chat with id {chat_id} among your chats. Run `versline telegram chats` to see the ids.") from exc
 
-    def iter_dialogs(self, search: Optional[str] = None, limit: Optional[int] = None) -> List[dict]:
-        """The account's chats (newest first) as {id, kind, title, username}; `search` matches title or username."""
+    def iter_dialogs(
+        self,
+        search: Optional[str] = None,
+        limit: Optional[int] = None,
+        kinds: Optional[set] = None,
+        unread_only: bool = False,
+        archived: Optional[bool] = None,
+        with_entity: bool = False,
+        since: Optional[datetime] = None,
+        until: Optional[datetime] = None,
+    ) -> List[dict]:
+        """The account's chats (newest first) as {id, kind, title, username, phone, ...}; `search` matches title,
+        username or phone; `kinds` filters user/bot/group/supergroup/channel; `since`/`until` keep chats whose last
+        message falls in that range. Kept cheap: `until` and archived/non-archived are sent to Telegram as offset and
+        folder, reading stops at the first non-pinned chat older than `since` (chats come newest first) or at `limit`;
+        search, type and unread can only be checked locally, so they read on until `limit` is filled."""
         from versline.services.channel_archive.filters import normalize_fa
+        from versline.services.telegram_people import phone_key
 
         self._connect()
         needle = normalize_fa(search) if search else None
+        digits = phone_key(search) if search and any(c.isdigit() for c in search) else ""
 
         async def _list():
             rows = []
-            async for dialog in self._client.iter_dialogs():
+            folder = None if archived is None else (1 if archived else 0)
+            offset = (until + timedelta(seconds=1)) if until else None
+            async for dialog in self._client.iter_dialogs(offset_date=offset, folder=folder):
+                if since and dialog.date and dialog.date < since and not getattr(dialog, "pinned", False):
+                    break  # newest first: everything after this is older still
                 entity = dialog.entity
+                kind = row_kind(entity)
+                if kinds and kind not in kinds:
+                    continue
+                if unread_only and not (dialog.unread_count or dialog.unread_mentions_count):
+                    continue
+                if (since or until) and (dialog.date is None or (since and dialog.date < since) or (until and dialog.date > until)):
+                    continue
+                is_archived = bool(getattr(dialog, "archived", False))
+                if archived is not None and is_archived != archived:
+                    continue
                 title = display_name(entity) or str(dialog.id)
                 username = getattr(entity, "username", None)
-                if needle and needle not in normalize_fa(title) and needle not in normalize_fa(username or ""):
+                phone = getattr(entity, "phone", None)
+                phone = f"+{phone}" if phone else ""
+                if needle and needle not in normalize_fa(title) and needle not in normalize_fa(username or "") \
+                        and not (digits and digits in phone_key(phone)):
                     continue
-                rows.append({"id": dialog.id, "kind": chat_kind(entity), "title": title, "username": username})
+                row = {
+                    "id": dialog.id, "kind": kind, "type": kind, "title": title, "name": title, "username": username,
+                    "phone": phone, "unread": dialog.unread_count or 0, "archived": is_archived,
+                    "contact": bool(getattr(entity, "contact", False)), "last_date": dialog.date,
+                    "last_message": dialog.date.astimezone().strftime("%Y-%m-%d %H:%M") if dialog.date else "",
+                }
+                if with_entity:
+                    row["entity"] = entity
+                rows.append(row)
                 if limit and len(rows) >= limit:
                     break
             return rows
 
         return self._run(_list())
+
+    def list_contacts(self, search: Optional[str] = None, mutual_only: bool = False, with_entity: bool = False) -> List[dict]:
+        """Your Telegram contacts: {id, name, username, phone, mutual, ...}, sorted by name."""
+        from telethon.tl import functions
+
+        from versline.services.channel_archive.filters import normalize_fa
+        from versline.services.telegram_people import phone_key
+
+        self._connect()
+        needle = normalize_fa(search) if search else None
+        digits = phone_key(search) if search and any(c.isdigit() for c in search) else ""
+
+        async def _contacts():
+            return (await self._client(functions.contacts.GetContactsRequest(hash=0))).users
+
+        rows = []
+        for user in self._run(_contacts()):
+            row = user_row(user)
+            row["contact"] = True
+            if mutual_only and not row["mutual"]:
+                continue
+            if needle and needle not in normalize_fa(row["name"]) and needle not in normalize_fa(row["username"]) \
+                    and not (digits and digits in phone_key(row["phone"])):
+                continue
+            if with_entity:
+                row["entity"] = user
+            rows.append(row)
+        rows.sort(key=lambda r: normalize_fa(r["name"]))
+        return rows
+
+    def list_members(self, ref: str, search: Optional[str] = None, limit: Optional[int] = None) -> List[dict]:
+        """Members of a group or supergroup you belong to (channels: admins only; Telegram refuses the rest)."""
+        info = self.resolve(ref)
+        if info.kind == "user":
+            raise ValueError("Members can only be listed for groups and channels")
+
+        async def _members():
+            rows = []
+            async for user in self._client.iter_participants(self._entity, search=search or "", limit=limit):
+                rows.append(user_row(user))
+            return rows
+
+        try:
+            return self._run(_members())
+        except Exception as exc:
+            raise RuntimeError(f"Telegram would not list the members of {info.title}: {exc}") from exc
+
+    # -- sending --
+
+    def entity_of(self, ref: Any) -> Any:
+        """Any chat reference (id, @name, link, 'me') as a Telethon entity."""
+        self._connect()
+        target = normalize_ref(ref) if isinstance(ref, str) else ref
+        if isinstance(target, int):
+            return self._run(self._entity_by_id(target))
+        return self._run(self._client.get_entity(target))
+
+    def set_flood_sleep_threshold(self, seconds: int) -> None:
+        """0 = never sleep inside Telethon on FloodWait; the sender's pacer handles every wait itself."""
+        self._client.flood_sleep_threshold = seconds
+
+    def get_messages(self, chat: Any, ids: List[int]) -> List[Any]:
+        """Messages by id (missing ones dropped), albums completed unless a single message is wanted."""
+        entity = chat if not isinstance(chat, (str, int)) else self.entity_of(chat)
+        found = [m for m in self._run(self._client.get_messages(entity, ids=ids)) if m]
+        if getattr(entity, "noforwards", False) or any(getattr(m, "noforwards", False) for m in found):
+            raise ValueError("This chat or message has forwarding disabled by Telegram")
+        return found
+
+    def album_of(self, chat_entity: Any, message: Any) -> List[Any]:
+        if not getattr(message, "grouped_id", None):
+            return [message]
+        near = self._run(self._client.get_messages(chat_entity, ids=list(range(message.id - 10, message.id + 11))))
+        return sorted((m for m in near if m and m.grouped_id == message.grouped_id), key=lambda m: m.id)
+
+    def last_saved_message(self) -> Any:
+        msgs = self._run(self._client.get_messages("me", limit=1))
+        return msgs[0] if msgs else None
+
+    def send(self, entity: Any, text: str, parse_mode: Any = None, file: Any = None, link_preview: bool = True) -> dict:
+        """Send text (or a file with `text` as caption). `file` is a path or a media object returned earlier as
+        ['media']. Returns {'id', 'media'}; raises SendError."""
+        from telethon.errors import RPCError
+
+        async def _send():
+            if file is not None:
+                msg = await self._client.send_file(entity, file, caption=text or None, parse_mode=parse_mode)
+            else:
+                msg = await self._client.send_message(entity, text, parse_mode=parse_mode, link_preview=link_preview)
+            return {"id": msg.id, "media": getattr(msg, "media", None)}
+
+        try:
+            return self._run(_send())
+        except RPCError as exc:
+            raise _send_error(exc) from exc
+
+    def forward(self, entity: Any, from_entity: Any, ids: List[int], drop_author: bool = False, drop_captions: bool = False) -> List[int]:
+        from telethon.errors import RPCError
+
+        async def _fwd():
+            sent = await self._client.forward_messages(
+                entity, ids, from_entity, drop_author=drop_author, drop_media_captions=drop_captions)
+            return [m.id for m in (sent if isinstance(sent, list) else [sent])]
+
+        try:
+            return self._run(_fwd())
+        except RPCError as exc:
+            raise _send_error(exc) from exc
 
     def iter_posts(
         self,

@@ -231,6 +231,109 @@ A log longer than `--max-chars` (default 150000) is cut into parts at day (or me
 
 The LLM overrides (`--model`, `--provider`, `--api-key`, `--api-endpoint`, `--proxy`, `--telegram-proxy`, `--extra-body`, `--chunk-size`, `--overlap`, `--skip-blocked`) work as in `archive`. Photos need a multimodal model (any Gemini model, gpt-4o-class models). A logged-in account is required (`telegram login`); `--web` is not available here.
 
+## Lists: `contacts`, `chats`, `members`
+
+```sh
+# Contacts with name, phone, username and id (a table, or a file)
+versline telegram contacts
+versline telegram contacts --search "رضا" --mutual -o contacts.csv
+
+# Private chats only, unread ones, archived ones…
+versline telegram chats --type user --limit 500 -o private.csv
+versline telegram chats --type user,bot --unread
+versline telegram chats --type group,supergroup --archived
+
+# Chats whose last message falls in a date range (Gregorian or Shamsi), or from/until one date
+versline telegram chats --since 1404-07-01 --until 1404-07-30 -o mehr.csv
+versline telegram chats --type user --since 2026-01-01
+
+# Members of a group you belong to
+versline telegram members @group -o members.csv
+```
+
+`-o FILE` writes `.csv` (UTF-8 with BOM, opens correctly in Excel), `.md` (a table) or `.json`; without it a table is printed. Columns: `id, name, username, phone, type` (`contacts` adds `mutual`, `chats` adds `last_message, unread, archived`). `--limit N` caps the list; by default it is 50 when printing, and **no limit** when you give `--since`/`--until` or `-o FILE` (all matching chats). `--search` matches name, username or phone. `--since`/`--until` keep chats by the date of their **last message** (a date without time covers the whole day; `--until` is inclusive). Chat types: `user`, `bot`, `group`, `supergroup`, `channel`.
+
+How much is read from Telegram: `contacts` is a single request. `chats` reads newest first and stops at `--limit`, or at the first chat older than `--since`; `--until` and `--archived/--no-archived` are passed to Telegram so newer or other-folder chats are never downloaded. `--search`, `--type` and `--unread` can only be checked locally, so with them the scan continues until `--limit` chats match (keep `--limit` modest). `telegram send` reads your contacts once, and reads the chat list only for recipients your contacts can't resolve.
+
+Phone numbers are shown only for contacts and for people who share their number with you; members lists are limited by Telegram (in channels only admins can list members). A `.csv` or `.md` list written here is exactly what `telegram send` reads. In Obsidian the same lists are the `telegram.contacts`, `telegram.chats` and `telegram.members` tools.
+
+## Bulk send: `telegram send`
+
+```sh
+versline telegram send RECIPIENTS (-m TEXT | --message-file FILE | --forward LINK…) [options]
+```
+
+Sends one message to everyone in a list **slowly and with pauses**, so the account is not rate-limited or banned and the session survives.
+
+```sh
+# Check the text first: it goes to your Saved Messages, formatted as the first recipient would see it
+versline telegram send contacts.csv -m "سلام {name} 🌷" --test
+
+# See who would get it and how long it takes; nothing is sent
+versline telegram send contacts.csv --message-file invite.md --dry-run
+
+# Send (asks to confirm; -y skips that)
+versline telegram send contacts.csv --message-file invite.md --attach poster.jpg
+
+# Forward a channel post to a list, as if you sent it yourself
+versline telegram send friends.md --forward https://t.me/channel/123 --hide-source -m "این را ببین {first_name}"
+```
+
+### The recipient list
+
+`.csv`, `.md` or `.txt`. A header row is recognised in English or Persian: `id`, `username` / `آیدی` / `یوزرنیم`, `phone` / `شماره` / `موبایل` / `تلفن`, `name` / `نام`. If several exist the order is id, username, phone, name; `--column NAME` picks the column yourself. Other columns are kept and usable as placeholders. In Markdown use a pipe table or one entry per line (`- @ali`, `09121234567`, `علی رضایی`). Entries are recognised by shape: `@name` or t.me link = username, a number starting with `+`, `00` or `0` = phone, another integer = id, anything else = name.
+
+How people are found:
+
+- **Phone**: only among your Telegram contacts (any spelling matches: `0912…`, `+98912…`, Persian digits). A number that is not a contact is **skipped and reported**; the tool never imports contacts in bulk, which is itself a spam signal.
+- **Name**: the exact name of one contact or private chat; several matches are skipped as ambiguous.
+- **Username / id**: your contacts and chats first, then Telegram (these lookups are throttled).
+- The same person twice is sent to once.
+
+### The message
+
+`-m TEXT` or `--message-file FILE` (.md/.txt), up to any length (split at paragraphs into parts of 4096 characters). `{name}`, `{first_name}`, `{last_name}`, `{username}`, `{phone}`, `{id}` and every CSV column (`{city}`) are filled per person; unknown `{…}` stay as typed. `--attach FILE` sends a photo, video, document or voice with the text as its caption (uploaded once, reused). `--no-preview` turns link previews off.
+
+Formatting uses Markdown (`--format markdown`, the default; `html` takes Telegram HTML, `plain` sends the text untouched):
+
+| Write | Result |
+| :--- | :--- |
+| `**bold**`, `*italic*`, `__underline__`, `~~strike~~` | bold, italic, underlined, struck through |
+| `\|\|spoiler\|\|` | spoiler |
+| `` `code` `` and ```` ```py … ``` ```` | inline code, code block |
+| `[text](https://…)`, plain URLs, `@username` | links and mentions |
+| `[name](tg://user?id=123)` | mention by id |
+| `> quote`, `>! long quote` | quote, collapsible quote |
+| `![🙂](emoji:5368324170671202286)` | premium custom emoji (the sending account needs Premium) |
+| `# Heading`, `- item` | bold line, `•` line (Telegram has no headings or lists) |
+| pipe tables | `--tables pre` (default): aligned monospace block; `--tables list`: `Header: value` lines, nicer for Persian |
+| Unicode emoji | as they are |
+
+For anything Telegram's own editor can do, compose the message in **Saved Messages** and send it with `--forward me:last --hide-source`: it is copied exactly.
+
+### Forwarding
+
+`--forward` (repeatable) takes `https://t.me/<channel>/<id>`, `https://t.me/c/<id>/<id>`, `<chat>:<id>` (any chat reference, e.g. `-1001234567890:42`) or `me:last`. An album is forwarded whole; add `?single` to take one message. `--hide-source` sends it without «Forwarded from», `--hide-caption` drops media captions. `-m` becomes a personal note sent just before the forward. Chats with forwarding disabled are refused before anything is sent.
+
+### Pacing
+
+| Option | Default | Meaning |
+| :--- | :--- | :--- |
+| `--delay MIN-MAX` | `20-45` | random seconds between messages |
+| `--batch-size N` / `--batch-pause S` | `10` / `300` | a longer pause (±20 %) after every N messages |
+| `--daily-limit N` | `100` | at most N messages in 24 hours, counted across runs and lists (`0` = off) |
+| `--max-flood-wait S` | `3600` | if Telegram asks for a longer wait, stop and resume later |
+
+The program waits out Telegram's own `FloodWait` requests and retries. If Telegram reports that the account is spam-limited (PeerFlood) it **stops at once**; check [@SpamBot](https://t.me/SpamBot). A person who blocked you or restricts messages is marked failed and the run continues. These defaults are conservative; shorter delays and bigger batches raise the risk.
+
+### Resume and report
+
+Progress is saved after every message in `<list>.send-state.json`. After Ctrl+C, a stop (limit, flood) or a crash, run **the same command** again: people already sent to are skipped. Changing the message starts a fresh send; `--restart` forces it. At the end `<list>.send-report.csv` lists every recipient with status (`sent`, `failed`, `skipped`) and the reason.
+
+### Use it responsibly
+
+Send only to people who expect to hear from you. Many identical messages to people who did not ask for them get accounts limited or banned regardless of pacing; personalising with `{name}` and keeping lists small helps, but does not make unsolicited messages safe. Try the options first with a list of two or three of your own accounts.
+
 ## Recipes
 
 ```sh

@@ -10,6 +10,7 @@
 | `commands/` | پوشش‌های نازک خط فرمان (`transcribe`، `translate`، `summarize`، `qude`، `qualcode`، `research`، `slides`، `telegram`، `organize`، `setup`، `bridge`، `obsidian`) |
 | `config.py`، `userconfig.py` | گروه‌های تنظیمات pydantic-settings (llm، transcription، ffmpeg، resource، slides، telegram)، بارگذاری env، پوشه‌ی تنظیمات کاربر |
 | `services/` | منطق اصلی: `transcription`، `translation`، `summarizer`، `question_generator`، `qualitative_coding`، `research_writing`، `slides`، `document_processor`، `export`، `media`، `network`، `ai` (کلاینت سرویس‌دهنده‌ها، تلاش مجدد)، `pricing` (پایش توکن/هزینه) |
+| `services/telegram_people.py`، `telegram_send.py`، `telegram_format.py` | `telegram contacts/chats/members/send`: فایل فهرست‌ها (CSV/MD/JSON) و خواندن گیرندگان، پیدا کردن گیرنده + کنترل سرعت + ارسال‌کننده‌ی قابل‌ادامه (وضعیت در `<list>.send-state.json`)، تبدیل Markdown به قالب‌بندی تلگرام |
 | `services/channel_archive/` | بایگانی تلگرام: `sources/` (`telegram` با Telethon، `telegram_web` با httpx و BeautifulSoup)، `steps.py` (رسانه، پیاده‌سازی، خلاصه، تقریر)، `pipeline.py`، `obsidian.py`، `state.py` (فایل وضعیت)، `llm.py` (تولید متن تک‌پرامپتی و خواندن تصویر)، `models.py`، `discussion.py` (`telegram taqrir`: متن گفتگو، تبدیل رسانه به متن، تقریر نگاشت/کاهش، حافظه‌ی `.versline-taqrir.json`) |
 | `services/docexport/` | خروجی مشترک Word/PDF روی MdPersia (اختیاری): `frontmatter.py` (خواندن فرانت‌متر و جدول مشخصات)، `normalize.py` (تبدیل Obsidian به Markdown استاندارد)، `engine.py` (آداپتور MdPersia با import تنبل)، `service.py` (`export_items`، `ExportItem`، `ExportOptions`). دستورها `commands/_export.py` را مشترک دارند. بسته‌ی تلگرام: `channel_archive/pack.py` |
 | `services/organize/` | سازمان‌دهی آرشیو (فقط کتابخانهٔ استاندارد): `catalog.py` (SQLite با مسیرهای نسبی به ریشهٔ درایو)، `scanner.py` (پیمایش افزایشی)، `hashing.py` (SHA-256)، `dupes.py` (تکراری‌ها و پوشه‌های زائد)، `reports.py` (Markdown/CSV)، `rules.py` (قالب rules.txt و taxonomy.txt)، `planner.py` (برنامه، dedupe، برخورد نام)، `applier.py` (apply/verify/revert-moves با دفتر)، `kinds.py`، `normalize.py`. طراحی: [organize-design.md](organize-design.md) |
@@ -35,7 +36,7 @@
 make test      # python -m pytest tests -q
 ```
 
-۳۵ فایل آزمون، شامل تنظیمات، محدودیت منابع، پیاده‌سازی (انتخاب سرویس‌دهنده، بازگشت STT، هم‌ترازی کلمات)، خلاصه‌ساز، اسلاید، qude، qualcode، research، هزینه، bridge (`test_bridge.py`)، نصب‌کننده‌ی افزونه (`test_obsidian_install.py`) و بایگانی تلگرام (`test_channel_obsidian.py`، `test_channel_pipeline.py`، `test_channel_web.py`). CI روی Ubuntu، Windows و macOS با Python 3.12 اجرا می‌شود.
+۳۷ فایل آزمون، شامل تنظیمات، محدودیت منابع، پیاده‌سازی (انتخاب سرویس‌دهنده، بازگشت STT، هم‌ترازی کلمات)، خلاصه‌ساز، اسلاید، qude، qualcode، research، هزینه، bridge (`test_bridge.py`)، نصب‌کننده‌ی افزونه (`test_obsidian_install.py`) و تلگرام (`test_channel_obsidian.py`، `test_channel_pipeline.py`، `test_channel_web.py`، `test_telegram_send.py`، `test_telegram_format.py`). CI روی Ubuntu، Windows و macOS با Python 3.12 اجرا می‌شود.
 
 ## انتشار
 

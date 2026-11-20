@@ -187,7 +187,7 @@ Plus the common LLM and prompt-note options.
 
 ## `telegram`
 
-`telegram login`, `telegram logout`, `telegram chats`, `telegram archive CHANNEL`, `telegram pack ARCHIVE`, `telegram taqrir CHAT` (taqrir of a chat's discussions between two dates). Fully documented in [Telegram channel archive](telegram.md).
+`telegram login`, `telegram logout`, `telegram chats` (filter by type, unread, archived; save as CSV/MD), `telegram contacts` (name, phone, username, id), `telegram members GROUP`, `telegram archive CHANNEL`, `telegram pack ARCHIVE`, `telegram taqrir CHAT` (taqrir of a chat's discussions between two dates), `telegram send LIST` (paced bulk send or forward to a CSV/MD list). Fully documented in [Telegram channel archive](telegram.md).
 
 ## `organize`
 

@@ -148,7 +148,7 @@ versline update
 | `versline transcribe` | صوت/ویدیو ← متن |
 | `versline translate` | ترجمه‌ی فایل |
 | `versline summarize` | خلاصه‌سازی |
-| `versline telegram` | بایگانی کانال تلگرام، تقریر مباحثات یک گفتگو |
+| `versline telegram` | بایگانی کانال تلگرام، تقریر مباحثات یک گفتگو، فهرست مخاطبین/گفتگوها، ارسال و فوروارد گروهی |
 | `versline organize` | فهرست‌برداری هارد و پیدا کردن فایل‌های تکراری |
 | `versline export` | خروجی Word و PDF از فایل‌های Markdown (همه‌ی دستورها هم `--export` دارند) |
 | `versline qude` | ساخت سؤال و فلش‌کارت (CSV، Anki، HTML) |
