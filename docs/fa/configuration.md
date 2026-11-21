@@ -58,6 +58,7 @@ versline config --path   # فقط مسیر config.env
 | `VERSLINE_LLM_PROXY` | | `socks5://host:port` یا `http://host:port` |
 | `VERSLINE_LLM_AVALAI_PROVIDER` | | راهنمای مسیریابی AvalAI (`google`، `openai`، `anthropic`) |
 | `VERSLINE_LLM_EXTRA_BODY` | | JSON اضافه برای بدنه‌ی درخواست‌های سازگار با OpenAI |
+| `VERSLINE_MAX_RETRIES` | `3` | تعداد تلاش برای هر درخواست مدل/پیاده‌سازی (۱ تا ۱۰) پیش از شکست آن تکه؛ فقط از متغیر محیطی فرایند خوانده می‌شود (افزونه‌ی آبسیدین آن را تنظیم می‌کند) |
 
 ### زمان‌بندی در پیاده‌سازی متن
 

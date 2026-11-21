@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Optional
 
 from loguru import logger
+from versline.core.constants import configured_max_retries
 
 from versline.config import settings
 from versline.core.prompts import load_prompt
@@ -211,7 +212,7 @@ class TextSummarizer:
     # LLM call (single chunk, standard mode)
     # ------------------------------------------------------------------
 
-    def summarize_chunk(self, text: str, model_name: str, max_retries: int = 3) -> str:
+    def summarize_chunk(self, text: str, model_name: str, max_retries: Optional[int] = None) -> str:
         prompt = self.prompt_template.format(
             text=text,
             language_instruction=self._language_instruction(),
@@ -222,6 +223,7 @@ class TextSummarizer:
         if self.user_note:
             prompt = prompt + f"\n\n---\n\n**Additional instructions from user:**\n{self.user_note}"
 
+        max_retries = max_retries or configured_max_retries()
         for attempt in range(max_retries):
             try:
                 provider = (settings.llm.provider or "google").lower()

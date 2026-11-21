@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type
 
 from loguru import logger
+from versline.core.constants import configured_max_retries
 
 from versline.config import settings
 from versline.core.prompts import load_prompt
@@ -58,9 +59,10 @@ class BaseResearchSectionWriter:
     ) -> str:
         raise NotImplementedError
 
-    def _call_llm(self, prompt: str, model_name: str, max_retries: int = 3) -> str:
+    def _call_llm(self, prompt: str, model_name: str, max_retries: Optional[int] = None) -> str:
         provider = (settings.llm.provider or "google").lower()
 
+        max_retries = max_retries or configured_max_retries()
         for attempt in range(max_retries):
             try:
                 if provider == "google":

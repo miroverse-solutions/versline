@@ -2,6 +2,7 @@ import os
 import time
 from pathlib import Path
 from loguru import logger
+from versline.core.constants import configured_max_retries
 from versline.config import settings
 from versline.services import ai
 from versline.services.ai import track_openai_usage
@@ -80,11 +81,12 @@ class TextTranslator:
 
             return extracted_text
 
-    def translate_chunk(self, text, target_language, model_name, max_retries=3):
+    def translate_chunk(self, text, target_language, model_name, max_retries=None):
         prompt = self.prompt_template.format(target_language=target_language, text=text)
         if self.user_note:
             prompt = prompt + f"\n\n---\n\n**Additional instructions from user:**\n{self.user_note}"
         
+        max_retries = max_retries or configured_max_retries()
         for attempt in range(max_retries):
             try:
                 provider = settings.llm.provider.lower() if settings.llm.provider else "google"

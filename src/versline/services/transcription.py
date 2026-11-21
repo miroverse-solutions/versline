@@ -7,6 +7,7 @@ import mimetypes
 import re
 from pathlib import Path
 from loguru import logger
+from versline.core.constants import configured_max_retries
 from versline.config import settings
 from versline.services import ai
 from versline.services.ai import track_openai_usage
@@ -211,8 +212,9 @@ class AudioTranscriber:
             logger.error(f"⚠️ Error loading progress: {e}")
             return 0, [], None, None
 
-    def transcribe_chunk_with_retry(self, model_name, audio_path, prompt, max_retries=3):
+    def transcribe_chunk_with_retry(self, model_name, audio_path, prompt, max_retries=None):
         chunk_name = Path(audio_path).name
+        max_retries = max_retries or configured_max_retries()
         for attempt in range(max_retries):
             try:
                 provider = self._resolve_provider_name()

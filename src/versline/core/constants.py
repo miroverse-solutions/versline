@@ -1,3 +1,5 @@
+import os
+
 from .types import AIProvider
 
 # Default chunking settings
@@ -17,6 +19,17 @@ DEFAULT_MODELS = {
 # Retry settings
 DEFAULT_MAX_RETRIES = 3
 DEFAULT_RETRY_DELAY = 2.0
+MAX_RETRIES_ENV = "VERSLINE_MAX_RETRIES"
+
+
+def configured_max_retries() -> int:
+    """Tries per API call: VERSLINE_MAX_RETRIES (1-10) if set, else DEFAULT_MAX_RETRIES."""
+    raw = os.environ.get(MAX_RETRIES_ENV, "").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return DEFAULT_MAX_RETRIES
+    return min(10, max(1, value))
 
 # Pricing constants (moved from qude/config.py)
 COST_PER_MILLION_TOKENS_USD_AVALAI = {"input": 2.50, "output": 10.00} # Fallback

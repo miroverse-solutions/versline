@@ -56,6 +56,7 @@ Written before the command name (`versline [OPTIONS] COMMAND ...`) or after its 
 | `VERSLINE_LLM_PROXY` | | `socks5://host:port` or `http://host:port` |
 | `VERSLINE_LLM_AVALAI_PROVIDER` | | Upstream hint for AvalAI routing (`google`, `openai`, `anthropic`) |
 | `VERSLINE_LLM_EXTRA_BODY` | | JSON merged into OpenAI-compatible request bodies |
+| `VERSLINE_MAX_RETRIES` | `3` | Tries per LLM/transcription request (1–10) before a chunk fails; read from the process environment only (the Obsidian plugin sets it) |
 
 ### Transcription timestamps
 

@@ -4,6 +4,7 @@ import time
 import json
 from typing import Optional, List, Dict, Any, Tuple
 from loguru import logger
+from versline.core.constants import configured_max_retries
 import openai
 from pydantic import BaseModel
 
@@ -410,11 +411,12 @@ class AIClient:
         content: str, 
         prompt: str, 
         batch_info: str = "",
-        max_retries: int = 3
+        max_retries: Optional[int] = None
     ) -> Tuple[List[Dict[str, Any]], float]:
         
         full_prompt = f"{prompt}\n\nContext:\n{content}"
         
+        max_retries = max_retries or configured_max_retries()
         for attempt in range(max_retries):
             try:
                 if self.provider in ["gemini", "google"]:
