@@ -46,6 +46,8 @@ Audio/video is split with ffmpeg into overlapping chunks (default 900 s, 180 s o
 
 Plus the common LLM and prompt-note options.
 
+Speech-to-text models (names containing `whisper`, `scribe` or `transcribe`, or an `--api-endpoint` ending in `/audio/transcriptions`) are sent to the `/audio/transcriptions` endpoint instead of `chat/completions`. They return plain text: the prompt, `--note` and speaker labels do not apply.
+
 ## `translate`
 
 ```sh

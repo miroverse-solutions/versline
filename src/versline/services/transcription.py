@@ -222,7 +222,11 @@ class AudioTranscriber:
                 logger.info(f"[{chunk_name}] attempt {attempt+1}/{max_retries} — provider={provider}, model={model_name}")
                 
                 result = None
-                if provider == "gemini":
+                if self._uses_stt_api(provider, model_name):
+                    ai.require_api_key(settings.llm, "openai")
+                    logger.info(f"[{chunk_name}] {model_name} is a speech-to-text model — using the /audio/transcriptions endpoint")
+                    result = self.transcribe_chunk_via_stt_api(model_name, audio_path, max_retries=1, stt=self._llm_stt_config(provider))
+                elif provider == "gemini":
                     client = ai.configure_gemini(settings.llm)
                     result = self.transcribe_audio_chunk_by_gemini(client, model_name, audio_path, prompt)
                 elif provider == "openai": # OpenAI
@@ -409,6 +413,41 @@ class AudioTranscriber:
         "openrouter": "https://openrouter.ai/api/v1",
     }
 
+    _STT_MODEL_KEYS = ("whisper", "scribe", "transcribe")
+    _ENDPOINT_PATH_SUFFIXES = ("/audio/transcriptions", "/chat/completions")
+
+    @classmethod
+    def _strip_endpoint_path(cls, endpoint: str | None) -> str | None:
+        """Reduce a full request URL (…/audio/transcriptions) to the base URL the API clients expect."""
+        value = (endpoint or "").strip().rstrip("/")
+        for suffix in cls._ENDPOINT_PATH_SUFFIXES:
+            if value.lower().endswith(suffix):
+                value = value[: -len(suffix)].rstrip("/")
+                break
+        return value or None
+
+    def _uses_stt_api(self, provider: str, model_name: str) -> bool:
+        """True when the main transcription must go to /audio/transcriptions instead of chat/completions."""
+        if provider == "gemini":
+            return False
+        endpoint = (settings.llm.api_endpoint or "").strip().rstrip("/").lower()
+        if endpoint.endswith("/audio/transcriptions"):
+            return True
+        name = (model_name or "").lower().rsplit("/", 1)[-1]
+        return any(key in name for key in self._STT_MODEL_KEYS)
+
+    def _llm_stt_config(self, provider: str) -> dict:
+        """STT settings for the main transcription: the LLM endpoint/key/proxy, language from the STT settings."""
+        llm = settings.llm
+        endpoint = self._STT_PROVIDER_ENDPOINTS.get(provider) if provider == "openrouter" else None
+        endpoint = endpoint or self._strip_endpoint_path(llm.api_endpoint) or self._STT_PROVIDER_ENDPOINTS.get(provider)
+        return {
+            "endpoint": (endpoint or "https://api.openai.com/v1").rstrip("/"),
+            "api_key": llm.api_key or os.getenv("OPENAI_API_KEY"),
+            "proxy": llm.proxy,
+            "language": (settings.transcription.timestamp_language or "").strip() or None,
+        }
+
     def _resolve_stt_config(self) -> dict:
         """Resolve STT endpoint/key/proxy/language; each STT setting falls back to the LLM one."""
         t = settings.transcription
@@ -466,10 +505,10 @@ class AudioTranscriber:
             return resp
         raise last_exc
 
-    def transcribe_chunk_via_stt_api(self, model_name: str, audio_path: str, max_retries: int = 2, with_timestamps: bool = False):
+    def transcribe_chunk_via_stt_api(self, model_name: str, audio_path: str, max_retries: int = 2, with_timestamps: bool = False, stt: dict | None = None):
         """Transcribe using the /v1/audio/transcriptions endpoint (STT API).
         If with_timestamps=True, tries native timestamps first, falls back to chunk-based."""
-        stt = self._resolve_stt_config()
+        stt = stt or self._resolve_stt_config()
         api_key = stt["api_key"]
         timestamp_proxy = stt["proxy"]
         timestamp_language = stt["language"]

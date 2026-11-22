@@ -46,6 +46,8 @@ versline transcribe FILE_OR_URL_OR_FOLDER... [OPTIONS]
 
 به‌علاوه‌ی گزینه‌های مشترک LLM و یادداشت.
 
+مدل‌های تبدیل گفتار به متن (نام شامل `whisper`، `scribe` یا `transcribe`، یا `--api-endpoint` که به `/audio/transcriptions` ختم شود) به‌جای `chat/completions` به نقطه‌ی `/audio/transcriptions` فرستاده می‌شوند. خروجی متن ساده است: پرامپت، `--note` و برچسب گوینده اثری ندارد.
+
 ## `translate`
 
 ```sh
