@@ -36,6 +36,7 @@ Audio/video is split with ffmpeg into overlapping chunks (default 900 s, 180 s o
 | `-f, --force` | Ignore the cache | off |
 | `--fallback-model NAME` | Model that gets only the chunks the main model blocks (content policy); see [Blocked chunks](#blocked-chunks) | `VERSLINE_TRANSCRIPTION_FALLBACK_MODEL` |
 | `--fallback-provider/-api-key/-api-endpoint/-proxy` | Connection for the fallback model (key and endpoint are inherited only when the provider is the same) | LLM settings |
+| `--fallback-extra-body JSON` / `--fallback-own-settings` | Extra body only for the fallback model; own settings stop it inheriting the LLM extra body on the same provider | `VERSLINE_TRANSCRIPTION_FALLBACK_EXTRA_BODY` / `…_OWN_SETTINGS` |
 | `--skip-blocked` | Without a fallback model: skip blocked chunks (a placeholder marks the gap) instead of aborting | off |
 | `--compress` | Re-encode audio to mono low-bitrate mp3 before splitting so chunks stay small (avoids provider payload limits) | off |
 | `--compress-kbps` | Bitrate (kbps) used by `--compress` | 32 |

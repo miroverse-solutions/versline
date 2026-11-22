@@ -166,7 +166,8 @@ class AudioTranscriber:
 
         Empty fallback fields take the main LLM value, except that the key, endpoint and provider-specific
         extras are only inherited when the fallback uses the same provider (a Gemini key must not go to
-        OpenRouter).
+        OpenRouter). With fallback_own_settings the extras (extra body, AvalAI hint) are never inherited, so a
+        second model on the same provider can run without the main model's extra body.
         """
         t = settings.transcription
         model = (t.fallback_model or "").strip()
@@ -176,14 +177,16 @@ class AudioTranscriber:
         main_provider = llm.provider or os.getenv("VERSLINE_LLM_PROVIDER") or "google"
         provider = (t.fallback_provider or "").strip() or main_provider
         same = self._normalize_provider(provider) == self._normalize_provider(main_provider)
+        inherit_extras = same and not t.fallback_own_settings
         return {
             "provider": provider,
             "model": model,
             "api_key": t.fallback_api_key or (llm.api_key if same else None),
             "api_endpoint": t.fallback_api_endpoint or (llm.api_endpoint if same else None),
             "proxy": t.fallback_proxy or llm.proxy,
-            "extra_body": llm.extra_body if same else None,
-            "avalai_provider": llm.avalai_provider if same else None,
+            "extra_body": t.fallback_extra_body if t.fallback_extra_body is not None
+            else (llm.extra_body if inherit_extras else None),
+            "avalai_provider": llm.avalai_provider if inherit_extras else None,
         }
 
     @staticmethod

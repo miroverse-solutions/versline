@@ -36,6 +36,7 @@ versline transcribe FILE_OR_URL_OR_FOLDER... [OPTIONS]
 | `-f, --force` | نادیده گرفتن کش | خاموش |
 | `--fallback-model NAME` | مدلی که فقط تکه‌های ردشده توسط مدل اصلی (سیاست محتوا) را می‌گیرد؛ [تکه‌های مسدودشده](#blocked-chunks) را ببینید | `VERSLINE_TRANSCRIPTION_FALLBACK_MODEL` |
 | `--fallback-provider/-api-key/-api-endpoint/-proxy` | اتصال مدل جایگزین (کلید و endpoint فقط وقتی سرویس یکی باشد به ارث می‌رسند) | تنظیمات LLM |
+| `--fallback-extra-body JSON` / `--fallback-own-settings` | extra body فقط برای مدل جایگزین؛ تنظیمات جداگانه مانع به ارث رسیدن extra body مدل اصلی (با همان سرویس‌دهنده) می‌شود | `VERSLINE_TRANSCRIPTION_FALLBACK_EXTRA_BODY` / `…_OWN_SETTINGS` |
 | `--skip-blocked` | بدون مدل جایگزین: به‌جای توقف، از تکه‌های مسدودشده رد شو (جای خالی با یک نشانه مشخص می‌شود) | خاموش |
 | `--compress` | بازکدگذاری صوت به mp3 تک‌کاناله با بیت‌ریت پایین پیش از تکه‌کردن، تا حجم تکه‌ها کم بماند (برای محدودیت حجم درخواست) | خاموش |
 | `--compress-kbps` | بیت‌ریت (kbps) برای `--compress` | 32 |

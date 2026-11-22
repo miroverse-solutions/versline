@@ -11,7 +11,8 @@ from versline.services import transcription as tr
 from versline.services.transcription import AudioTranscriber, ContentBlockedError, uncovered_ranges
 
 LLM_FIELDS = ("provider", "model", "api_key", "api_endpoint", "proxy", "extra_body", "avalai_provider")
-FALLBACK_FIELDS = ("fallback_model", "fallback_provider", "fallback_api_key", "fallback_api_endpoint", "fallback_proxy")
+FALLBACK_FIELDS = ("fallback_model", "fallback_provider", "fallback_api_key", "fallback_api_endpoint", "fallback_proxy",
+                   "fallback_own_settings", "fallback_extra_body")
 
 
 class _SettingsCase(unittest.TestCase):
@@ -70,6 +71,43 @@ class TestFallbackConfig(_SettingsCase):
         settings.transcription.fallback_model = "gemini-other"
         settings.transcription.fallback_provider = "gemini"
         self.assertEqual(AudioTranscriber().fallback_config()["api_key"], "gemini-key")
+
+
+class TestFallbackOwnSettings(_SettingsCase):
+    def setUp(self):
+        super().setUp()
+        settings.llm.extra_body = {"reasoning": {"max_tokens": 1500}}
+        settings.llm.avalai_provider = "google"
+        settings.transcription.fallback_model = "gemini-other"
+
+    def test_same_provider_inherits_extras_by_default(self):
+        cfg = AudioTranscriber().fallback_config()
+        self.assertEqual(cfg["extra_body"], {"reasoning": {"max_tokens": 1500}})
+        self.assertEqual(cfg["avalai_provider"], "google")
+
+    def test_own_settings_drop_extras_but_keep_key(self):
+        settings.transcription.fallback_own_settings = True
+        cfg = AudioTranscriber().fallback_config()
+        self.assertIsNone(cfg["extra_body"])
+        self.assertIsNone(cfg["avalai_provider"])
+        self.assertEqual(cfg["api_key"], "gemini-key")
+
+    def test_explicit_extra_body_wins_in_both_modes(self):
+        settings.transcription.fallback_extra_body = {"thinking": False}
+        self.assertEqual(AudioTranscriber().fallback_config()["extra_body"], {"thinking": False})
+        settings.transcription.fallback_own_settings = True
+        self.assertEqual(AudioTranscriber().fallback_config()["extra_body"], {"thinking": False})
+
+    def test_config_set_validates_and_compacts_extra_body(self):
+        from versline.bridge.tools import system
+        key = "VERSLINE_TRANSCRIPTION_FALLBACK_EXTRA_BODY"
+        with patch("versline.userenv.update_env") as update, patch.object(system, "config_get", return_value={}):
+            with self.assertRaises(ValueError):
+                system.config_set(system.ConfigSetParams(values={key: "[1]"}), None)
+            with self.assertRaises(ValueError):
+                system.config_set(system.ConfigSetParams(values={key: "{bad"}), None)
+            system.config_set(system.ConfigSetParams(values={key: '{"a": {"b": 1}}'}), None)
+        self.assertEqual(update.call_args[0][0][key], '{"a":{"b":1}}')
 
 
 class TestUncoveredRanges(unittest.TestCase):

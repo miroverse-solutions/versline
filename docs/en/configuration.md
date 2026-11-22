@@ -84,6 +84,8 @@ Gets only the chunks the main model blocks for content-policy reasons; see [Bloc
 | `VERSLINE_TRANSCRIPTION_FALLBACK_API_KEY` | LLM key, same provider only | API key for the fallback provider |
 | `VERSLINE_TRANSCRIPTION_FALLBACK_API_ENDPOINT` | LLM endpoint, same provider only | Custom endpoint |
 | `VERSLINE_TRANSCRIPTION_FALLBACK_PROXY` | LLM proxy | Proxy |
+| `VERSLINE_TRANSCRIPTION_FALLBACK_OWN_SETTINGS` | `false` | `true`: even on the same provider the fallback model does not inherit the LLM extra body (key, endpoint and proxy are still inherited when empty) |
+| `VERSLINE_TRANSCRIPTION_FALLBACK_EXTRA_BODY` | LLM extra body, same provider only | JSON object sent only with the fallback model's requests; empty with own settings means no extra body |
 
 ### Media
 

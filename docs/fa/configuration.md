@@ -86,6 +86,8 @@ versline config --path   # فقط مسیر config.env
 | `VERSLINE_TRANSCRIPTION_FALLBACK_API_KEY` | کلید LLM، فقط برای همان سرویس | کلید API سرویس جایگزین |
 | `VERSLINE_TRANSCRIPTION_FALLBACK_API_ENDPOINT` | endpoint LLM، فقط برای همان سرویس | endpoint سفارشی |
 | `VERSLINE_TRANSCRIPTION_FALLBACK_PROXY` | پروکسی LLM | پروکسی |
+| `VERSLINE_TRANSCRIPTION_FALLBACK_OWN_SETTINGS` | `false` | `true`: حتی با همان سرویس‌دهنده، مدل جایگزین extra body مدل اصلی را به ارث نمی‌برد (کلید، endpoint و پروکسی در صورت خالی بودن همچنان به ارث می‌رسند) |
+| `VERSLINE_TRANSCRIPTION_FALLBACK_EXTRA_BODY` | extra body مدل اصلی، فقط برای همان سرویس | شیء JSON که فقط با درخواست‌های مدل جایگزین فرستاده می‌شود؛ خالی و همراه با تنظیمات جداگانه یعنی بدون extra body |
 
 <a id="media"></a>
 ### رسانه

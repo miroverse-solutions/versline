@@ -75,6 +75,16 @@ class TranscriptionSettings(BaseSettings):
         default=None,
         description="Proxy for the fallback model. Defaults to the LLM proxy",
     )
+    fallback_own_settings: bool = Field(
+        default=False,
+        description="Do not pass the LLM extra body / AvalAI hint to the fallback model even when the provider is the "
+        "same; only fallback_extra_body is sent. Key, endpoint and proxy are still inherited when empty",
+    )
+    fallback_extra_body: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Extra JSON merged into the fallback model's request body. Defaults to the LLM extra body only "
+        "when the provider is the same and fallback_own_settings is off",
+    )
 
     model_config = SettingsConfigDict(env_prefix='VERSLINE_TRANSCRIPTION_', env_file='.env', extra='ignore')
 

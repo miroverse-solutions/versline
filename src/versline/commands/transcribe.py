@@ -9,7 +9,7 @@ from loguru import logger
 import os
 
 from versline.services.transcription import AudioTranscriber
-from versline.config import settings
+from versline.config import settings, parse_extra_body
 from versline.services.network import download_file
 from versline.services.pricing import print_cost_report
 from versline.core.prompts import load_prompt, resolve_user_note
@@ -96,6 +96,8 @@ def transcribe_file(
     fallback_api_key: Optional[str] = typer.Option(None, "--fallback-api-key", help="API key for the fallback model (needed when its provider differs)"),
     fallback_api_endpoint: Optional[str] = typer.Option(None, "--fallback-api-endpoint", help="API endpoint for the fallback model"),
     fallback_proxy: Optional[str] = typer.Option(None, "--fallback-proxy", help="Proxy for the fallback model. Defaults to the LLM proxy"),
+    fallback_extra_body: Optional[str] = typer.Option(None, "--fallback-extra-body", help="Extra JSON for the fallback model's request body (instead of the LLM one)"),
+    fallback_own_settings: bool = typer.Option(False, "--fallback-own-settings", help="Do not pass the LLM extra body to the fallback model even with the same provider"),
 ):
     """
     Transcribe one or more files, URLs or folders. Finished files are skipped; interrupted ones resume.
@@ -141,6 +143,13 @@ def transcribe_file(
         settings.transcription.fallback_api_endpoint = fallback_api_endpoint
     if fallback_proxy:
         settings.transcription.fallback_proxy = fallback_proxy
+    if fallback_extra_body:
+        try:
+            settings.transcription.fallback_extra_body = parse_extra_body(fallback_extra_body)
+        except ValueError as e:
+            raise typer.BadParameter(str(e).replace("--extra-body", "--fallback-extra-body"), param_hint="--fallback-extra-body")
+    if fallback_own_settings:
+        settings.transcription.fallback_own_settings = True
         
     inputs = expand_inputs(file_paths, MEDIA_EXTENSIONS, recursive=recursive, allow_urls=True)
     if not inputs:

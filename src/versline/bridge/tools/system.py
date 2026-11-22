@@ -18,6 +18,8 @@ WRITABLE_KEYS = {
     "VERSLINE_EXPORT_PAGE_FORMAT", "VERSLINE_EXPORT_MARGIN",
     "VERSLINE_TRANSCRIPTION_FALLBACK_MODEL", "VERSLINE_TRANSCRIPTION_FALLBACK_PROVIDER",
     "VERSLINE_TRANSCRIPTION_FALLBACK_API_KEY", "VERSLINE_TRANSCRIPTION_FALLBACK_API_ENDPOINT",
+    "VERSLINE_TRANSCRIPTION_FALLBACK_PROXY", "VERSLINE_TRANSCRIPTION_FALLBACK_OWN_SETTINGS",
+    "VERSLINE_TRANSCRIPTION_FALLBACK_EXTRA_BODY",
 }
 PROVIDER_KEYS = ("VERSLINE_LLM_PROVIDER", "VERSLINE_TRANSCRIPTION_FALLBACK_PROVIDER")
 
@@ -92,7 +94,15 @@ def config_set(p: ConfigSetParams, ctx):
         provider = p.values.get(key)
         if provider and provider not in PROVIDERS:
             raise ValueError(f"Unknown provider {provider!r}; choose from {', '.join(PROVIDERS)}")
-    update_env(dict(p.values))
+    values = dict(p.values)
+    extra = values.get("VERSLINE_TRANSCRIPTION_FALLBACK_EXTRA_BODY")
+    if extra:
+        import json
+        from versline.config import parse_extra_body
+        # config.env is line based: store the object as compact single-line JSON.
+        values["VERSLINE_TRANSCRIPTION_FALLBACK_EXTRA_BODY"] = json.dumps(
+            parse_extra_body(extra), ensure_ascii=False, separators=(",", ":"))
+    update_env(values)
     return config_get(NoParams(), ctx)
 
 
