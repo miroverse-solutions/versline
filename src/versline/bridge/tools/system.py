@@ -16,7 +16,10 @@ WRITABLE_KEYS = {
     "VERSLINE_LLM_PROXY", "VERSLINE_TELEGRAM_PROXY", "VERSLINE_TRANSCRIPTION_TIMESTAMP_MODEL",
     "VERSLINE_TRANSCRIPTION_TIMESTAMP_API_KEY", "VERSLINE_TRANSCRIPTION_TIMESTAMP_PROVIDER",
     "VERSLINE_EXPORT_PAGE_FORMAT", "VERSLINE_EXPORT_MARGIN",
+    "VERSLINE_TRANSCRIPTION_FALLBACK_MODEL", "VERSLINE_TRANSCRIPTION_FALLBACK_PROVIDER",
+    "VERSLINE_TRANSCRIPTION_FALLBACK_API_KEY", "VERSLINE_TRANSCRIPTION_FALLBACK_API_ENDPOINT",
 }
+PROVIDER_KEYS = ("VERSLINE_LLM_PROVIDER", "VERSLINE_TRANSCRIPTION_FALLBACK_PROVIDER")
 
 
 class NoParams(Params):
@@ -85,9 +88,10 @@ def config_set(p: ConfigSetParams, ctx):
     bad = sorted(set(p.values) - WRITABLE_KEYS)
     if bad:
         raise ValueError(f"Not writable: {', '.join(bad)}")
-    provider = p.values.get("VERSLINE_LLM_PROVIDER")
-    if provider and provider not in PROVIDERS:
-        raise ValueError(f"Unknown provider {provider!r}; choose from {', '.join(PROVIDERS)}")
+    for key in PROVIDER_KEYS:
+        provider = p.values.get(key)
+        if provider and provider not in PROVIDERS:
+            raise ValueError(f"Unknown provider {provider!r}; choose from {', '.join(PROVIDERS)}")
     update_env(dict(p.values))
     return config_get(NoParams(), ctx)
 

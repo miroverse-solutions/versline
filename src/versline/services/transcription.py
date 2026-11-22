@@ -1,4 +1,5 @@
 import hashlib
+from contextlib import contextmanager
 import os
 import time
 import json
@@ -42,6 +43,70 @@ class ContentBlockedError(RuntimeError):
     """Provider refused the content (policy block); retries are pointless."""
 
 
+# Signs of a content-policy refusal in provider errors/finish reasons (OpenAI, Azure, Gemini, OpenRouter, AvalAI).
+_BLOCK_MARKERS_ANYCASE = (
+    "content_filter", "content filter", "content_policy", "content policy", "prohibited_content",
+    "responsibleaipolicyviolation", "block_reason", "blockedreason", "blocklist",
+)
+# Gemini enum names; matched case-sensitively so ordinary words like "safety" in other errors don't count.
+_BLOCK_MARKERS_EXACT = ("SAFETY", "SPII", "IMAGE_SAFETY")
+_BLOCK_FINISH_REASONS = {"content_filter", "safety", "prohibited_content", "blocklist", "spii", "image_safety"}
+
+
+def _is_content_block(text: object) -> bool:
+    """True when an error message / payload looks like a content-policy block."""
+    value = str(text or "")
+    lowered = value.lower()
+    return any(m in lowered for m in _BLOCK_MARKERS_ANYCASE) or any(
+        re.search(rf"\b{m}\b", value) for m in _BLOCK_MARKERS_EXACT
+    )
+
+
+def _enum_name(value: object) -> str:
+    """'FinishReason.SAFETY' / FinishReason.SAFETY / 'safety' -> 'safety'."""
+    name = getattr(value, "name", None) or str(value or "")
+    return name.rsplit(".", 1)[-1].strip().lower()
+
+
+def format_clock(seconds: float) -> str:
+    """Seconds -> M:SS, or H:MM:SS past an hour."""
+    total = max(0, int(round(seconds)))
+    h, rem = divmod(total, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
+def uncovered_ranges(chunks: list[dict]) -> list[tuple[float, float]]:
+    """Time ranges covered only by skipped chunks.
+
+    ``chunks`` holds {start, end, ok} per chunk. Parts of a skipped chunk that a transcribed neighbour also
+    covers (the overlap) are not missing; touching or overlapping gaps are joined into one range.
+    """
+    covered = sorted((c["start"], c["end"]) for c in chunks if c.get("ok"))
+    gaps: list[tuple[float, float]] = []
+    for c in sorted((c for c in chunks if not c.get("ok")), key=lambda c: c["start"]):
+        pieces = [(c["start"], c["end"])]
+        for cs, ce in covered:
+            next_pieces = []
+            for ps, pe in pieces:
+                if ce <= ps or cs >= pe:
+                    next_pieces.append((ps, pe))
+                    continue
+                if cs > ps:
+                    next_pieces.append((ps, cs))
+                if ce < pe:
+                    next_pieces.append((ce, pe))
+            pieces = next_pieces
+        for ps, pe in pieces:
+            if pe - ps < 0.5:
+                continue
+            if gaps and ps <= gaps[-1][1] + 0.5:
+                gaps[-1] = (gaps[-1][0], max(gaps[-1][1], pe))
+            else:
+                gaps.append((ps, pe))
+    return gaps
+
+
 def _work_dir_for(file_path: str) -> Path:
     """Per-file cache directory, keyed by file stem.
 
@@ -68,6 +133,8 @@ class AudioTranscriber:
     def __init__(self, user_note: str | None = None):
         self.tracker = TokenTracker()
         self.user_note = user_note
+        # Time ranges left out of the last transcribed file because every model blocked them.
+        self.skipped_ranges: list[dict] = []
         try:
             self.transcription_prompt = load_prompt("transcription_prompt.md")
         except FileNotFoundError:
@@ -75,20 +142,134 @@ class AudioTranscriber:
             self.transcription_prompt = ""
         # self.json_prompt = ... # handled if needed
 
+    _PROVIDER_ALIASES = {
+        "google": "gemini",
+        "openai-compatible": "openaicompatible",
+        "openai_compatible": "openaicompatible",
+        "custom": "openaicompatible",
+    }
+
+    @classmethod
+    def _normalize_provider(cls, name: str | None) -> str:
+        normalized = str(name or "").strip().lower()
+        return cls._PROVIDER_ALIASES.get(normalized, normalized)
+
     def _resolve_provider_name(self) -> str:
-        raw_provider = (
+        return self._normalize_provider(
             settings.llm.provider
             or os.getenv("VERSLINE_LLM_PROVIDER")
             or "google"
         )
-        normalized = str(raw_provider).strip().lower()
-        aliases = {
-            "google": "gemini",
-            "openai-compatible": "openaicompatible",
-            "openai_compatible": "openaicompatible",
-            "custom": "openaicompatible",
+
+    def fallback_config(self) -> dict | None:
+        """LLM settings for the fallback model, or None when no fallback model is configured.
+
+        Empty fallback fields take the main LLM value, except that the key, endpoint and provider-specific
+        extras are only inherited when the fallback uses the same provider (a Gemini key must not go to
+        OpenRouter).
+        """
+        t = settings.transcription
+        model = (t.fallback_model or "").strip()
+        if not model:
+            return None
+        llm = settings.llm
+        main_provider = llm.provider or os.getenv("VERSLINE_LLM_PROVIDER") or "google"
+        provider = (t.fallback_provider or "").strip() or main_provider
+        same = self._normalize_provider(provider) == self._normalize_provider(main_provider)
+        return {
+            "provider": provider,
+            "model": model,
+            "api_key": t.fallback_api_key or (llm.api_key if same else None),
+            "api_endpoint": t.fallback_api_endpoint or (llm.api_endpoint if same else None),
+            "proxy": t.fallback_proxy or llm.proxy,
+            "extra_body": llm.extra_body if same else None,
+            "avalai_provider": llm.avalai_provider if same else None,
         }
-        return aliases.get(normalized, normalized)
+
+    @staticmethod
+    @contextmanager
+    def _llm_settings(overrides: dict):
+        """Temporarily replace fields of settings.llm (restored even on error)."""
+        llm = settings.llm
+        saved = {key: getattr(llm, key) for key in overrides}
+        try:
+            for key, value in overrides.items():
+                setattr(llm, key, value)
+            yield
+        finally:
+            for key, value in saved.items():
+                setattr(llm, key, value)
+
+    def _transcribe_blocked_chunk(self, error, index, total, chunk_path, prompt, chunk_length, overlap, skip_blocked):
+        """A chunk the main model blocked: try the fallback model, else skip it (or re-raise).
+
+        Returns (text, skipped_record); skipped_record is None when the fallback transcribed the chunk.
+        """
+        main_model = settings.llm.model
+        models = [main_model]
+        start = index * max(1, chunk_length - overlap)
+        try:
+            length = media.get_audio_duration(chunk_path) or chunk_length
+        except Exception:
+            length = chunk_length
+        end = start + length
+        span = f"{format_clock(start)}–{format_clock(end)}"
+        fallback = self.fallback_config()
+        last_error = error
+        if fallback:
+            models.append(fallback["model"])
+            logger.warning(
+                f"⚠️ [{index+1}/{total}] chunk {span} blocked by {main_model}; "
+                f"sending only this chunk to the fallback model {fallback['model']} ({fallback['provider']})"
+            )
+            try:
+                with self._llm_settings(fallback):
+                    text = self.transcribe_chunk_with_retry(fallback["model"], chunk_path, prompt)
+                logger.info(
+                    f"✅ [{index+1}/{total}] chunk {span} transcribed by fallback model {fallback['model']}; "
+                    f"the next chunk goes back to {main_model}"
+                )
+                return text, None
+            except ContentBlockedError as e:
+                last_error = e
+            except ai.MissingAPIKeyError as e:
+                raise ai.MissingAPIKeyError(
+                    f"Fallback model {fallback['model']}: {e} "
+                    "For a fallback on another provider, set VERSLINE_TRANSCRIPTION_FALLBACK_API_KEY "
+                    "(or --fallback-api-key)."
+                ) from e
+        elif not skip_blocked:
+            message = (
+                f"Chunk {index+1}/{total} ({span}) was blocked by the content policy of {main_model}. "
+                "Set a fallback model (VERSLINE_TRANSCRIPTION_FALLBACK_MODEL or --fallback-model) or use "
+                "--skip-blocked. Progress up to the previous chunk is saved."
+            )
+            logger.error(message)
+            raise ContentBlockedError(message) from error
+
+        record = {
+            "index": index, "start": start, "end": end, "models": models, "reason": str(last_error)[:300],
+        }
+        logger.warning(f"⏭ [{index+1}/{total}] chunk {span} skipped: blocked by {' and '.join(models)}")
+        return self._placeholder(start, end, models), record
+
+    @staticmethod
+    def _placeholder(start: float, end: float, models: list) -> str:
+        return (
+            f"[⚠️ {format_clock(start)} تا {format_clock(end)} پیاده نشد: "
+            f"مسدود شده توسط سیاست محتوای سرویس ({', '.join(models)})]"
+        )
+
+    def _fix_placeholders(self, blocks: list, skipped: list, ranges: list[dict]) -> None:
+        """Make each gap's placeholder name the really missing range (without the overlap neighbours cover).
+
+        Consecutive skipped chunks form one gap, so only the first of them keeps a placeholder.
+        """
+        for gap in ranges:
+            touching = sorted((r["index"] for r in skipped if r["start"] < gap["end"] and r["end"] > gap["start"]))
+            for n, index in enumerate(touching):
+                if index < len(blocks) and str(blocks[index]).startswith("[⚠️"):
+                    blocks[index] = self._placeholder(gap["start"], gap["end"], gap["models"]) if n == 0 else ""
 
     def _build_avalai_extra_body(self, model_name: str) -> dict | None:
         explicit_provider = (
@@ -173,13 +354,15 @@ class AudioTranscriber:
 
         return prompt
 
-    def save_progress(self, progress_file: str, chunk_index: int, transcriptions: list, chunk_meta: dict | None = None, speaker_samples: dict | None = None):
+    def save_progress(self, progress_file: str, chunk_index: int, transcriptions: list, chunk_meta: dict | None = None, speaker_samples: dict | None = None, skipped: list | None = None):
         data = {
             "last_chunk_index": chunk_index,
             "transcriptions": transcriptions
         }
         if speaker_samples is not None:
             data["speaker_samples"] = speaker_samples
+        if skipped is not None:
+            data["skipped"] = skipped
         if chunk_meta is not None:
             data["chunk_meta"] = chunk_meta
         else:
@@ -211,6 +394,16 @@ class AudioTranscriber:
         except Exception as e:
             logger.error(f"⚠️ Error loading progress: {e}")
             return 0, [], None, None
+
+    @staticmethod
+    def load_skipped(progress_file: str) -> list:
+        """Chunks skipped in an earlier (interrupted) run of this file, as saved in progress.json."""
+        try:
+            with open(progress_file, "r", encoding="utf-8") as f:
+                skipped = json.load(f).get("skipped") or []
+            return [r for r in skipped if isinstance(r, dict)]
+        except (OSError, ValueError):
+            return []
 
     def transcribe_chunk_with_retry(self, model_name, audio_path, prompt, max_retries=None):
         chunk_name = Path(audio_path).name
@@ -264,15 +457,15 @@ class AudioTranscriber:
                     return result
                 raise RuntimeError("Empty transcription result (model returned blank response)")
             except ContentBlockedError as e:
-                logger.error(
-                    f"[{chunk_name}] {e}. Try a different model/provider for this file "
-                    f"(e.g. a non-Gemini model); progress up to the previous chunk is saved."
-                )
+                logger.warning(f"[{chunk_name}] blocked by {model_name}: {e}")
                 raise
             except ai.MissingAPIKeyError as e:
                 logger.error(f"[{chunk_name}] {e}")
                 raise
             except Exception as e:
+                if _is_content_block(e):
+                    logger.warning(f"[{chunk_name}] blocked by {model_name}: {e}")
+                    raise ContentBlockedError(f"Request blocked by provider content policy: {e}") from e
                 endpoint_hint = getattr(settings.llm, "api_endpoint", None) or "(default)"
                 if attempt < max_retries - 1:
                     wait_time = (attempt + 1) * 5
@@ -304,23 +497,44 @@ class AudioTranscriber:
             if uploaded_file.state.name == "FAILED":
                  raise ValueError("File processing failed")
 
-            response = client.models.generate_content(
-                model=model_name,
-                contents=[prompt, uploaded_file]
-            )
-            
-            # Cleanup
-            client.files.delete(name=uploaded_file.name)
-            
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=[prompt, uploaded_file]
+                )
+            finally:
+                try:
+                    client.files.delete(name=uploaded_file.name)
+                except Exception as cleanup_error:
+                    logger.debug(f"Could not delete uploaded Gemini file: {cleanup_error}")
+
             if response.usage_metadata:
                 self.tracker.add_usage(
                     response.usage_metadata.prompt_token_count,
                     response.usage_metadata.candidates_token_count
                 )
-            
-            return response.text
+
+            feedback = getattr(response, "prompt_feedback", None)
+            block_reason = getattr(feedback, "block_reason", None) if feedback else None
+            if block_reason:
+                raise ContentBlockedError(
+                    f"Request blocked by Gemini content policy (block_reason={_enum_name(block_reason).upper()})"
+                )
+            text = response.text
+            if not (text and text.strip()):
+                candidates = getattr(response, "candidates", None) or []
+                finish = _enum_name(getattr(candidates[0], "finish_reason", None)) if candidates else ""
+                if finish in _BLOCK_FINISH_REASONS:
+                    raise ContentBlockedError(
+                        f"Response blocked by Gemini content policy (finish_reason={finish.upper()})"
+                    )
+            return text
+        except ContentBlockedError:
+            raise
         except Exception as e:
             logger.error(f"Gemini Error: {e}")
+            if _is_content_block(e):
+                raise ContentBlockedError(f"Request blocked by Gemini content policy: {e}") from e
             raise
 
     def _normalize_native_segments(self, segments):
@@ -705,113 +919,37 @@ class AudioTranscriber:
                 if err is None:
                     err = (getattr(completion, "model_extra", None) or {}).get("error")
                 err_text = str(err or completion)
-                if "PROHIBITED_CONTENT" in err_text or "content_policy_violation" in err_text:
+                if _is_content_block(err_text):
                     raise ContentBlockedError(
                         f"Request blocked by provider content policy (retrying will not help): {err_text}"
                     )
                 raise RuntimeError(f"Provider returned no choices: {err_text}")
             content = choices[0].message.content
+            finish = _enum_name(getattr(choices[0], "finish_reason", None))
+            if finish in _BLOCK_FINISH_REASONS and not (content and content.strip()):
+                raise ContentBlockedError(
+                    f"Response blocked by provider content policy (finish_reason={finish})"
+                )
             if content is None:
                 raise RuntimeError(
                     f"Provider returned empty content (finish_reason={choices[0].finish_reason})"
                 )
             return content
+        except ContentBlockedError as e:
+            logger.error(f"{e} (endpoint={getattr(client, 'base_url', 'unknown')}, model={model_name})")
+            raise
         except Exception as e:
             endpoint = getattr(client, "base_url", "unknown")
+            detail = _provider_error_detail(e)
             logger.error(
-                f"API call failed — {type(e).__name__}: {e}{_provider_error_detail(e)} "
+                f"API call failed — {type(e).__name__}: {e}{detail} "
                 f"(endpoint={endpoint}, model={model_name})"
             )
+            if _is_content_block(f"{e}{detail}") or _is_content_block(getattr(e, "body", None)):
+                raise ContentBlockedError(
+                    f"Request blocked by provider content policy (retrying will not help): {e}{detail}"
+                ) from e
             raise
-
-    def process_file(self, file_path: str, chunk_length=900, overlap=180, progress_callback=None, force=False):
-        import shutil
-        file_path = str(Path(file_path).resolve())
-        work_dir = Path("work_dir") / Path(file_path).stem
-        work_dir.mkdir(parents=True, exist_ok=True)
-        temp_dir = work_dir / "temp_chunks"
-        progress_file = work_dir / "progress.json"
-        
-        if reuse_only:
-            force = False
-        if force:
-            if progress_file.exists():
-                logger.warning("Force mode enabled: Deleting previous progress.")
-                try:
-                    progress_file.unlink()
-                except OSError as e:
-                    logger.warning(f"Failed to delete progress file: {e}")
-            if temp_dir.exists():
-                logger.warning("Force mode enabled: Deleting cached audio chunks.")
-                try:
-                    shutil.rmtree(str(temp_dir))
-                except OSError as e:
-                    logger.warning(f"Failed to delete temp chunks: {e}")
-        
-        last_index, transcriptions, _, speaker_samples = self.load_progress(str(progress_file))
-        if speaker_samples is None:
-            speaker_samples = {}
-
-        existing_chunks = media.usable_cached_chunks(sorted(temp_dir.glob("chunk_*.*"))) if temp_dir.exists() else []
-        if existing_chunks:
-            logger.info(f"📂 Using {len(existing_chunks)} cached audio chunks (skipping re-split).")
-            chunks = [str(p) for p in existing_chunks]
-        else:
-            chunks = media.split_audio_with_ffmpeg(
-                file_path, chunk_length, overlap, str(temp_dir)
-            )
-        
-        total_chunks = len(chunks)
-        if reuse_only:
-            if not transcriptions or last_index < total_chunks:
-                raise RuntimeError(
-                    f"--reuse-transcript: cached transcript is incomplete ({last_index}/{total_chunks} chunks) in {progress_file}"
-                )
-            logger.info(f"♻️ Reusing cached transcript ({total_chunks} chunks), skipping main transcription.")
-            return self.merge_transcriptions(transcriptions[:], overlap)
-        if progress_callback:
-            progress_callback(0, total_chunks, "Starting transcription...")
-        
-        if last_index > 0:
-            logger.info(f"▶ Resuming from chunk {last_index + 1}/{total_chunks} ({last_index} already done).")
-            if progress_callback:
-                progress_callback(last_index, total_chunks, f"Resuming from chunk {last_index+1}/{total_chunks}…")
-            
-        final_text_blocks = transcriptions[:] # Copy existing
-        
-        for i, chunk_path in enumerate(chunks):
-            if i < last_index:
-                continue
-                
-            chunk_name = Path(chunk_path).name
-            logger.info(f"[{i+1}/{total_chunks}] Transcribing {chunk_name}…")
-            if progress_callback:
-                progress_callback(i, total_chunks, f"Transcribing chunk {i+1}/{total_chunks}...")
-            
-            current_prompt = self.build_prompt_with_context(
-                self.transcription_prompt, i, speaker_samples
-            )
-            
-            model = settings.llm.model
-            text = self.transcribe_chunk_with_retry(model, chunk_path, current_prompt)
-            
-            # Extract speakers for next context
-            new_speakers = self.extract_speaker_samples(text)
-            speaker_samples.update(new_speakers)
-            
-            final_text_blocks.append(text)
-            
-            self.save_progress(str(progress_file), i + 1, final_text_blocks, speaker_samples=speaker_samples)
-            if progress_callback:
-                progress_callback(i + 1, total_chunks, f"Completed chunk {i+1}")
-            
-        
-        # Merge results
-            
-        
-        # Merge results
-        full_text = self.merge_transcriptions(final_text_blocks, overlap)
-        return full_text
 
     def _native_timestamps_chunked(self, tm: str, file_path: str, ts_dir: Path, chunk_sec: int = 600, force: bool = False):
         """Run the native STT timestamp API on fixed-length slices and stitch results with time offsets.
@@ -1012,12 +1150,16 @@ class AudioTranscriber:
     def _process_file_internal(self, file_path, chunk_length, overlap, progress_callback, force, reuse_only=False, skip_blocked=False, compress_kbps=None):
         """Internal: the original process_file logic, returning plain text."""
         import shutil
+        self.skipped_ranges = []
         file_path = str(Path(file_path).resolve())
         work_dir = _work_dir_for(file_path)
         work_dir.mkdir(parents=True, exist_ok=True)
         temp_dir = work_dir / "temp_chunks"
         progress_file = work_dir / "progress.json"
-        
+
+        if reuse_only:
+            # --reuse-transcript keeps the cached transcript; --force then only resets the timestamp caches.
+            force = False
         if force:
             if progress_file.exists():
                 logger.warning("Force mode enabled: Deleting previous progress.")
@@ -1036,6 +1178,7 @@ class AudioTranscriber:
         last_index, transcriptions, _, speaker_samples = self.load_progress(str(progress_file))
         if speaker_samples is None:
             speaker_samples = {}
+        skipped = self.load_skipped(str(progress_file)) if last_index > 0 else []
 
         existing_chunks = media.usable_cached_chunks(sorted(temp_dir.glob("chunk_*.*"))) if temp_dir.exists() else []
         if existing_chunks:
@@ -1053,6 +1196,17 @@ class AudioTranscriber:
             )
         
         total_chunks = len(chunks)
+        if reuse_only:
+            if not transcriptions or last_index < total_chunks:
+                raise RuntimeError(
+                    f"--reuse-transcript: cached transcript is incomplete ({last_index}/{total_chunks} chunks) "
+                    f"in {progress_file}; run without --reuse-transcript to finish it"
+                )
+            logger.info(f"♻️ Reusing cached transcript ({total_chunks} chunks), skipping main transcription.")
+            blocks = transcriptions[:]
+            self.skipped_ranges = self._missing_ranges(skipped, total_chunks, chunk_length, overlap)
+            self._fix_placeholders(blocks, skipped, self.skipped_ranges)
+            return self.merge_transcriptions([b for b in blocks if b], overlap)
         if progress_callback:
             progress_callback(0, total_chunks, "Starting transcription...")
         
@@ -1080,22 +1234,55 @@ class AudioTranscriber:
             try:
                 text = self.transcribe_chunk_with_retry(model, chunk_path, current_prompt)
             except ContentBlockedError as e:
-                if not skip_blocked:
-                    raise
-                logger.warning(f"⏭ [{i+1}/{total_chunks}] {chunk_name} skipped (--skip-blocked): {e}")
-                text = f"[⚠️ chunk {i+1}/{total_chunks} skipped: blocked by provider content policy]"
+                text, record = self._transcribe_blocked_chunk(
+                    e, i, total_chunks, chunk_path, current_prompt, chunk_length, overlap, skip_blocked
+                )
+                if record:
+                    skipped.append(record)
             
             new_speakers = self.extract_speaker_samples(text)
             speaker_samples.update(new_speakers)
             
             final_text_blocks.append(text)
             
-            self.save_progress(str(progress_file), i + 1, final_text_blocks, speaker_samples=speaker_samples)
+            self.save_progress(str(progress_file), i + 1, final_text_blocks, speaker_samples=speaker_samples, skipped=skipped)
             if progress_callback:
                 progress_callback(i + 1, total_chunks, f"Completed chunk {i+1}")
             
-        full_text = self.merge_transcriptions(final_text_blocks, overlap)
+        self.skipped_ranges = self._missing_ranges(skipped, total_chunks, chunk_length, overlap)
+        self._fix_placeholders(final_text_blocks, skipped, self.skipped_ranges)
+        full_text = self.merge_transcriptions([b for b in final_text_blocks if b], overlap)
         return full_text
+
+    @staticmethod
+    def _missing_ranges(skipped: list, total_chunks: int, chunk_length: int, overlap: int) -> list[dict]:
+        """Turn skipped-chunk records into the time ranges that are really missing from the transcript."""
+        if not skipped:
+            return []
+        step = max(1, chunk_length - overlap)
+        by_index = {r["index"]: r for r in skipped}
+        chunks = [
+            {"start": by_index[i]["start"], "end": by_index[i]["end"], "ok": False} if i in by_index
+            else {"start": i * step, "end": i * step + chunk_length, "ok": True}
+            for i in range(total_chunks)
+        ]
+        gaps = uncovered_ranges(chunks) or [(r["start"], r["end"]) for r in skipped]
+        ranges = []
+        for start, end in gaps:
+            touching = [r for r in skipped if r["start"] < end and r["end"] > start]
+            models = []
+            for r in touching:
+                models.extend(m for m in r.get("models", []) if m not in models)
+            ranges.append({
+                "start": start,
+                "end": end,
+                "start_label": format_clock(start),
+                "end_label": format_clock(end),
+                "chunks": [r["index"] + 1 for r in touching],
+                "models": models,
+                "reason": touching[0].get("reason", "") if touching else "",
+            })
+        return ranges
 
     def _clean_json_block(self, text):
         """Attempts to clean markdown code blocks from JSON string."""

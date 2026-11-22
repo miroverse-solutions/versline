@@ -75,6 +75,18 @@ versline config --path   # فقط مسیر config.env
 | `VERSLINE_TRANSCRIPTION_TIMESTAMP_LANGUAGE` | `fa` | کد زبان (خالی = تشخیص خودکار) |
 | `VERSLINE_TRANSCRIPTION_TIMESTAMP_TIMEOUT_SECONDS` | `120` | مهلت HTTP (نام قدیمی: `VERSLINE_TRANSCRIPTION_STT_TIMEOUT_SECONDS`) |
 
+### مدل جایگزین در پیاده‌سازی متن
+
+فقط تکه‌هایی را می‌گیرد که مدل اصلی به‌خاطر سیاست محتوا رد می‌کند؛ [تکه‌های مسدودشده](commands.md#blocked-chunks) را ببینید. تا وقتی `VERSLINE_TRANSCRIPTION_FALLBACK_MODEL` خالی است خاموش است.
+
+| متغیر | پیش‌فرض | توضیح |
+| :--- | :--- | :--- |
+| `VERSLINE_TRANSCRIPTION_FALLBACK_MODEL` | | مدل جایگزین، مثلاً `openai/gpt-4o-audio-preview` |
+| `VERSLINE_TRANSCRIPTION_FALLBACK_PROVIDER` | سرویس LLM | `Google`، `OpenAI`، `OpenRouter`، `AvalAI`، `OpenAICompatible` |
+| `VERSLINE_TRANSCRIPTION_FALLBACK_API_KEY` | کلید LLM، فقط برای همان سرویس | کلید API سرویس جایگزین |
+| `VERSLINE_TRANSCRIPTION_FALLBACK_API_ENDPOINT` | endpoint LLM، فقط برای همان سرویس | endpoint سفارشی |
+| `VERSLINE_TRANSCRIPTION_FALLBACK_PROXY` | پروکسی LLM | پروکسی |
+
 <a id="media"></a>
 ### رسانه
 

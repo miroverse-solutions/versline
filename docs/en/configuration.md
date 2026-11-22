@@ -73,6 +73,18 @@ Used by `transcribe --timestamped`. Empty connection values fall back to the mat
 | `VERSLINE_TRANSCRIPTION_TIMESTAMP_LANGUAGE` | `fa` | Language code (empty = auto-detect) |
 | `VERSLINE_TRANSCRIPTION_TIMESTAMP_TIMEOUT_SECONDS` | `120` | HTTP timeout (legacy alias `VERSLINE_TRANSCRIPTION_STT_TIMEOUT_SECONDS`) |
 
+### Transcription fallback model
+
+Gets only the chunks the main model blocks for content-policy reasons; see [Blocked chunks](commands.md#blocked-chunks). Off while `VERSLINE_TRANSCRIPTION_FALLBACK_MODEL` is empty.
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `VERSLINE_TRANSCRIPTION_FALLBACK_MODEL` | | Fallback model, e.g. `openai/gpt-4o-audio-preview` |
+| `VERSLINE_TRANSCRIPTION_FALLBACK_PROVIDER` | LLM provider | `Google`, `OpenAI`, `OpenRouter`, `AvalAI`, `OpenAICompatible` |
+| `VERSLINE_TRANSCRIPTION_FALLBACK_API_KEY` | LLM key, same provider only | API key for the fallback provider |
+| `VERSLINE_TRANSCRIPTION_FALLBACK_API_ENDPOINT` | LLM endpoint, same provider only | Custom endpoint |
+| `VERSLINE_TRANSCRIPTION_FALLBACK_PROXY` | LLM proxy | Proxy |
+
 ### Media
 
 | Variable | Description |

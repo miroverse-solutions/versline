@@ -23,7 +23,14 @@ class TranscribeParams(Params):
     compress: bool = F(False, en="Compress audio first", fa="فشرده‌سازی صوت پیش از ارسال",
                        help_en="Avoids provider payload limits for long files.",
                        help_fa="برای فایل‌های طولانی از محدودیت حجم سرویس جلوگیری می‌کند.", advanced=True)
-    skip_blocked: bool = F(False, en="Skip blocked chunks", fa="رد شدن از تکه‌های مسدودشده", advanced=True)
+    skip_blocked: bool = F(False, en="Skip blocked chunks", fa="رد شدن از تکه‌های مسدودشده", advanced=True,
+                           help_en="Without a fallback model: skip chunks the provider blocks instead of stopping.",
+                           help_fa="بدون مدل جایگزین: به‌جای توقف، از تکه‌هایی که سرویس مسدود می‌کند رد شود.")
+    fallback_model: Optional[str] = F(None, en="Fallback model", fa="مدل جایگزین", advanced=True,
+                                      help_en="Gets only the chunks the main model blocks (content policy). "
+                                              "Empty = the one in Versline's settings.",
+                                      help_fa="فقط تکه‌هایی که مدل اصلی به‌خاطر سیاست محتوا رد می‌کند به این مدل داده می‌شود. "
+                                              "خالی = همان که در تنظیمات ورس‌لاین است.")
     recursive: bool = F(False, en="Include sub-folders", fa="شامل زیرپوشه‌ها", advanced=True)
     note: Optional[str] = note_field()
     force: bool = force_field()
@@ -41,6 +48,8 @@ def transcribe(p: TranscribeParams, ctx):
         ctx, "versline.commands.transcribe", "transcribe_file", outputs=watch,
         file_paths=p.inputs, output=output, timestamped=p.timestamped, json_output=p.json_output,
         chunk_size=p.chunk_size, overlap=p.overlap, compress=p.compress, skip_blocked=p.skip_blocked,
-        recursive=p.recursive, note=p.note, force=p.force,
+        recursive=p.recursive, note=p.note, force=p.force, fallback_model=p.fallback_model or None,
     )
-    return {"outputs": [str(x) for x in produced]}
+    from versline.commands.transcribe import warnings
+
+    return {"outputs": [str(x) for x in produced], "warnings": [dict(w) for w in warnings]}

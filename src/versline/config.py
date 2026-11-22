@@ -54,6 +54,27 @@ class TranscriptionSettings(BaseSettings):
         default="fa",
         description="Language code sent to the STT endpoint (e.g. fa, en). Empty means auto-detect",
     )
+    # Fallback for chunks the main model blocks (content policy). Only used when fallback_model is set.
+    fallback_model: Optional[str] = Field(
+        default=None,
+        description="Model that gets only the chunks the main model blocks for content-policy reasons; the next chunk goes back to the main model",
+    )
+    fallback_provider: Optional[str] = Field(
+        default=None,
+        description="Provider of the fallback model (Google, OpenAI, OpenRouter, AvalAI, OpenAICompatible). Defaults to the LLM provider",
+    )
+    fallback_api_key: Optional[str] = Field(
+        default=None,
+        description="API key for the fallback model. Defaults to the LLM key only when the provider is the same",
+    )
+    fallback_api_endpoint: Optional[str] = Field(
+        default=None,
+        description="API endpoint for the fallback model. Defaults to the LLM endpoint only when the provider is the same",
+    )
+    fallback_proxy: Optional[str] = Field(
+        default=None,
+        description="Proxy for the fallback model. Defaults to the LLM proxy",
+    )
 
     model_config = SettingsConfigDict(env_prefix='VERSLINE_TRANSCRIPTION_', env_file='.env', extra='ignore')
 

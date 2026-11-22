@@ -19,6 +19,39 @@ from versline.commands._batch import (
 
 app = typer.Typer(help="Transcribe audio/video files.", context_settings=INTERSPERSED)
 
+# Parts of the audio left out of the last run's transcripts (read by the bridge tool after a run).
+warnings: List[dict] = []
+
+
+def skipped_message(media_name: str, output_path: Path, ranges: List[dict]) -> str:
+    spans = ", ".join(f"{r['start_label']} to {r['end_label']}" for r in ranges)
+    models = []
+    for r in ranges:
+        models.extend(m for m in r.get("models", []) if m not in models)
+    tried = " and ".join(models) or "the model"
+    return (
+        f"{media_name}: from {spans} was NOT transcribed — blocked by the content policy of {tried}. "
+        f"A placeholder marks the gap in {output_path}."
+    )
+
+
+def report_skipped(media_path: Path, output_path: Path, ranges: List[dict]) -> None:
+    """Log a clear error naming the missing time ranges and remember them for the bridge."""
+    if not ranges:
+        return
+    message = skipped_message(Path(media_path).name, Path(output_path), ranges)
+    logger.error(f"⚠️ {message}")
+    warnings.append({
+        "kind": "skipped_ranges",
+        "input": str(media_path),
+        "output": str(output_path),
+        "message": message,
+        "ranges": [
+            {k: r[k] for k in ("start", "end", "start_label", "end_label", "models", "chunks", "reason") if k in r}
+            for r in ranges
+        ],
+    })
+
 @app.callback(invoke_without_command=True)
 def transcribe_file(
     ctx: typer.Context,
@@ -57,6 +90,12 @@ def transcribe_file(
     timestamp_proxy: Optional[str] = typer.Option(None, "--timestamp-proxy", help="Proxy URL for STT requests. Defaults to the LLM proxy"),
     timestamp_language: Optional[str] = typer.Option(None, "--timestamp-language", help="Language code for STT (e.g. fa, en). Default: fa"),
     timestamp_timeout: Optional[int] = typer.Option(None, "--timestamp-timeout", help="HTTP timeout in seconds for timestamp (STT) requests"),
+    # Fallback for chunks the main model blocks (content policy)
+    fallback_model: Optional[str] = typer.Option(None, "--fallback-model", help="Model that gets only the chunks the main model blocks (content policy); if it blocks too, the chunk is skipped and reported"),
+    fallback_provider: Optional[str] = typer.Option(None, "--fallback-provider", help="Provider of the fallback model. Defaults to the LLM provider"),
+    fallback_api_key: Optional[str] = typer.Option(None, "--fallback-api-key", help="API key for the fallback model (needed when its provider differs)"),
+    fallback_api_endpoint: Optional[str] = typer.Option(None, "--fallback-api-endpoint", help="API endpoint for the fallback model"),
+    fallback_proxy: Optional[str] = typer.Option(None, "--fallback-proxy", help="Proxy for the fallback model. Defaults to the LLM proxy"),
 ):
     """
     Transcribe one or more files, URLs or folders. Finished files are skipped; interrupted ones resume.
@@ -92,6 +131,16 @@ def transcribe_file(
         settings.transcription.timestamp_language = timestamp_language
     if timestamp_timeout:
         settings.transcription.timestamp_timeout_seconds = timestamp_timeout
+    if fallback_model:
+        settings.transcription.fallback_model = fallback_model
+    if fallback_provider:
+        settings.transcription.fallback_provider = fallback_provider
+    if fallback_api_key:
+        settings.transcription.fallback_api_key = fallback_api_key
+    if fallback_api_endpoint:
+        settings.transcription.fallback_api_endpoint = fallback_api_endpoint
+    if fallback_proxy:
+        settings.transcription.fallback_proxy = fallback_proxy
         
     inputs = expand_inputs(file_paths, MEDIA_EXTENSIONS, recursive=recursive, allow_urls=True)
     if not inputs:
@@ -123,6 +172,7 @@ def transcribe_file(
         return (output if output else Path(settings.output_directory)) / name
 
     produced: List[Path] = []
+    warnings.clear()
 
     def process_one(item):
         # Local files can be checked for finished output before any work; URLs only after download.
@@ -207,6 +257,8 @@ def transcribe_file(
                 text_path.write_text(full_text["text"], encoding="utf-8")
                 logger.success(f"Full transcription text saved to: {text_path}")
                 produced.append(text_path)
+
+            report_skipped(resolved_path, output_path, transcriber.skipped_ranges)
         except Exception as e:
             logger.error(f"Transcription failed for {resolved_path}: {e}")
             raise typer.Exit(code=1)
@@ -216,6 +268,10 @@ def transcribe_file(
         run_batch(inputs, process_one)
     finally:
         print_cost_report(transcriber.tracker, api_key=settings.llm.api_key)
+        if len(warnings) > 1 or (warnings and len(inputs) > 1):
+            logger.error("⚠️ Some parts of the audio were not transcribed:")
+            for w in warnings:
+                logger.error(f"   • {w['message']}")
 
     run_exports(produced, export, export_frontmatter, {
         "type": "transcript", "model": settings.llm.model, "provider": settings.llm.provider,

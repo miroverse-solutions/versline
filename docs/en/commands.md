@@ -34,7 +34,9 @@ Audio/video is split with ffmpeg into overlapping chunks (default 900 s, 180 s o
 | `--prompt-file FILE` | Custom system prompt | built-in Persian prompt |
 | `-j, --json` | Structured JSON output | off |
 | `-f, --force` | Ignore the cache | off |
-| `--skip-blocked` | Skip chunks blocked by the provider (leaves a `[⚠️ chunk N/M skipped: ...]` placeholder) instead of aborting | off |
+| `--fallback-model NAME` | Model that gets only the chunks the main model blocks (content policy); see [Blocked chunks](#blocked-chunks) | `VERSLINE_TRANSCRIPTION_FALLBACK_MODEL` |
+| `--fallback-provider/-api-key/-api-endpoint/-proxy` | Connection for the fallback model (key and endpoint are inherited only when the provider is the same) | LLM settings |
+| `--skip-blocked` | Without a fallback model: skip blocked chunks (a placeholder marks the gap) instead of aborting | off |
 | `--compress` | Re-encode audio to mono low-bitrate mp3 before splitting so chunks stay small (avoids provider payload limits) | off |
 | `--compress-kbps` | Bitrate (kbps) used by `--compress` | 32 |
 | `--timestamped` | Also produce time-aligned segments. Tries the native STT endpoint (`verbose_json`) and falls back to chunk-based timestamping. Writes a JSON result plus the full text in a sibling `.md`. | off |
@@ -45,6 +47,9 @@ Audio/video is split with ffmpeg into overlapping chunks (default 900 s, 180 s o
 | `--timestamp-provider/-api-key/-api-endpoint/-proxy/-language/-timeout` | STT connection overrides (default to LLM settings; language `fa`) | |
 
 Plus the common LLM and prompt-note options.
+
+<a id="blocked-chunks"></a>
+**Blocked chunks.** When the provider refuses a chunk for content-policy reasons (`content_filter`, `PROHIBITED_CONTENT`, `SAFETY`, …), the chunk is not retried with the same model. With a fallback model set, only that chunk is sent to it and the next chunk goes back to the main model. If the fallback blocks it too, the chunk is skipped, the rest is transcribed, a placeholder such as `[⚠️ 15:00 تا 24:00 پیاده نشد: …]` marks the gap, and an error at the end names the missing time range (the overlap that neighbouring chunks cover is not counted as missing). Without a fallback model the run stops at the blocked chunk unless `--skip-blocked` is given. Merging the chunks is done locally (text overlap matching) and calls no model.
 
 Speech-to-text models (names containing `whisper`, `scribe` or `transcribe`, or an `--api-endpoint` ending in `/audio/transcriptions`) are sent to the `/audio/transcriptions` endpoint instead of `chat/completions`. They return plain text: the prompt, `--note` and speaker labels do not apply.
 
