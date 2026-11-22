@@ -10,9 +10,11 @@ temp/
 work_dir/
 law-works-religious-norms/
 schfiqh_mds/
-    
+.venv/
+
 qt.py
 #for quick testing, not part of the main codebase
 
 dist-bin/
 build-bin/
+.venv/pyvenv.cfg
