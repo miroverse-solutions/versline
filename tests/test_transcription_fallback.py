@@ -120,15 +120,21 @@ class TestBlockDetection(unittest.TestCase):
         client = MagicMock()
         client.base_url = "https://example/v1"
         client.chat.completions.create.return_value = self._completion(None, "content_filter")
-        with tempfile.NamedTemporaryFile(suffix=".mp3") as f, self.assertRaises(ContentBlockedError):
-            AudioTranscriber().transcribe_audio_chunk_by_openaicompatible(client, "m", f.name, "p", provider="openai")
+        with tempfile.TemporaryDirectory() as d, self.assertRaises(ContentBlockedError):
+            # Not NamedTemporaryFile: Windows cannot reopen it while it is held open.
+            audio = Path(d) / "chunk.mp3"
+            audio.write_bytes(b"")
+            AudioTranscriber().transcribe_audio_chunk_by_openaicompatible(client, "m", str(audio), "p", provider="openai")
 
     def test_openai_sdk_error_with_content_filter(self):
         client = MagicMock()
         client.base_url = "https://example/v1"
         client.chat.completions.create.side_effect = RuntimeError("Error code: 400 - {'code': 'content_filter'}")
-        with tempfile.NamedTemporaryFile(suffix=".mp3") as f, self.assertRaises(ContentBlockedError):
-            AudioTranscriber().transcribe_audio_chunk_by_openaicompatible(client, "m", f.name, "p", provider="openai")
+        with tempfile.TemporaryDirectory() as d, self.assertRaises(ContentBlockedError):
+            # Not NamedTemporaryFile: Windows cannot reopen it while it is held open.
+            audio = Path(d) / "chunk.mp3"
+            audio.write_bytes(b"")
+            AudioTranscriber().transcribe_audio_chunk_by_openaicompatible(client, "m", str(audio), "p", provider="openai")
 
     def _gemini_client(self, response):
         client = MagicMock()
