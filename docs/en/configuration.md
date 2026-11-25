@@ -64,7 +64,7 @@ Used by `transcribe --timestamped`. Empty connection values fall back to the mat
 
 | Variable | Default | Description |
 | :--- | :--- | :--- |
-| `VERSLINE_TRANSCRIPTION_TIMESTAMP_MODEL` | `gpt-4o-mini-transcribe` | STT model |
+| `VERSLINE_TRANSCRIPTION_TIMESTAMP_MODEL` | `gpt-4o-mini-transcribe` (`elevenlabs/scribe-v2` when STT goes to OpenRouter) | STT model |
 | `VERSLINE_TRANSCRIPTION_TIMESTAMP_CHUNK_MINUTES` | `3` | Chunk length for the chunk-based fallback |
 | `VERSLINE_TRANSCRIPTION_TIMESTAMP_PROVIDER` | | `OpenAI`, `AvalAI`, `OpenRouter`, `OpenAICompatible` |
 | `VERSLINE_TRANSCRIPTION_TIMESTAMP_API_KEY` | | STT API key |

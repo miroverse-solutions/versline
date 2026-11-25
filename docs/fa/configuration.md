@@ -66,7 +66,7 @@ versline config --path   # فقط مسیر config.env
 
 | متغیر | پیش‌فرض | توضیح |
 | :--- | :--- | :--- |
-| `VERSLINE_TRANSCRIPTION_TIMESTAMP_MODEL` | `gpt-4o-mini-transcribe` | مدل STT |
+| `VERSLINE_TRANSCRIPTION_TIMESTAMP_MODEL` | `gpt-4o-mini-transcribe` (با OpenRouter: `elevenlabs/scribe-v2`) | مدل STT |
 | `VERSLINE_TRANSCRIPTION_TIMESTAMP_CHUNK_MINUTES` | `3` | طول هر تکه در روش جایگزین مبتنی بر تکه |
 | `VERSLINE_TRANSCRIPTION_TIMESTAMP_PROVIDER` | | `OpenAI`، `AvalAI`، `OpenRouter`، `OpenAICompatible` |
 | `VERSLINE_TRANSCRIPTION_TIMESTAMP_API_KEY` | | کلید API سرویس STT |

@@ -41,7 +41,7 @@ versline transcribe FILE_OR_URL_OR_FOLDER... [OPTIONS]
 | `--compress` | بازکدگذاری صوت به mp3 تک‌کاناله با بیت‌ریت پایین پیش از تکه‌کردن، تا حجم تکه‌ها کم بماند (برای محدودیت حجم درخواست) | خاموش |
 | `--compress-kbps` | بیت‌ریت (kbps) برای `--compress` | 32 |
 | `--timestamped` | تولید بخش‌های زمان‌بندی‌شده. ابتدا STT بومی (`verbose_json`) و در صورت نبود، روش مبتنی بر تکه. نتیجه‌ی JSON و متن کامل در `.md` هم‌نام ذخیره می‌شود. | خاموش |
-| `--timestamp-model` | مدل STT | `gpt-4o-mini-transcribe` |
+| `--timestamp-model` | مدل STT | `gpt-4o-mini-transcribe`؛ با OpenRouter: `elevenlabs/scribe-v2` |
 | `--chunk-minutes N` | دقیقه در هر تکه برای مراحل مبتنی بر تکه | تنظیمات |
 | `--native-timestamps-only` | به‌جای بازگشت به روش مبتنی بر تکه، خطا بده | خاموش |
 | `--reuse-transcript` | رونویسی را رد کن، متن کش‌شده را استفاده کن و فقط زمان‌بندی را دوباره بساز (`--force` در این حالت فقط کش زمان‌بندی را پاک می‌کند) | خاموش |

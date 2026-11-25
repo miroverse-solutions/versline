@@ -65,7 +65,27 @@ def extract_audio(src: str, dest: str, bitrate: str = '64k') -> str:
     return dest
 
 
-_CHUNKABLE_EXTS = (".mp3", ".m4a", ".wav", ".ogg", ".opus", ".aac", ".flac", ".wma", ".m4b")
+def clip_audio(src, start: float, end: float, dest, bitrate: str = '64k'):
+    """Cut [start, end] seconds of an audio/video file into a mono mp3 (re-encoded, so cuts are exact)."""
+    ffmpeg_path = resolve_ffmpeg()
+    dest = str(dest)
+    os.makedirs(os.path.dirname(os.path.abspath(dest)), exist_ok=True)
+    try:
+        subprocess.run(
+            [ffmpeg_path, '-ss', f'{max(0.0, start):.2f}', '-to', f'{max(start, end):.2f}', '-i', str(src),
+             '-vn', '-ac', '1', '-c:a', 'libmp3lame', '-b:a', bitrate, '-y', dest],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True,
+        )
+    except FileNotFoundError:
+        raise RuntimeError(f"FFmpeg executable not found at '{ffmpeg_path}'.")
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"ffmpeg failed to cut the clip: {e.stderr.decode(errors='replace')[-300:]}")
+    return dest
+
+
+_CHUNKABLE_EXTS =(".mp3", ".m4a", ".wav", ".ogg", ".opus", ".aac", ".flac", ".wma", ".m4b")
 
 
 def usable_cached_chunks(paths) -> list[str]:

@@ -52,3 +52,34 @@ class TestMainPathSttRouting(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DefaultTimestampModelTests(unittest.TestCase):
+    def setUp(self):
+        from versline.config import TranscriptionSettings
+
+        self.saved = (settings.transcription, settings.llm.provider, settings.llm.api_endpoint)
+        self.fresh = TranscriptionSettings.model_construct()  # defaults only; nothing counts as configured
+        settings.transcription = self.fresh
+
+    def tearDown(self):
+        settings.transcription, settings.llm.provider, settings.llm.api_endpoint = self.saved
+
+    def test_openrouter_gets_scribe_unless_a_model_is_set(self):
+        settings.llm.provider = "OpenRouter"
+        t = AudioTranscriber()
+        self.assertEqual(t.default_timestamp_model(), "elevenlabs/scribe-v2")
+        self.fresh.timestamp_model = "openai/whisper-1"
+        self.assertEqual(t.default_timestamp_model(), "openai/whisper-1")
+
+    def test_other_providers_keep_the_default(self):
+        settings.llm.provider = "OpenAI"
+        self.assertEqual(AudioTranscriber().default_timestamp_model(), "gpt-4o-mini-transcribe")
+        settings.llm.provider = "OpenRouter"
+        self.fresh.timestamp_provider = "OpenAI"  # timestamps go to OpenAI even though the LLM is on OpenRouter
+        self.assertEqual(AudioTranscriber().default_timestamp_model(), "gpt-4o-mini-transcribe")
+
+    def test_openrouter_llm_without_endpoint_uses_openrouter_for_stt(self):
+        settings.llm.provider = "OpenRouter"
+        settings.llm.api_endpoint = None
+        self.assertEqual(AudioTranscriber()._resolve_stt_config()["endpoint"], "https://openrouter.ai/api/v1")

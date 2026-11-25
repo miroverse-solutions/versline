@@ -41,7 +41,7 @@ Audio/video is split with ffmpeg into overlapping chunks (default 900 s, 180 s o
 | `--compress` | Re-encode audio to mono low-bitrate mp3 before splitting so chunks stay small (avoids provider payload limits) | off |
 | `--compress-kbps` | Bitrate (kbps) used by `--compress` | 32 |
 | `--timestamped` | Also produce time-aligned segments. Tries the native STT endpoint (`verbose_json`) and falls back to chunk-based timestamping. Writes a JSON result plus the full text in a sibling `.md`. | off |
-| `--timestamp-model` | STT model | `gpt-4o-mini-transcribe` |
+| `--timestamp-model` | STT model | `gpt-4o-mini-transcribe`; `elevenlabs/scribe-v2` on OpenRouter |
 | `--chunk-minutes N` | Minutes per chunk for chunk-based phases | config |
 | `--native-timestamps-only` | Fail instead of falling back to chunk-based timestamps | off |
 | `--reuse-transcript` | Skip transcription, reuse the cached transcript, redo only timestamping (`--force` then resets only the timestamp caches) | off |

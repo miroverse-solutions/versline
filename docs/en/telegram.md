@@ -231,6 +231,22 @@ A log longer than `--max-chars` (default 150000) is cut into parts at day (or me
 
 The LLM overrides (`--model`, `--provider`, `--api-key`, `--api-endpoint`, `--proxy`, `--telegram-proxy`, `--extra-body`, `--chunk-size`, `--overlap`, `--skip-blocked`) work as in `archive`. Photos need a multimodal model (any Gemini model, gpt-4o-class models). A logged-in account is required (`telegram login`); `--web` is not available here.
 
+## Requests from a chat: taqrir or passages of a talk (Obsidian)
+
+Keep the talks you listen to in a chat of your own — Saved Messages, or a private group or channel — and reply to one of them with a text or voice message:
+
+* "تقریر کن" (or any request for the whole talk, with a focus if you like): a **taqrir** of the talk.
+* A description of what you remember, e.g. "the narration he read from Imam Sadiq about patience" or "the two points about raising children": the **passages** where it was said — verbatim text, start and end time, and a short audio clip of each.
+
+Then run **Telegram: answer my requests** in Obsidian (bridge tool `telegram.requests`). It reads the chat from where the last run stopped (the first run looks back 3 days), answers each new request as a reply in Telegram, and writes the same answer to a note under `<Telegram folder>/Requests`: `<talk> - taqrir.md`, or `<talk> - points.md`, which collects every search in that talk.
+
+* Only your own replies to a voice/audio/video message count, so other members of a group are ignored. Versline's replies start with 🤖 and are never taken as requests.
+* Times come only from the STT model's own (native) timestamps — word by word with `elevenlabs/scribe-v2`, the default on OpenRouter. If the timestamp model gives none, times are estimated from the text and the note says so.
+* Each talk is transcribed once (with timestamps) and remembered, so later requests about it cost one short text-model call. Transcripts are kept in `~/.cache/versline/transcripts` (`VERSLINE_CACHE_DIR` moves it).
+* Times come from the transcript itself, not from the model's guess: a passage the model "finds" but the transcript does not contain is dropped. Each passage is transcribed again on its own, for an exact text of Arabic narrations and quotations (turn off with `refine`).
+* A request that fails is retried on the next two runs; the reply says so.
+* The same is available for a file in the vault: **Find a passage with Versline…** and **Taqrir with Versline** in the file menu (bridge tools `audio.find` and `audio.taqrir`).
+
 ## Lists: `contacts`, `chats`, `members`
 
 ```sh

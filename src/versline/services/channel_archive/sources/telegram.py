@@ -388,20 +388,52 @@ class TelegramSource:
         near = self._run(self._client.get_messages(chat_entity, ids=list(range(message.id - 10, message.id + 11))))
         return sorted((m for m in near if m and m.grouped_id == message.grouped_id), key=lambda m: m.id)
 
+    def peer_id(self, entity: Any) -> int:
+        """The marked id of a chat (-100… for channels/supergroups), stable across runs."""
+        from telethon import utils
+
+        return utils.get_peer_id(entity)
+
+    def messages_after(self, entity: Any, after_id: int = 0, since: Optional[datetime] = None,
+                       limit: Optional[int] = None) -> List[Any]:
+        """Raw messages newer than `after_id` (or, when it is 0, sent after `since`), oldest first."""
+        self._connect()
+        kwargs: dict = {"reverse": True, "limit": limit}
+        if after_id:
+            kwargs["min_id"] = after_id
+        elif since is not None:
+            kwargs["offset_date"] = since
+
+        async def _collect():
+            return [m async for m in self._client.iter_messages(entity, **kwargs)]
+
+        return self._run(_collect())
+
+    def download_message(self, msg: Any, dest_dir: Path, stem: str) -> Path:
+        """Download a raw message's media into dest_dir/stem.<ext>."""
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        path = self._run(self._client.download_media(msg, file=str(dest_dir / stem)))
+        if not path:
+            raise RuntimeError(f"Telegram returned no file for message {msg.id}")
+        return Path(path)
+
     def last_saved_message(self) -> Any:
         msgs = self._run(self._client.get_messages("me", limit=1))
         return msgs[0] if msgs else None
 
-    def send(self, entity: Any, text: str, parse_mode: Any = None, file: Any = None, link_preview: bool = True) -> dict:
-        """Send text (or a file with `text` as caption). `file` is a path or a media object returned earlier as
-        ['media']. Returns {'id', 'media'}; raises SendError."""
+    def send(self, entity: Any, text: str, parse_mode: Any = None, file: Any = None, link_preview: bool = True,
+             reply_to: Optional[int] = None) -> dict:
+        """Send text (or a file with `text` as caption), optionally as a reply to message `reply_to`. `file` is a
+        path or a media object returned earlier as ['media']. Returns {'id', 'media'}; raises SendError."""
         from telethon.errors import RPCError
 
         async def _send():
             if file is not None:
-                msg = await self._client.send_file(entity, file, caption=text or None, parse_mode=parse_mode)
+                msg = await self._client.send_file(entity, file, caption=text or None, parse_mode=parse_mode,
+                                                   reply_to=reply_to)
             else:
-                msg = await self._client.send_message(entity, text, parse_mode=parse_mode, link_preview=link_preview)
+                msg = await self._client.send_message(entity, text, parse_mode=parse_mode, link_preview=link_preview,
+                                                      reply_to=reply_to)
             return {"id": msg.id, "media": getattr(msg, "media", None)}
 
         try:

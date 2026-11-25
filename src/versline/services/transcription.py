@@ -632,6 +632,20 @@ class AudioTranscriber:
 
     _STT_MODEL_KEYS = ("whisper", "scribe", "transcribe")
     _ENDPOINT_PATH_SUFFIXES = ("/audio/transcriptions", "/chat/completions")
+    # Timestamp model per STT provider when VERSLINE_TRANSCRIPTION_TIMESTAMP_MODEL is not set; others use its default.
+    # ElevenLabs Scribe on OpenRouter returns word-level times.
+    _DEFAULT_TIMESTAMP_MODELS = {"openrouter": "elevenlabs/scribe-v2"}
+
+    def _stt_provider_name(self) -> str:
+        """The provider timestamp requests go to: the STT provider setting, else the LLM provider."""
+        return self._normalize_provider(settings.transcription.timestamp_provider) or self._resolve_provider_name()
+
+    def default_timestamp_model(self) -> str:
+        """The configured timestamp model, or (when none is configured) the best default for the STT provider."""
+        t = settings.transcription
+        if "timestamp_model" in t.model_fields_set:
+            return t.timestamp_model
+        return self._DEFAULT_TIMESTAMP_MODELS.get(self._stt_provider_name(), t.timestamp_model)
 
     @classmethod
     def _strip_endpoint_path(cls, endpoint: str | None) -> str | None:
@@ -675,7 +689,9 @@ class AudioTranscriber:
             if not endpoint and provider in ("openaicompatible", "custom"):
                 endpoint = llm.api_endpoint
         else:
-            endpoint = t.timestamp_api_endpoint or llm.api_endpoint
+            # An OpenRouter/OpenAI LLM without an explicit endpoint still has a known STT endpoint.
+            endpoint = (t.timestamp_api_endpoint or self._strip_endpoint_path(llm.api_endpoint)
+                        or self._STT_PROVIDER_ENDPOINTS.get(self._resolve_provider_name()))
         return {
             "endpoint": (endpoint or "https://api.avalai.ir/v1").rstrip("/"),
             "api_key": t.timestamp_api_key or llm.api_key,
@@ -1021,7 +1037,7 @@ class AudioTranscriber:
             return full_text
         
         # --- Phase 2: Timestamp strategy (native API first, chunk-based fallback) ---
-        tm = timestamp_model or settings.transcription.timestamp_model
+        tm = timestamp_model or self.default_timestamp_model()
         ts_chunk_sec = 30
         ts_overlap = 3
         

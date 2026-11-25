@@ -177,6 +177,17 @@ class SummaryStep:
         record.frontmatter["summary_model"] = settings.llm.model
 
 
+def taqrir_prompt(text: str, language_instruction: str, instruction: Optional[str] = None,
+                  prompt_file: str = "channel_taqrir_prompt.md") -> str:
+    """The taqrir prompt for a transcript (or, with channel_taqrir_text_prompt.md, a written post).
+
+    `instruction` is the user's own guidance (a focus, what to leave out…), added as one more guideline."""
+    guidance = language_instruction
+    if instruction and instruction.strip():
+        guidance += f"\n* Additional guidance from the user (follow it): {instruction.strip()}"
+    return load_prompt(prompt_file).format(text=text, language_instruction=guidance)
+
+
 class TaqrirStep:
     """Adds a `taqrir` section: the transcript (or, for text posts, the caption) restated as a structured, formulated exposition."""
 
@@ -195,7 +206,7 @@ class TaqrirStep:
         else:
             return
         ctx.progress(f"Writing taqrir for post {post.id}…")
-        prompt = load_prompt(prompt_file).format(text=source, language_instruction=_language_instruction(ctx))
+        prompt = taqrir_prompt(source, _language_instruction(ctx), prompt_file=prompt_file)
         record.sections["taqrir"] = ctx.text_llm.generate(prompt)
         record.frontmatter["taqrir_model"] = settings.llm.model
 

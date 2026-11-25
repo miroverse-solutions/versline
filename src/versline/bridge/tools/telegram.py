@@ -1,4 +1,4 @@
-"""Telegram: login state, chats, channel archive, discussion taqrir, pack."""
+"""Telegram: login state, chats, channel archive, discussion taqrir, pack, requests answered from a chat."""
 from pathlib import Path
 from typing import List, Literal, Optional
 
@@ -298,3 +298,83 @@ def pack(p: PackParams, ctx):
     produced = run_command(ctx, "versline.commands.telegram", "pack", outputs=[output] if output else [],
                            archive_dir=p.archive_dir, output=output, force=p.force)
     return {"outputs": [str(x) for x in produced]}
+
+
+class RequestsParams(Params):
+    chat: str = F("me", en="Requests chat", fa="گفتگوی درخواست‌ها",
+                  help_en="Where you keep talks and reply to them: 'me' (Saved Messages), @name, a link or a numeric id.",
+                  help_fa="جایی که فایل‌ها را نگه می‌دارید و به آن‌ها ریپلای می‌کنید: me (پیام‌های ذخیره‌شده)، ‎@name‎، لینک یا شناسه‌ی عددی.")
+    output: str = F(..., en="Vault folder", fa="پوشه در والت", widget="output-folder")
+    clip: bool = F(True, en="Cut audio clips", fa="بریدن تکه‌ی صوتی")
+    refine: bool = F(True, en="Re-transcribe found passages", fa="پیاده‌سازی دوباره‌ی بخش‌های پیداشده")
+    reply: bool = F(True, en="Reply in Telegram", fa="پاسخ در تلگرام",
+                    help_en="Off: only write notes in the vault.", help_fa="خاموش: فقط یادداشت در والت نوشته شود.")
+    lookback_days: int = F(3, en="First run: look back (days)", fa="اجرای اول: چند روز قبل", ge=1, advanced=True,
+                           help_en="Later runs continue from the last message read.",
+                           help_fa="اجراهای بعدی از آخرین پیام خوانده‌شده ادامه می‌دهند.")
+    limit: Optional[int] = F(None, en="Max messages to read", fa="حداکثر پیام برای خواندن", ge=1, advanced=True)
+    output_lang: Optional[str] = F(None, en="Language", fa="زبان", advanced=True)
+    skip_blocked: bool = F(False, en="Skip blocked chunks", fa="رد شدن از تکه‌های مسدودشده", advanced=True)
+    dry_run: bool = F(False, en="Preview only", fa="فقط پیش‌نمایش",
+                      help_en="List the requests found; nothing is answered.", help_fa="فقط فهرست درخواست‌ها؛ به چیزی پاسخ داده نمی‌شود.")
+    telegram_proxy: Optional[str] = _proxy_field()
+
+
+@tool("telegram.requests", category="telegram", params=RequestsParams, interactive=True,
+      title=tr("Answer Telegram requests", "پاسخ به درخواست‌های تلگرام"),
+      description=tr("Answer your replies to talks in a chat: a taqrir of the talk, or the passages you describe, "
+                     "with their times and audio clips.",
+                     "به ریپلای‌های شما روی فایل‌های یک گفتگو پاسخ می‌دهد: تقریر کل فایل، یا پیدا کردن نکته‌هایی که توصیف "
+                     "کرده‌اید همراه با زمان و تکه‌ی صوتی."))
+def requests(p: RequestsParams, ctx):
+    from versline.config import settings
+    from versline.services.channel_archive.llm import TextLLM
+    from versline.services.channel_archive.sources.telegram import TelegramSource
+    from versline.services.pricing import cost_summary
+    from versline.services.telegram_requests import (
+        RequestOptions, RequestProcessor, RequestState, default_state_path,
+    )
+    from versline.services.transcription import AudioTranscriber
+
+    out = Path(p.output).expanduser()
+    transcriber = AudioTranscriber()
+
+    def factory(note: str):
+        sub = AudioTranscriber(user_note=note)
+        sub.tracker = transcriber.tracker
+        return sub
+
+    def progress(message: str) -> None:
+        ctx.check_cancel()
+        ctx.progress(None, None, message)
+
+    options = RequestOptions(
+        output_dir=out, temp_dir=Path(settings.temp_directory) / "telegram-requests", lookback_days=p.lookback_days,
+        limit=p.limit, clip=p.clip, refine=p.refine, reply=p.reply, output_lang=p.output_lang or "",
+        skip_blocked=p.skip_blocked, dry_run=p.dry_run,
+    )
+    with interactive(ctx):
+        try:
+            source = TelegramSource(proxy=p.telegram_proxy)
+        except RuntimeError as exc:
+            raise ValueError(str(exc)) from exc
+        try:
+            processor = RequestProcessor(source, TextLLM(transcriber.tracker), transcriber, factory, options,
+                                         RequestState(default_state_path()), progress)
+            summary = processor.run(p.chat)
+        finally:
+            source.close()
+    for path in summary.outputs:
+        ctx.artifact(path)
+    if summary.processed:
+        ctx.cost(cost_summary(transcriber.tracker, api_key=settings.llm.api_key))
+    for error in summary.errors:
+        ctx.log(error, level="error")
+    return {
+        "outputs": [str(x) for x in summary.outputs],
+        "processed": summary.processed,
+        "failed": summary.failed,
+        "pending": summary.pending,
+        "warnings": summary.warnings,
+        "output_dir": str(out),
+    }
