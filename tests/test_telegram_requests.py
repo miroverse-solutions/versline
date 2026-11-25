@@ -229,3 +229,25 @@ class ProcessorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MigrationTests(unittest.TestCase):
+    """A basic group upgraded to a supergroup: its old id must lead to the supergroup, where new messages are."""
+
+    def test_old_group_id_follows_the_migration(self):
+        import asyncio
+
+        from versline.services.channel_archive.sources.telegram import TelegramSource
+
+        supergroup = SimpleNamespace(id=5690022116, title="نکات", megagroup=True)
+        link = SimpleNamespace(channel_id=5690022116)
+        old = SimpleNamespace(id=5204972357, title="نکات", migrated_to=link)
+
+        class Client:
+            async def get_entity(self, ref):
+                return supergroup if ref is link else old
+
+        source = TelegramSource.__new__(TelegramSource)
+        source._client = Client()
+        self.assertIs(asyncio.run(source._follow_migration(old)), supergroup)
+        self.assertIs(asyncio.run(source._follow_migration(supergroup)), supergroup)

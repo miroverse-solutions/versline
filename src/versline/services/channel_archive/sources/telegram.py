@@ -217,6 +217,7 @@ class TelegramSource:
             entity = self._run(self._entity_by_id(target))
         else:
             entity = self._run(self._client.get_entity(target))
+        entity = self._run(self._follow_migration(entity))
         self._entity = entity
         return ChannelInfo(
             ref=ref,
@@ -282,6 +283,8 @@ class TelegramSource:
                 if since and dialog.date and dialog.date < since and not getattr(dialog, "pinned", False):
                     break  # newest first: everything after this is older still
                 entity = dialog.entity
+                if getattr(entity, "migrated_to", None) is not None:
+                    continue  # an upgraded basic group: its supergroup is listed on its own
                 kind = row_kind(entity)
                 if kinds and kind not in kinds:
                     continue
@@ -363,12 +366,22 @@ class TelegramSource:
     # -- sending --
 
     def entity_of(self, ref: Any) -> Any:
-        """Any chat reference (id, @name, link, 'me') as a Telethon entity."""
+        """Any chat reference (id, @name, link, 'me') as a Telethon entity; a migrated group as its supergroup."""
         self._connect()
         target = normalize_ref(ref) if isinstance(ref, str) else ref
         if isinstance(target, int):
-            return self._run(self._entity_by_id(target))
-        return self._run(self._client.get_entity(target))
+            return self._run(self._follow_migration(self._run(self._entity_by_id(target))))
+        return self._run(self._follow_migration(self._run(self._client.get_entity(target))))
+
+    async def _follow_migration(self, entity: Any) -> Any:
+        """A basic group that Telegram turned into a supergroup keeps only its old history (ending with "migrated");
+        everything after that is in the supergroup, so that is the chat to read and write."""
+        migrated_to = getattr(entity, "migrated_to", None)
+        if migrated_to is None:
+            return entity
+        target = await self._client.get_entity(migrated_to)
+        logger.info(f"'{display_name(entity)}' was upgraded to a supergroup; using it (id {target.id}).")
+        return target
 
     def set_flood_sleep_threshold(self, seconds: int) -> None:
         """0 = never sleep inside Telethon on FloodWait; the sender's pacer handles every wait itself."""
