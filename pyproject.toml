@@ -34,6 +34,8 @@ dependencies = [
     "pandas>=2.2.0",
     "openpyxl>=3.1.0",
     "beautifulsoup4>=4.12.0",
+    # lxml 6.2 drops namespaces in markitdown's docx math pre-processing, so mammoth rejects every .docx
+    "lxml>=5.0,<6.2",
     "mcp>=1.27.0",
     "telethon>=1.36.0",
     "python-socks[asyncio]>=2.4.0",
