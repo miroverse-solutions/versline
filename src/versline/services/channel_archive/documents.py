@@ -66,7 +66,24 @@ def read_document(path: Path) -> str:
         return raw.decode("latin-1")
     from versline.services.document_processor import convert_to_markdown
 
-    return convert_to_markdown(str(path)) or ""
+    try:
+        return convert_to_markdown(str(path)) or ""
+    except Exception:
+        if path.suffix.lower() != ".docx":
+            raise
+        return _read_docx_plain(path)
+
+
+def _read_docx_plain(path: Path) -> str:
+    """Fallback for .docx files MarkItDown (mammoth) rejects: paragraphs and table cells via python-docx."""
+    from docx import Document
+
+    document = Document(str(path))
+    lines = [p.text for p in document.paragraphs]
+    for table in document.tables:
+        for row in table.rows:
+            lines.append(" | ".join(cell.text.strip() for cell in row.cells))
+    return "\n\n".join(line for line in lines if line.strip())
 
 
 def clean_for_obsidian(text: str) -> str:
