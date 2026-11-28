@@ -45,23 +45,25 @@ def convert_to_markdown(file_path: str) -> str:
     return result.text_content
 
 
-def convert_ppt_to_pptx(ppt_path: str) -> str:
-    """Convert legacy .ppt files to .pptx using LibreOffice CLI."""
+def convert_with_libreoffice(path: str, target_ext: str, label: str = "") -> str:
+    """Convert a file with the LibreOffice CLI (e.g. .ppt -> pptx, .doc -> docx). Returns the new file's path,
+    inside a temporary folder the caller removes."""
+    label = label or Path(path).suffix.lower() or "this file"
     office_cmd = shutil.which("soffice") or shutil.which("libreoffice")
     if not office_cmd:
         raise RuntimeError(
-            "Legacy .ppt requires LibreOffice (soffice) for conversion to .pptx"
+            f"Legacy {label} requires LibreOffice (soffice) for conversion to .{target_ext}"
         )
 
-    output_dir = tempfile.mkdtemp(prefix="versline_ppt_convert_")
+    output_dir = tempfile.mkdtemp(prefix=f"versline_{target_ext}_convert_")
     cmd = [
         office_cmd,
         "--headless",
         "--convert-to",
-        "pptx",
+        target_ext,
         "--outdir",
         output_dir,
-        ppt_path,
+        path,
     ]
 
     try:
@@ -70,19 +72,24 @@ def convert_ppt_to_pptx(ppt_path: str) -> str:
         shutil.rmtree(output_dir, ignore_errors=True)
         stderr = (exc.stderr or "").strip()
         raise RuntimeError(
-            f"Failed to convert .ppt to .pptx via LibreOffice: {stderr or exc}"
+            f"Failed to convert {label} to .{target_ext} via LibreOffice: {stderr or exc}"
         ) from exc
 
-    expected_path = Path(output_dir) / f"{Path(ppt_path).stem}.pptx"
+    expected_path = Path(output_dir) / f"{Path(path).stem}.{target_ext}"
     if expected_path.exists():
         return str(expected_path)
 
-    generated = list(Path(output_dir).glob("*.pptx"))
+    generated = list(Path(output_dir).glob(f"*.{target_ext}"))
     if generated:
         return str(generated[0])
 
     shutil.rmtree(output_dir, ignore_errors=True)
-    raise RuntimeError("LibreOffice conversion did not produce a .pptx file")
+    raise RuntimeError(f"LibreOffice conversion did not produce a .{target_ext} file")
+
+
+def convert_ppt_to_pptx(ppt_path: str) -> str:
+    """Convert legacy .ppt files to .pptx using LibreOffice CLI."""
+    return convert_with_libreoffice(ppt_path, "pptx", ".ppt")
 
 
 # ============================================================================

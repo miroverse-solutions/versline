@@ -17,7 +17,9 @@ LABELS = {
     "summary": "خلاصه",
     "transcript": "متن پیاده‌شده",
     "taqrir": "تقریر و صورت‌بندی",
+    "documents": "اسناد",
     "attachments": "پیوست‌ها",
+    "document_file": "فایل",
     "source": "پست اصلی",
     "untitled": "پست",
     "date": "تاریخ",
@@ -174,6 +176,25 @@ def read_note_transcript(path: Path) -> Optional[Tuple[str, Optional[str]]]:
         return None
     model = re.search(r'^transcription_model: "(.*)"$', text, re.MULTILINE)
     return body, model.group(1) if model else None
+
+
+def upsert_section(text: str, key: str, body: str) -> str:
+    """Put a `## <label>` section with `body` into a note we wrote earlier, leaving everything else as it is.
+
+    An existing section of that name is replaced; a new one goes before the attachments, else before the link to
+    the original post, else at the end."""
+    block = f"## {LABELS.get(key, key)}\n\n{body.strip()}\n\n"
+    heading = re.search(rf"^## {re.escape(LABELS.get(key, key))}[ \t]*\n", text, re.MULTILINE)
+    footer = re.compile(rf"^---\n\[{re.escape(LABELS['source'])}[^\]]*\]\(", re.MULTILINE)
+    if heading:
+        rest = text[heading.end():]
+        end = re.search(r"^## ", rest, re.MULTILINE) or footer.search(rest)
+        tail = rest[end.start():] if end else ""
+        return text[: heading.start()] + block + tail
+    anchor = re.search(rf"^## {re.escape(LABELS['attachments'])}[ \t]*$", text, re.MULTILINE) or footer.search(text)
+    if anchor:
+        return text[: anchor.start()] + block + text[anchor.start():]
+    return text.rstrip("\n") + "\n\n" + block
 
 
 def write_text_atomic(path: Path, content: str) -> None:

@@ -317,6 +317,10 @@ def build_pack(archive_dir: Path, opts: PackOptions, log: Callable[[str], None] 
     notes_root = root / "notes"
     for post in posts:
         _copy(post.note, notes_root / post.entry["note"])
+        for document in post.entry.get("documents", []):  # notes written by --to-markdown
+            source = archive_dir / document["note"] if document.get("note") else None
+            if source is not None and source.is_file():
+                _copy(source, notes_root / document["note"])
         if opts.media:
             for ref in post.attachments:
                 source = archive_dir / ref

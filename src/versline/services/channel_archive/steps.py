@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import glob
 import re
 import shutil
 from dataclasses import dataclass, field
@@ -40,6 +41,8 @@ class StepContext:
     text_llm: Any = None  # object with generate(prompt); needed by the summary/taqrir steps
     output_lang: str = ""  # language for summary/taqrir; empty = same as the content
     file_filter: Optional[FileFilter] = None  # when set, only matching media items are downloaded
+    to_markdown: bool = False  # convert documents to notes under documents/ (the "documents" step)
+    ocr: Any = None  # documents.OcrReader: read scanned PDF pages and image files with the multimodal model
     progress: Callable[[str], None] = lambda message: None
 
 
@@ -65,22 +68,49 @@ def _is_video(item: MediaItem) -> bool:
     return item.kind in VIDEO_KINDS or (item.mime or "").startswith("video/")
 
 
+def previous_documents(record: PostRecord) -> Dict[int, dict]:
+    """Manifest entries of the documents converted for this post on an earlier run, by media index."""
+    return record.work.get("previous_documents", {})
+
+
+def _needs_markdown(ctx: StepContext, record: PostRecord, index: int, item: MediaItem) -> bool:
+    from versline.services.channel_archive import documents as docs
+
+    if not ctx.to_markdown or not docs.is_convertible(item, ocr=ctx.ocr is not None):
+        return False
+    return docs.needs_conversion(previous_documents(record).get(index), ctx.out_dir, ctx.ocr is not None, ctx.force)
+
+
 class MediaStep:
-    """Downloads the media a later step (or --keep-media) needs."""
+    """Downloads the media a later step (or --keep-media) needs.
+
+    With ``record.work["documents_only"]`` (documents added to a post archived earlier) only the documents to convert
+    are fetched: from attachments/ when an earlier --keep-media run saved them there, else downloaded to temp."""
 
     name = "media"
 
     def run(self, post: ChannelPost, record: PostRecord, ctx: StepContext) -> None:
         files: Dict[int, Path] = record.work.setdefault("files", {})
-        dest_dir = ctx.out_dir / "attachments" if ctx.keep_media else ctx.temp_dir
+        documents_only = bool(record.work.get("documents_only"))
+        dest_dir = ctx.out_dir / "attachments" if ctx.keep_media and not documents_only else ctx.temp_dir
         allowed = set(ctx.file_filter.matching_indices(post)) if ctx.file_filter else None
         for index, item in enumerate(post.media):
             if allowed is not None and index not in allowed:
                 continue
-            needs_transcript = ctx.transcribe and item.transcribable and not record.work.get("reused_transcript")
-            wanted = ctx.keep_media or needs_transcript
+            needs_markdown = _needs_markdown(ctx, record, index, item)
+            if documents_only:
+                wanted = needs_markdown
+            else:
+                needs_transcript = ctx.transcribe and item.transcribable and not record.work.get("reused_transcript")
+                wanted = ctx.keep_media or needs_transcript or needs_markdown
             if not wanted:
                 continue
+            stem = sanitize_filename(f"{ctx.channel.slug}_{post.id}" + (f"_{index + 1}" if len(post.media) > 1 else ""))
+            if documents_only:
+                kept = next(iter(sorted((ctx.out_dir / "attachments").glob(f"{glob.escape(stem)}.*"))), None)
+                if kept is not None:
+                    record.work.setdefault("existing_files", {})[index] = kept  # never cleaned up
+                    continue
             if not item.downloadable:
                 logger.warning(f"Post {post.id}: {item.kind} can't be downloaded from this source; skipping it.")
                 record.frontmatter.setdefault("skipped_media", []).append(f"{item.kind} not downloadable")
@@ -89,11 +119,12 @@ class MediaStep:
                 logger.warning(f"Post {post.id}: media is {item.size / 1048576:.0f} MB, over --max-size; skipping it.")
                 record.frontmatter.setdefault("skipped_media", []).append(f"{item.kind} too large")
                 continue
-            stem = sanitize_filename(f"{ctx.channel.slug}_{post.id}" + (f"_{index + 1}" if len(post.media) > 1 else ""))
             ctx.progress(f"Downloading {item.kind} for post {post.id}…")
             path = ctx.source.download(post, item, dest_dir, stem)
             files[index] = path
-            if ctx.keep_media:
+            if documents_only:
+                record.work.setdefault("temp_files", []).append(path)
+            elif ctx.keep_media:
                 record.attachments.append(path.relative_to(ctx.out_dir).as_posix())
 
 
@@ -211,11 +242,81 @@ class TaqrirStep:
         record.frontmatter["taqrir_model"] = settings.llm.model
 
 
+class DocumentStep:
+    """Turns each document of the post into a Markdown note under documents/ and lists them in the «اسناد» section.
+
+    Notes converted on an earlier run are kept (and linked) unless they need redoing (--force, a missing note, a
+    failed conversion, or scanned pages that --ocr can now read). A document that can't be converted doesn't fail
+    the post: it is reported and retried on the next run."""
+
+    name = "documents"
+
+    def run(self, post: ChannelPost, record: PostRecord, ctx: StepContext) -> None:
+        if not ctx.to_markdown:
+            return
+        from versline.services.ai import MissingAPIKeyError
+        from versline.services.channel_archive import documents as docs
+
+        ocr = ctx.ocr
+        files: Dict[int, Path] = {**record.work.get("files", {}), **record.work.get("existing_files", {})}
+        previous = previous_documents(record)
+        owned = {entry["note"] for entry in previous.values() if entry.get("note")}
+        taken: set = set()
+        allowed = set(ctx.file_filter.matching_indices(post)) if ctx.file_filter else None
+        entries: List[dict] = []
+        links: List[str] = []
+        errors: List[str] = record.work.setdefault("document_errors", [])
+        post_note = record.note_path.as_posix() if record.note_path else None
+        for index, item in enumerate(post.media):
+            if (allowed is not None and index not in allowed) or not docs.is_convertible(item, ocr=ocr is not None):
+                continue
+            file_name = item.file_name or (files[index].name if index in files else f"{post.id}_{index + 1}")
+            prev = previous.get(index)
+            if index not in files:
+                if prev and prev.get("note") and (ctx.out_dir / prev["note"]).is_file():
+                    entries.append(prev)  # converted on an earlier run and nothing to redo
+                    links.append(docs.note_link(prev["note"], prev.get("file") or file_name))
+                    taken.add(prev["note"])
+                continue
+            rel = (prev or {}).get("note") or docs.unique_note_path(
+                ctx.out_dir, docs.DOCUMENTS_DIR, file_name, post.id, owned, taken)
+            taken.add(rel)
+            path = files[index]
+            try:
+                source_file = path.resolve().relative_to(ctx.out_dir.resolve()).as_posix()
+            except ValueError:
+                source_file = None  # a temporary download: the note is all that stays
+            ctx.progress(f"Converting {file_name} (post {post.id})…")
+            try:
+                result = docs.write_document_note(
+                    ctx.out_dir, rel, path=path, ext=docs.document_extension(item), ocr=ocr, temp_dir=ctx.temp_dir,
+                    channel=ctx.channel, post=post, item=item, file_name=file_name, post_note=post_note,
+                    post_title=record.frontmatter.get("title"), source_file=source_file,
+                )
+            except (KeyboardInterrupt, MissingAPIKeyError):
+                raise
+            except Exception as exc:
+                logger.warning(f"Post {post.id}: could not convert {file_name}: {exc}")
+                record.frontmatter.setdefault("skipped_media", []).append(f"document not converted: {file_name}")
+                errors.append(f"{post.id}: {file_name}: {exc}")
+                entries.append({"index": index, "file": file_name, "error": str(exc)})
+                continue
+            entry = {"index": index, "file": file_name, "note": rel}
+            if result.unread_pages:
+                entry["unread_pages"] = result.unread_pages
+            entries.append(entry)
+            links.append(docs.note_link(rel, file_name))
+        record.work["document_notes"] = entries
+        if links:
+            record.sections["documents"] = docs.documents_section(links)
+
+
 # New steps (translate, tag, ...) are registered here and listed in the pipeline by name.
 STEPS: Dict[str, Callable[[], PostStep]] = {
     "media": MediaStep,
     "transcribe": TranscribeStep,
     "summary": SummaryStep,
     "taqrir": TaqrirStep,
+    "documents": DocumentStep,
 }
 DEFAULT_STEPS = ["media", "transcribe"]

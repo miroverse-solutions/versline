@@ -24,6 +24,7 @@ from loguru import logger
 from versline.config import settings
 from versline.core.prompts import load_prompt
 from versline.services.channel_archive import obsidian
+from versline.services.channel_archive.documents import read_document, strip_chatter  # noqa: F401 (re-exported)
 from versline.services.channel_archive.models import ChannelInfo, ChannelPost, MediaItem, TRANSCRIBABLE_KINDS
 from versline.services.channel_archive.sources.base import ChannelSource
 from versline.services.channel_archive.steps import StepContext, _language_instruction, transcribe_media
@@ -48,9 +49,7 @@ KIND_LABELS = {
     "photo": "تصویر",
 }
 _FA_DIGITS = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
-TEXT_DOC_EXTS = {".txt", ".md", ".markdown", ".csv", ".json", ".srt", ".vtt", ".xml", ".yaml", ".yml"}
 _CITE_RE = re.compile(r"\[(#\d+(?:\s*[,،]\s*#?\d+)*)\](?!\()")
-_PREAMBLE_RE = re.compile(r"^\s*(بله|حتماً|حتما|البته|باشه|چشم|Sure|Certainly|Here is|Here's)[^\n]{0,200}:\s*\n+", re.IGNORECASE)
 
 
 @dataclass
@@ -112,30 +111,11 @@ def shamsi_datetime(dt: datetime) -> str:
     return jdatetime.datetime.fromgregorian(datetime=local.replace(tzinfo=None)).strftime("%Y-%m-%d %H:%M")
 
 
-def read_document(path: Path) -> str:
-    """Text of a document: plain-text files decoded directly, everything else through MarkItDown."""
-    if path.suffix.lower() in TEXT_DOC_EXTS:
-        raw = path.read_bytes()
-        for encoding in ("utf-8", "utf-8-sig", "cp1256", "cp1252"):
-            try:
-                return raw.decode(encoding)
-            except UnicodeDecodeError:
-                continue
-        return raw.decode("latin-1")
-    from versline.services.document_processor import convert_to_markdown
-
-    return convert_to_markdown(str(path)) or ""
-
-
 def truncate(text: str, limit: int) -> str:
     text = text.strip()
     if limit and len(text) > limit:
         return text[:limit].rsplit("\n", 1)[0].rstrip() + "\n[… بقیه متن حذف شد]"
     return text
-
-
-def strip_chatter(text: str) -> str:
-    return _PREAMBLE_RE.sub("", text.strip(), count=1).strip()
 
 
 def _hash(*parts: str) -> str:

@@ -71,11 +71,40 @@ Pick documents by extension and by name (or caption). Works in the normal archiv
 | `--match REGEX` | Keep files matching **at least one** pattern (repeatable) | any |
 | `--exclude REGEX` | Drop files matching **any** pattern (repeatable); wins over `--match` | none |
 | `--match-in` | What the patterns test: `name` (file name), `caption` (post text) or `any` (either) | `name` |
-| `--files-only` | Save the matching files under their original names in the output folder: no notes, no transcription, no LLM. Cannot be combined with `--summary`, `--taqrir`, `--reuse-transcripts` | off |
+| `--files-only` | Save the matching files under their original names in the output folder: no notes, no transcription, no LLM (unless `--ocr`). Cannot be combined with `--summary`, `--taqrir`, `--reuse-transcripts`; add `--to-markdown` for a note next to each document | off |
 
 Patterns are Python regexes, case-insensitive; a plain word works as is. Persian text is normalized on both sides first: `ي/ك` → `ی/ک`, tatweel and diacritics dropped, ZWNJ and `_` count as spaces, so `--match "جزوه فقه"` finds `جزوه_فقه.pdf`. The filter works per file: in an album with a PDF and a photo, only the PDF is kept. Combine freely with `--since/--until`, `--limit`, `--types`, `--max-size`; use `--dry-run` to preview (a *Files* column lists the matches).
 
-`--files-only` keeps its own manifest (`.versline-files.json`), so reruns skip finished posts and don't interfere with a normal archive in the same folder. A file whose name and size match one already in the folder is skipped as a duplicate; the same name with a different size is saved as `name (post <id>).ext`. Documents need logged-in mode: with `--web` they are reported as skipped.
+`--files-only` keeps its own manifest (`.versline-files.json`), so reruns skip finished posts and don't interfere with a normal archive in the same folder. A file whose name and size match one already in the folder is a duplicate and is not downloaded again; the same name with a different size is saved as `name (post <id>).ext`. Documents need logged-in mode: with `--web` they are reported as skipped.
+
+### Documents to Markdown (Obsidian)
+
+With `--to-markdown` every document of a post becomes a **Markdown note** you can read, search and link in Obsidian: PDF, Word (`docx`; `doc`, `rtf`, `odt` through LibreOffice), PowerPoint (`pptx`; `ppt`, `odp` through LibreOffice), Excel (`xlsx`, `xls`), EPUB, HTML, and text files (`txt`, `md`, `csv`, `json`, `srt`…). Other files (zip, apk…) are left alone. Combine it with `--ext`/`--match` to convert only some files.
+
+```sh
+# PDFs and Word files of a channel, as notes in the vault
+versline telegram archive @chan --types document --ext pdf,word --to-markdown -o ~/Vault/Telegram/chan
+
+# Scanned booklets too: pages without a text layer are read by the AI model
+versline telegram archive @chan --types document --to-markdown --ocr -o ~/Vault/Telegram/chan
+```
+
+- **Where:** `documents/<file name>.md` (another post's document with the same name: `<name> (post <id>).md`). The post note gets an **اسناد** section linking each document note, and every document note links back to its post.
+- **Frontmatter:** `type: telegram-document`, `title`, `post` (link to the post note), `file_name`, `source_file` (link to the original, with `--keep-media`), `channel`, `post_id`, `url`, `date`, `date_shamsi`, `file_size`, `mime`, `pages`, `converter`, `ocr_model`, `ocr_pages`, `conversion_warnings`, `tags` (the post's hashtags + `telegram`, `document`), `aliases` (the file name).
+- **Body:** Word headings, lists and tables stay Markdown; slides and sheets become sections and tables. PDF text is taken page by page in reading order (Persian and Arabic included), with a hidden `%% صفحه ۳ %%` marker before each page. Characters that would break Obsidian (`[[`, `%%`, Arabic presentation forms, control characters, inline base64 images) are cleaned.
+- **Without `--keep-media`** the original file is deleted after conversion and only the note stays; with it, the file is in `attachments/`, embedded in the post note and linked from the document note.
+- **Old archives:** run the same command with `--to-markdown` on an existing archive and the documents of posts archived earlier are converted and an **اسناد** section is added to their notes; nothing else in those notes changes (transcripts, summaries and your edits stay) and nothing is transcribed again. A file already in `attachments/` is not downloaded again.
+- **With `--files-only`:** a note named `<file name>.md` is written next to each saved file (`<name>.pdf.md` when the plain name is taken), with `source_file` linking the file. `.md` files are saved as they are. Rerunning with `--to-markdown` adds notes to files saved earlier without downloading them again.
+- A document that can't be converted doesn't fail the post: it is listed at the end of the run and in the post's `skipped_media`, and retried on the next run.
+
+**Scans (OCR).** A scanned PDF has no text layer, so without OCR its note only carries a warning. `--ocr` (implies `--to-markdown`) renders each page without text as an image and has the **multimodal LLM** read it (any Gemini model, gpt-4o-class models), and also converts image files sent as documents (`jpg`, `png`, `webp`, `tif`). Pages with text are taken as they are. `--ocr-all` reads every page with the model, for PDFs whose text comes out garbled (old Persian fonts, letters out of order). Each page read is cached in `.versline-ocr.json` in the output folder, so an interrupted run or a rerun never pays for a page twice (`--force` reads again). `--ocr-max-pages N` (default 200) caps the pages sent to the model per document; the rest are marked as unread. OCR costs tokens and shows in the cost report: try `--limit 1` on a big booklet first. Documents converted earlier without `--ocr` whose scanned pages were left unread are completed when you rerun with `--ocr`. The prompt is `telegram_document_ocr_prompt.md`.
+
+| Option | Description | Default |
+| :--- | :--- | :--- |
+| `--to-markdown` | Convert documents to Markdown notes | off |
+| `--ocr` | Read scanned PDF pages and image files with the multimodal LLM (implies `--to-markdown`) | off |
+| `--ocr-all` | Read every PDF page with OCR, not only scans (implies `--ocr`) | off |
+| `--ocr-max-pages N` | Pages sent to the model per document | 200 |
 
 ### Output
 
@@ -123,12 +152,15 @@ Prompts live in `src/versline/resources/prompts/` (`channel_summary_prompt.md`, 
 <out>/
 ├── <Channel title>.md                 # index: table of archived posts
 ├── .versline-channel.json             # manifest for resuming
+├── .versline-ocr.json                 # pages read with --ocr (cache)
 ├── posts/
 │   └── 2026-03-14 - 223 - <title>.md  # one note per post
+├── documents/                         # only with --to-markdown
+│   └── <file name>.md                 # one note per document
 └── attachments/                       # only with --keep-media
 ```
 
-Each note: frontmatter, `# title` (first meaningful caption line without hashtags/links/Markdown, max 80 chars; fallback `پست <id>`), **خلاصه**, **توضیحات** (caption), **متن پیاده‌شده** (transcript; albums become `### 1`, `### 2`), **تقریر و صورت‌بندی**, **پیوست‌ها** (`![[...]]` embeds), then a link to the original post.
+Each note: frontmatter, `# title` (first meaningful caption line without hashtags/links/Markdown, max 80 chars; fallback `پست <id>`), **خلاصه**, **توضیحات** (caption), **متن پیاده‌شده** (transcript; albums become `### 1`, `### 2`), **تقریر و صورت‌بندی**, **اسناد** (links to the document notes, with `--to-markdown`), **پیوست‌ها** (`![[...]]` embeds), then a link to the original post.
 
 Frontmatter always has `title, source, channel, channel_title, post_id, url, date, date_shamsi, media_type, tags, aliases, archived_at`; when applicable `duration, file_name, views, forwards, forwarded_from, album_size, transcribed, transcription_model, summary_model, taqrir_model, skipped_media`. Hashtags become `tags` (ZWNJ/space inside a hashtag becomes `_`; `telegram` is always added). The index note has `type: channel-index`, `post_count`, `range_from`, `range_to`, `updated` and a table of wikilinks. Model chatter such as an opening «بله، حتماً…» or closing «[---پایان فایل صوتی---]» is stripped from transcripts.
 
@@ -365,6 +397,9 @@ versline telegram archive @lectures --since 1404-07-01 --summary --taqrir --reus
 
 # Only PDF/Word files whose name contains "جزوه" but not "پیش‌نویس" or "draft"
 versline telegram archive @chan --files-only --ext pdf,word --match "جزوه" --exclude "پیش‌نویس|draft" -o ~/Downloads/chan
+
+# The same files as Obsidian notes, scanned booklets read with OCR
+versline telegram archive @chan --types document --ext pdf,word --match "جزوه" --to-markdown --ocr -o ~/Vault/Telegram/chan
 
 # Preview PDFs whose caption or name says "جلسه <number>"
 versline telegram archive @chan --files-only --ext pdf --match 'جلسه\s*\d+' --match-in any --dry-run

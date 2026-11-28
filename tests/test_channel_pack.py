@@ -96,6 +96,17 @@ class PackTests(unittest.TestCase):
         self.assertIn(f"{root.name}/catalog.csv", names)
         self.assertEqual(result.failures, [])
 
+    def test_document_notes_are_copied_into_notes(self):
+        manifest = self.archive / ".versline-channel.json"
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        data["posts"]["2"]["documents"] = [{"index": 0, "file": "a.pdf", "note": "documents/a.md"},
+                                           {"index": 1, "file": "b.docx", "error": "boom"}]
+        manifest.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        (self.archive / "documents").mkdir()
+        (self.archive / "documents" / "a.md").write_text("# a", encoding="utf-8")
+        root = self.build().root
+        self.assertEqual((root / "notes" / "documents" / "a.md").read_text(encoding="utf-8"), "# a")
+
     def test_book_markdown_structure(self):
         info, posts = pack.collect_posts(self.archive)
         md = pack.build_book_markdown(info, posts, front_matter=True)

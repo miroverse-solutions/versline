@@ -208,6 +208,15 @@ class ArchiveParams(Params):
     no_transcribe: bool = F(False, en="Skip transcription", fa="بدون پیاده‌سازی")
     keep_media: bool = F(False, en="Keep media in the vault", fa="نگه‌داشتن رسانه در والت",
                          help_en="Save media under attachments/ and embed it.", help_fa="رسانه در attachments ذخیره و در یادداشت درج شود.")
+    to_markdown: bool = F(False, en="Convert documents to Markdown", fa="تبدیل اسناد به مارک‌داون",
+                          help_en="Each PDF, Word, PowerPoint… file becomes a note under documents/, linked from its post.",
+                          help_fa="هر فایل PDF، Word، PowerPoint و… یادداشتی در documents/ می‌شود و از یادداشت پست لینک می‌خورد.")
+    ocr: bool = F(False, en="Read scans with AI (OCR)", fa="خواندن اسکن‌ها با هوش مصنوعی (OCR)", advanced=True,
+                  help_en="Scanned PDF pages and image files are read by the multimodal model (costs tokens).",
+                  help_fa="صفحه‌های اسکن‌شده‌ی PDF و فایل‌های تصویری با مدل چندوجهی خوانده می‌شوند (هزینه دارد).")
+    ocr_all: bool = F(False, en="OCR every PDF page", fa="OCR همه‌ی صفحه‌های PDF", advanced=True,
+                      help_en="For PDFs whose text comes out garbled (legacy Persian fonts).",
+                      help_fa="برای PDFهایی که متنشان به‌هم‌ریخته درمی‌آید (فونت‌های قدیمی فارسی).")
     merge_parts: bool = F(False, en="Merge multi-part posts", fa="ادغام پست‌های چندقسمتی", advanced=True)
     files_only: bool = F(False, en="Files only (no notes, no AI)", fa="فقط فایل‌ها (بدون یادداشت و هوش مصنوعی)", advanced=True)
     ext: Optional[str] = F(None, en="File extensions", fa="پسوند فایل‌ها", help_en="e.g. pdf,docx", advanced=True)
@@ -235,6 +244,7 @@ def archive(p: ArchiveParams, ctx):
         channel=p.channel, output=out, since=p.since, until=p.until, limit=p.limit,
         types=",".join(p.types) or None, web=p.web, add_summary=p.summary, add_taqrir=p.taqrir,
         no_transcribe=p.no_transcribe, keep_media=p.keep_media, merge_parts=p.merge_parts, files_only=p.files_only,
+        to_markdown=p.to_markdown, ocr=p.ocr, ocr_all=p.ocr_all,
         ext=p.ext, match=list(p.match) or None, exclude=list(p.exclude) or None, max_size=p.max_size,
         output_lang=p.output_lang, reuse_transcripts=p.reuse_transcripts, dry_run=p.dry_run, make_pack=p.pack,
         telegram_proxy=p.telegram_proxy, note=p.note, force=p.force,

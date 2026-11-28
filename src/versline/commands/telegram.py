@@ -138,6 +138,10 @@ def archive(
     exclude: Optional[List[str]] = typer.Option(None, "--exclude", help="Regex; drop files matching any (repeatable). Wins over --match"),
     match_in: str = typer.Option("name", "--match-in", help="What --match/--exclude test: name (file name), caption (post text) or any (either)"),
     files_only: bool = typer.Option(False, "--files-only", help="Just save the matching files under their original names: no notes, no transcription, no LLM"),
+    to_markdown: bool = typer.Option(False, "--to-markdown", help="Convert documents (pdf, docx, pptx, xlsx, epub, html, txt…) to Markdown notes for Obsidian: under documents/, linked from the post note (with --files-only: a .md next to each file). Rerun on an existing archive to add them"),
+    ocr: bool = typer.Option(False, "--ocr", help="With --to-markdown: read scanned PDF pages (no text layer) and image files with the multimodal LLM (costs tokens; pages are cached). Implies --to-markdown"),
+    ocr_all: bool = typer.Option(False, "--ocr-all", help="Read every PDF page with OCR, not only scanned ones: for PDFs whose text layer comes out garbled (legacy Persian fonts, letters out of order). Implies --ocr"),
+    ocr_max_pages: int = typer.Option(200, "--ocr-max-pages", min=1, help="With --ocr: at most this many pages sent to the model per document (cached pages don't count)"),
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output folder (default: output/<channel>); point it at your Obsidian vault"),
     keep_media: bool = typer.Option(False, "--keep-media", help="Save media under attachments/ and embed it in the notes"),
     no_transcribe: bool = typer.Option(False, "--no-transcribe", help="Only save captions/metadata; skip transcription"),
@@ -184,12 +188,14 @@ def archive(
         raise typer.BadParameter(str(exc))
     if files_only and (add_summary or add_taqrir or reuse_transcripts):
         raise typer.BadParameter("--files-only can't be combined with --summary, --taqrir or --reuse-transcripts")
+    ocr = ocr or ocr_all
+    to_markdown = to_markdown or ocr
     if merge_parts and files_only:
         console.print("[yellow]--merge-parts is ignored with --files-only.[/yellow]")
     if (web and (files_only or file_filter)) and not dry_run:
         console.print("[yellow]--web can't download documents (only voice and small videos); matching files will be reported as skipped.[/yellow]")
 
-    needs_llm = not dry_run and not files_only and (not no_transcribe or add_summary or add_taqrir)
+    needs_llm = not dry_run and ((not files_only and (not no_transcribe or add_summary or add_taqrir)) or ocr)
     if needs_llm:
         _require_llm()
 
@@ -205,13 +211,23 @@ def archive(
         tracker = transcriber.tracker if transcriber is not None else None
         text_llm = None
         steps = ["media", "transcribe"]
-        if (add_summary or add_taqrir) and not files_only:
+        wants_text_llm = (add_summary or add_taqrir) and not files_only
+        if (wants_text_llm or ocr) and not dry_run:
             from versline.services.channel_archive.llm import TextLLM
             from versline.services.pricing import TokenTracker
 
             tracker = tracker or TokenTracker()
             text_llm = TextLLM(tracker)
+        if wants_text_llm:
             steps += (["summary"] if add_summary else []) + (["taqrir"] if add_taqrir else [])
+        if to_markdown:
+            steps.append("documents")
+        ocr_reader = None
+        if ocr and text_llm is not None:
+            from versline.services.channel_archive.documents import OcrReader
+
+            ocr_reader = OcrReader(text_llm, max_pages=ocr_max_pages, force=force, model=settings.llm.model,
+                                   all_pages=ocr_all)
 
         ctx = StepContext(
             source=source,
@@ -226,9 +242,11 @@ def archive(
             overlap=overlap,
             skip_blocked=skip_blocked,
             transcriber=transcriber,
-            text_llm=text_llm,
+            text_llm=text_llm if wants_text_llm else None,
             output_lang=output_lang or "",
             file_filter=file_filter,
+            to_markdown=to_markdown,
+            ocr=ocr_reader,
         )
         options = ArchiveOptions(
             out_dir=output,

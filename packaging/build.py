@@ -6,7 +6,7 @@ from static_ffmpeg.run import get_or_fetch_platform_executables_else_raise
 get_or_fetch_platform_executables_else_raise()
 
 COLLECT_ALL = [
-    "versline", "markitdown", "static_ffmpeg", "genanki", "pptx", "docx",
+    "versline", "markitdown", "mammoth", "xlrd", "static_ffmpeg", "genanki", "pptx", "docx",
     "pdfplumber", "pymupdf", "magika", "mcp", "google.genai", "openpyxl",
     "mdpersia", "fa_md_pdf", "playwright",
 ]
